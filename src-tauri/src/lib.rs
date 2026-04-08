@@ -1,4 +1,5 @@
 mod commands;
+mod fonts;
 mod git;
 mod menu;
 mod pty;
