@@ -179,6 +179,26 @@ export default function TerminalView({
       // corrupting xterm's scroll state.
       term.options.theme = createTerminalTheme(useThemeStore.getState().theme);
 
+      // Re-apply terminal settings (font, cursor, scrollback) that may
+      // have changed while this terminal was hidden.  applyTerminalSettings
+      // skips hidden terminals, so we catch up here.
+      const currentSettings = useTerminalSettingsStore.getState().settings;
+      const fontChanged =
+        term.options.fontFamily !== currentSettings.fontFamily ||
+        term.options.fontSize !== currentSettings.fontSize;
+
+      term.options.cursorStyle = currentSettings.cursorStyle;
+      term.options.cursorBlink = currentSettings.cursorBlink;
+      term.options.scrollback = currentSettings.scrollback;
+      term.options.fontFamily = currentSettings.fontFamily;
+      term.options.fontSize = currentSettings.fontSize;
+
+      // If the font changed while hidden, force the renderer to discard
+      // its cached glyph atlas so glyphs are re-drawn with the new font.
+      if (fontChanged) {
+        term.clearTextureAtlas();
+      }
+
       // Refresh the viewport so rendering is restored after visibility
       // changes (e.g. closing settings overlay).
       term.refresh(0, term.rows - 1);

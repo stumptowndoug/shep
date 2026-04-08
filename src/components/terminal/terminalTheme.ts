@@ -76,6 +76,11 @@ export function applyTerminalSettings(settings: TerminalSettings): void {
     const el = entry.term.element;
     if (!fontMetricsChanged || !el || el.offsetParent === null) continue;
 
+    // Force the renderer to discard cached glyphs so they are re-drawn
+    // with the new font/size.  Without this the CanvasAddon (or WebGL)
+    // texture atlas keeps stale glyphs rendered in the previous font.
+    entry.term.clearTextureAtlas();
+
     entry.fitAddon.fit();
     entry.term.refresh(0, entry.term.rows - 1);
     resizePty(ptyId, entry.term.cols, entry.term.rows).catch((error) => {
