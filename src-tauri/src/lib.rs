@@ -126,6 +126,7 @@ pub fn run() {
             commands::list_listening_ports,
             commands::kill_port,
             commands::open_url,
+            commands::resolve_font_files,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

@@ -18,6 +18,7 @@ import type {
   UsageSettings,
   UsageOverview,
   PortInfo,
+  FontFile,
 } from "./types";
 
 // ── Workspace commands ──────────────────────────────────────────────
@@ -276,4 +277,10 @@ export function listListeningPorts(): Promise<PortInfo[]> {
 
 export function killPort(pid: number): Promise<void> {
   return invoke("kill_port", { pid });
+}
+
+// ── Font commands ───────────────────────────────────────────────────
+
+export function resolveFontFiles(familyName: string): Promise<FontFile[]> {
+  return invoke("resolve_font_files", { familyName });
 }

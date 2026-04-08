@@ -12,6 +12,7 @@ use crate::usage::{LocalUsageDetails, ProviderUsageSnapshot, UsageDb, UsageOverv
 use crate::watcher::GitWatcher;
 use crate::workspace::config::{EditorSettings, KeybindingSettings, RegisteredRepo, RepoInfo, TerminalSettings, UsageSettings, WorkspaceConfig};
 use crate::workspace::manager::WorkspaceManager;
+use crate::fonts;
 
 // ── Workspace commands ──────────────────────────────────────────────
 
@@ -765,4 +766,11 @@ pub async fn kill_port(pid: u32) -> Result<(), String> {
             .map_err(|e| format!("Failed to force-kill process {pid}: {e}"))?;
     }
     Ok(())
+}
+
+// ── Font commands ───────────────────────────────────────────────────
+
+#[tauri::command]
+pub fn resolve_font_files(family_name: &str) -> Vec<fonts::FontFile> {
+    fonts::resolve_font_files_for_family(family_name)
 }
