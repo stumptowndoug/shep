@@ -414,7 +414,7 @@ function ProviderLimits({
 }) {
   if (window !== "5h" && window !== "7d") return null;
 
-  const providers = (["claude", "codex", "gemini"] as UsageProvider[]).filter((p) => {
+  const providers = (["claude", "codex", "gemini", "opencode"] as UsageProvider[]).filter((p) => {
     const snap = snapshots[p];
     if (!snap) return false;
     const w = snap.summaryWindows.find((sw) => sw.window === window);

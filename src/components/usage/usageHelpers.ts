@@ -19,6 +19,8 @@ export function getProviderLabel(provider: UsageProvider): string {
       return "Claude";
     case "gemini":
       return "Gemini";
+    case "opencode":
+      return "OpenCode";
   }
 }
 

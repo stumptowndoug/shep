@@ -326,11 +326,11 @@ export default function SettingsPanel() {
       <h2 className="section-label !p-0 mb-4">Usage Providers</h2>
 
       <div className="flex flex-wrap gap-3">
-        {(["claude", "codex", "gemini"] as UsageProvider[]).map((provider) => {
-          const key = provider === "claude" ? "showClaude" : provider === "codex" ? "showCodex" : "showGemini";
+        {(["claude", "codex", "gemini", "opencode"] as UsageProvider[]).map((provider) => {
+          const key = provider === "claude" ? "showClaude" : provider === "codex" ? "showCodex" : provider === "gemini" ? "showGemini" : "showOpencode";
           const active = usageSettings[key];
           const logo = assistantLogoSrc[provider];
-          const label = provider === "claude" ? "Claude" : provider === "codex" ? "Codex" : "Gemini";
+          const label = provider === "claude" ? "Claude" : provider === "codex" ? "Codex" : provider === "gemini" ? "Gemini" : "OpenCode";
           return (
             <button
               key={provider}

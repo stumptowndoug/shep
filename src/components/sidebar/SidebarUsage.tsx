@@ -6,7 +6,7 @@ import type { UsageProvider } from "../../lib/types";
 import { assistantLogoSrc, getAssistantLogoClass } from "../../lib/assistantLogos";
 import { formatPercent, formatTokenCount, formatCost, computePace } from "../usage/usageHelpers";
 
-const ALL_PROVIDERS: UsageProvider[] = ["claude", "codex", "gemini"];
+const ALL_PROVIDERS: UsageProvider[] = ["claude", "codex", "gemini", "opencode"];
 const WINDOWS: { key: TimeWindow; label: string }[] = [
   { key: "5h", label: "5h" },
   { key: "7d", label: "7d" },
@@ -48,6 +48,7 @@ export default function SidebarUsage() {
     if (p === "claude") return usageSettings.showClaude;
     if (p === "codex") return usageSettings.showCodex;
     if (p === "gemini") return usageSettings.showGemini;
+    if (p === "opencode") return usageSettings.showOpencode;
     return true;
   }), [usageSettings]);
 
