@@ -371,6 +371,7 @@ fn enabled_providers(workspace: &State<'_, WorkspaceManager>) -> crate::usage::E
     crate::usage::EnabledProviders {
         claude: settings.show_claude,
         codex: settings.show_codex,
+        opencode: settings.show_opencode,
     }
 }
 

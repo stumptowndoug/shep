@@ -80,6 +80,13 @@ fn calculate_cost(pricing: &ModelPricing, input: i64, output: i64, cache_read: i
 
 /// Calculate cost for a windowed query (total tokens by type for a given provider/cutoff).
 fn windowed_cost(conn: &Connection, provider: &str, cutoff: i64, pricing: &HashMap<String, ModelPricing>) -> Option<f64> {
+    if let Some(cost) = conn.query_row(
+        "SELECT SUM(cost) FROM usage_messages WHERE provider = ?1 AND timestamp >= ?2 AND cost IS NOT NULL AND cost > 0",
+        params![provider, cutoff],
+        |row| row.get::<_, f64>(0)
+    ).ok() {
+        return Some(cost);
+    }
     let mut stmt = conn.prepare(
         "SELECT COALESCE(model, 'unknown'), SUM(tokens_input), SUM(tokens_output), SUM(tokens_cache_read), SUM(tokens_cache_write), SUM(tokens_thoughts)
          FROM usage_messages WHERE provider = ?1 AND timestamp >= ?2
@@ -409,6 +416,13 @@ fn query_top_projects_since(conn: &Connection, provider: &str, since: i64, prici
 
 /// Calculate cost for a specific project by summing per-model costs.
 fn windowed_cost_for_project(conn: &Connection, provider: &str, since: i64, project: &str, pricing: &HashMap<String, ModelPricing>) -> Option<f64> {
+    if let Some(cost) = conn.query_row(
+        "SELECT SUM(cost) FROM usage_messages WHERE provider = ?1 AND timestamp >= ?2 AND COALESCE(project, 'unknown') = ?3 AND cost IS NOT NULL AND cost > 0",
+        params![provider, since, project],
+        |row| row.get::<_, f64>(0)
+    ).ok() {
+        return Some(cost);
+    }
     let mut stmt = conn.prepare(
         "SELECT COALESCE(model, 'unknown'), SUM(tokens_input), SUM(tokens_output), SUM(tokens_cache_read), SUM(tokens_cache_write), SUM(tokens_thoughts)
          FROM usage_messages WHERE provider = ?1 AND timestamp >= ?2 AND COALESCE(project, 'unknown') = ?3
@@ -658,6 +672,13 @@ fn query_named_trend(
 }
 
 fn windowed_cost_for_provider(conn: &Connection, provider: &str, since: i64, pricing: &HashMap<String, ModelPricing>) -> Option<f64> {
+    if let Some(cost) = conn.query_row(
+        "SELECT SUM(cost) FROM usage_messages WHERE provider = ?1 AND timestamp >= ?2 AND cost IS NOT NULL AND cost > 0",
+        params![provider, since],
+        |row| row.get::<_, f64>(0)
+    ).ok() {
+        return Some(cost);
+    }
     let mut stmt = conn.prepare(
         "SELECT COALESCE(model, 'unknown'), SUM(tokens_input), SUM(tokens_output), SUM(tokens_cache_read), SUM(tokens_cache_write), SUM(tokens_thoughts)
          FROM usage_messages

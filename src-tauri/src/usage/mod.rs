@@ -101,6 +101,8 @@ static PROVIDER_CACHE: Mutex<ProviderCache> = Mutex::new(ProviderCache {
 pub struct EnabledProviders {
     pub claude: bool,
     pub codex: bool,
+    #[allow(dead_code)]
+    pub opencode: bool,
 }
 
 /// Fetch snapshots for all providers from whatever is currently in the DB.
@@ -115,6 +117,7 @@ pub fn get_all_usage_snapshots(db: &UsageDb, enabled: &EnabledProviders) -> Vec<
         claude_snapshot(&conn),
         codex_snapshot(&conn),
         gemini_snapshot(&conn),
+        opencode_snapshot(&conn),
     ]
 }
 
@@ -127,6 +130,7 @@ pub fn get_usage_snapshot(db: &UsageDb, provider: &str, enabled: &EnabledProvide
         "codex" => Ok(codex_snapshot(&conn)),
         "claude" => Ok(claude_snapshot(&conn)),
         "gemini" => Ok(gemini_snapshot(&conn)),
+        "opencode" => Ok(opencode_snapshot(&conn)),
         other => Err(format!("Unsupported usage provider: {other}")),
     }
 }
@@ -347,6 +351,47 @@ fn gemini_snapshot(conn: &rusqlite::Connection) -> ProviderUsageSnapshot {
     ProviderUsageSnapshot {
         provider: "gemini".to_string(),
         status: if local.is_some() { "ready".to_string() } else { "unavailable".to_string() },
+        fetched_at,
+        summary_windows,
+        extra_windows: Vec::new(),
+        local_details: local,
+        error: None,
+    }
+}
+
+fn opencode_snapshot(conn: &rusqlite::Connection) -> ProviderUsageSnapshot {
+    let fetched_at = helpers::now_iso_string();
+    let local = queries::local_details(conn, "opencode");
+    let mut summary_windows = Vec::new();
+
+    if let Some(ref details) = local {
+        for (window, tokens) in [
+            ("5h", details.tokens_5h),
+            ("7d", details.tokens_7d),
+            ("30d", details.tokens_30d),
+        ] {
+            summary_windows.push(UsageWindowSnapshot {
+                provider: "opencode".to_string(),
+                window: window.to_string(),
+                label: window.to_string(),
+                source_type: "local".to_string(),
+                confidence: "observed".to_string(),
+                used_percent: None,
+                remaining_percent: None,
+                reset_at: None,
+                token_total: Some(tokens),
+                pace_status: None,
+            });
+        }
+    }
+
+    ProviderUsageSnapshot {
+        provider: "opencode".to_string(),
+        status: if local.is_some() {
+            "ready".to_string()
+        } else {
+            "unavailable".to_string()
+        },
         fetched_at,
         summary_windows,
         extra_windows: Vec::new(),
