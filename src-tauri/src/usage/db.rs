@@ -43,12 +43,15 @@ fn db_path() -> Result<PathBuf, String> {
 }
 
 fn migrate(conn: &Connection) -> Result<(), String> {
-    conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL);"
-    ).map_err(|e| format!("Failed to create schema_version table: {e}"))?;
+    conn.execute_batch("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL);")
+        .map_err(|e| format!("Failed to create schema_version table: {e}"))?;
 
     let version: i64 = conn
-        .query_row("SELECT COALESCE(MAX(version), 0) FROM schema_version", [], |r| r.get(0))
+        .query_row(
+            "SELECT COALESCE(MAX(version), 0) FROM schema_version",
+            [],
+            |r| r.get(0),
+        )
         .unwrap_or(0);
 
     if version < 1 {
@@ -121,6 +124,15 @@ fn migrate(conn: &Connection) -> Result<(), String> {
              DELETE FROM ingest_cursors WHERE provider = 'codex';
              INSERT INTO schema_version (version) VALUES (2);"
         ).map_err(|e| format!("Failed to run migration v2: {e}"))?;
+    }
+
+    if version < 3 {
+        // Add cost column - use individual ALTER TABLE statements and ignore errors if columns exist
+        let _ = conn.execute("ALTER TABLE usage_messages ADD COLUMN cost REAL", []);
+        let _ = conn.execute("ALTER TABLE usage_daily ADD COLUMN cost REAL", []);
+
+        conn.execute("INSERT INTO schema_version (version) VALUES (3)", [])
+            .map_err(|e| format!("Failed to run migration v3: {e}"))?;
     }
 
     Ok(())
