@@ -160,12 +160,13 @@ export interface PtyColorTheme {
 
 // ── Usage ──────────────────────────────────────────────────────────
 
-export type UsageProvider = "codex" | "claude" | "gemini";
+export type UsageProvider = "codex" | "claude" | "gemini" | "opencode";
 
 export interface UsageSettings {
   showClaude: boolean;
   showCodex: boolean;
   showGemini: boolean;
+  showOpencode: boolean;
 }
 export type UsageSourceType = "provider" | "local";
 export type UsageConfidence = "official" | "observed" | "estimated";

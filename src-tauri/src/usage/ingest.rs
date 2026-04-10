@@ -28,6 +28,10 @@ pub fn ingest_all(conn: &Connection) -> bool {
         Ok(done) => { if !done { all_done = false; } }
         Err(e) => eprintln!("Codex ingest error: {e}"),
     }
+    match ingest_opencode(conn, MAX_FILES_PER_CYCLE) {
+        Ok(done) => { if !done { all_done = false; } }
+        Err(e) => eprintln!("OpenCode ingest error: {e}"),
+    }
     if let Err(e) = prune_old_messages(conn) {
         eprintln!("Prune error: {e}");
     }
@@ -478,6 +482,122 @@ fn ingest_codex_file(conn: &Connection, path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+// ── OpenCode ───────────────────────────────────────────────
+
+/// Ingests from OpenCode SQLite database. Returns Ok(true) when complete.
+fn ingest_opencode(conn: &Connection, _budget: usize) -> Result<bool, String> {
+    ingest_opencode_db(conn)?;
+    Ok(true)
+}
+
+/// Ingest messages from OpenCode SQLite database (current sessions)
+fn ingest_opencode_db(conn: &Connection) -> Result<(), String> {
+    let db_path = home_join(".local/share/opencode/opencode.db")?;
+    if !db_path.exists() {
+        return Ok(());
+    }
+
+    // Open OpenCode database in read-only mode
+    let opencode_conn =
+        Connection::open_with_flags(&db_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .map_err(|e| format!("Failed to open OpenCode database: {e}"))?;
+
+    // Get the max message ID we've already ingested
+    let last_id: String = conn
+        .query_row(
+            "SELECT COALESCE(MAX(session_id), '') FROM usage_messages WHERE provider = 'opencode' AND session_id LIKE 'msg_%'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or_default();
+
+    // Query messages with tokens from OpenCode database
+    let mut query = opencode_conn
+        .prepare(
+            "SELECT id, json_extract(data, '$.modelID'),
+                    json_extract(data, '$.tokens.input'),
+                    json_extract(data, '$.tokens.output'),
+                    json_extract(data, '$.tokens.reasoning'),
+                    json_extract(data, '$.tokens.cache.read'),
+                    json_extract(data, '$.tokens.cache.write'),
+                    json_extract(data, '$.time.created'),
+                    json_extract(data, '$.path.cwd'),
+                    json_extract(data, '$.path.root'),
+                    json_extract(data, '$.cost')
+             FROM message
+             WHERE data LIKE '%\"tokens\":{%'
+               AND (? = '' OR id > ?)
+              ORDER BY id ASC",
+        )
+        .map_err(|e| format!("Failed to prepare query: {e}"))?;
+
+    let rows = query
+        .query_map(params![last_id, last_id], |row| {
+            Ok((
+                row.get::<_, String>(0)?,         // id
+                row.get::<_, Option<String>>(1)?, // modelID
+                row.get::<_, Option<i64>>(2)?,    // input
+                row.get::<_, Option<i64>>(3)?,    // output
+                row.get::<_, Option<i64>>(4)?,    // reasoning
+                row.get::<_, Option<i64>>(5)?,    // cache_read
+                row.get::<_, Option<i64>>(6)?,    // cache_write
+                row.get::<_, Option<i64>>(7)?,    // time_created
+                row.get::<_, Option<String>>(8)?, // cwd
+                row.get::<_, Option<String>>(9)?, // root
+                row.get::<_, Option<f64>>(10)?,   // cost
+            ))
+        })
+        .map_err(|e| format!("Failed to query messages: {e}"))?;
+
+    conn.execute_batch("BEGIN").map_err(|e| e.to_string())?;
+
+    for row in rows {
+        let row = row.map_err(|e| format!("Row error: {e}"))?;
+        let (id, model, input, output, reasoning, cache_read, cache_write, time_created, cwd, root, cost) =
+            row;
+
+        // Skip if no tokens
+        let input = input.unwrap_or(0);
+        let output = output.unwrap_or(0);
+        let reasoning = reasoning.unwrap_or(0);
+        let cache_read = cache_read.unwrap_or(0);
+        let cache_write = cache_write.unwrap_or(0);
+        let total = input + output + reasoning + cache_read + cache_write;
+
+        if total == 0 {
+            continue;
+        }
+
+        // Extract project name from path
+        let project = cwd
+            .or(root)
+            .and_then(|p| p.split('/').rfind(|s| !s.is_empty()).map(|s| s.to_string()))
+            .unwrap_or_else(|| "unknown".to_string());
+
+        let model = model.unwrap_or_else(|| "unknown".to_string());
+        let timestamp = time_created.map(|ms| ms / 1000).unwrap_or(0);
+
+        // Delete old rows for this message and re-insert
+        conn.execute(
+            "DELETE FROM usage_messages WHERE provider = 'opencode' AND session_id = ?1",
+            params![id],
+        )
+        .map_err(|e| e.to_string())?;
+
+        conn.execute(
+            "INSERT INTO usage_messages (provider, session_id, project, model, timestamp, tokens_input, tokens_output, tokens_cache_write, tokens_cache_read, tokens_thoughts, tokens_total, cost)
+             VALUES ('opencode', ?1, ?2, ?3, ?4, ?5, ?6, 0, ?7, ?8, ?9, ?10)",
+            params![
+                id, project, model, timestamp as i64,
+                input as i64, output as i64, cache_read as i64, reasoning as i64, total as i64, cost
+            ],
+        ).map_err(|e| e.to_string())?;
+    }
+
+    conn.execute_batch("COMMIT").map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 // ── Maintenance ───────────────────────────────────────────
 
 fn prune_old_messages(conn: &Connection) -> Result<(), String> {
@@ -524,9 +644,7 @@ fn upsert_cursor(conn: &Connection, file_path: &str, provider: &str, file_size: 
 }
 
 fn clean_cursors(conn: &Connection, provider: &str, valid_files: &[PathBuf]) {
-    let mut stmt = match conn
-        .prepare("SELECT file_path FROM ingest_cursors WHERE provider = ?1")
-    {
+    let mut stmt = match conn.prepare("SELECT file_path FROM ingest_cursors WHERE provider = ?1") {
         Ok(s) => s,
         Err(_) => return,
     };

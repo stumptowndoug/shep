@@ -16,10 +16,11 @@ const KEY_MAP: Record<UsageProvider, keyof UsageSettings> = {
   claude: "showClaude",
   codex: "showCodex",
   gemini: "showGemini",
+  opencode: "showOpencode",
 };
 
 export const useUsageSettingsStore = create<UsageSettingsStore>((set, get) => ({
-  settings: { showClaude: true, showCodex: true, showGemini: true },
+  settings: { showClaude: true, showCodex: true, showGemini: true, showOpencode: true },
   hasLoaded: false,
   isSaving: false,
   error: null,
