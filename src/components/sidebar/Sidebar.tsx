@@ -9,6 +9,7 @@ import SidebarFooter from "./SidebarFooter";
 import SidebarUsage from "./SidebarUsage";
 import AgentSessionList, { type AgentSessionItem } from "./AgentSessionList";
 import SidebarSectionToggle from "./SidebarSectionToggle";
+import { pathBasename } from "../../lib/paths";
 
 interface SidebarProps {
   repos: RepoInfo[];
@@ -109,7 +110,7 @@ export default function Sidebar({
 
     const sessions: AgentSessionItem[] = [];
     for (const [repoPath, state] of Object.entries(projectState)) {
-      const projectName = repoNames.get(repoPath) ?? repoPath.split("/").filter(Boolean).pop() ?? repoPath;
+      const projectName = repoNames.get(repoPath) ?? (pathBasename(repoPath) || repoPath);
       const branchName = gitStatuses[repoPath]?.branch?.trim() || null;
       for (const tab of state.tabs) {
         if (tab.kind !== "assistant") continue;

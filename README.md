@@ -25,25 +25,28 @@ Shep gives each repo a dedicated workspace for terminals, AI coding agents, comm
 - **Status indicators** so crashed or noisy sessions are easy to spot
 - **Usage tracking** for AI coding assistant costs across providers
 - **In-app notices** for common failures instead of silent errors or browser alerts
-- **Native macOS packaging** via Tauri
+- **Native macOS and Windows packaging** via Tauri
 
 ## Download
 
-Download the latest `.dmg` from [GitHub Releases](https://github.com/stumptowndoug/shep/releases).
+Download the latest release from [GitHub Releases](https://github.com/stumptowndoug/shep/releases).
 
-After downloading:
+**macOS** — download the `.dmg`:
 
 1. Open the `.dmg`
 2. Drag `Shep.app` into `Applications`
 3. Launch Shep
 
-Note: the current release flow is aimed at small-group testing. If the app is unsigned or not notarized, macOS may show an extra security prompt on first launch.
+**Windows** — download and run `shep_X.Y.Z_x64-setup.exe`.
+
+Note: the current release flow is aimed at small-group testing. If the app is unsigned or not notarized, macOS may show an extra security prompt on first launch, and Windows SmartScreen may warn before running the installer.
 
 ## Requirements
 
 For using Shep:
 
-- macOS
+- macOS or Windows 10/11 (WebView2 Runtime is preinstalled on Windows 10/11; the installer fetches it if missing)
+- git on PATH (on Windows: [Git for Windows](https://gitforwindows.org/))
 - A local git repo to work from
 - Any CLI agents you want to launch already installed on your machine
 
@@ -52,7 +55,8 @@ For building from source:
 - Node.js 20+
 - `pnpm`
 - Rust via `rustup`
-- Xcode Command Line Tools
+- macOS: Xcode Command Line Tools
+- Windows: Visual Studio Build Tools 2022 with the "Desktop development with C++" workload (MSVC toolchain)
 
 ## Getting Started
 
@@ -146,15 +150,18 @@ pnpm build
 cargo test --manifest-path src-tauri/Cargo.toml
 ```
 
-Build artifacts land here:
+Build artifacts land here (release builds; debug builds land under `target/debug/bundle/`):
+
+macOS:
 
 - App bundle: `src-tauri/target/release/bundle/macos/shep.app`
 - DMG: `src-tauri/target/release/bundle/dmg/`
 
-Debug artifacts land here:
+Windows:
 
-- App bundle: `src-tauri/target/debug/bundle/macos/shep.app`
-- DMG: `src-tauri/target/debug/bundle/dmg/`
+- Executable: `src-tauri/target/release/shep.exe`
+- NSIS installer: `src-tauri/target/release/bundle/nsis/shep_X.Y.Z_x64-setup.exe`
+- MSI: `src-tauri/target/release/bundle/msi/`
 
 ## Project Structure
 
@@ -186,19 +193,35 @@ src-tauri/src/workspace/
 For tester reports, include:
 
 - Shep version
-- macOS version
+- OS and version (macOS or Windows)
 - whether the issue happened in dev mode or the packaged app
 - the repo/workflow you were using
 - anything visible in the terminal or notice UI
 
+## Keyboard Shortcuts
+
+On macOS, shortcuts use the native menu accelerators (⌘T, ⇧⌘T, ⌘G, …). On Windows, app shortcuts use Ctrl+Shift chords so plain Ctrl+letter keystrokes still reach the terminal:
+
+| Action | macOS | Windows |
+| --- | --- | --- |
+| New Terminal | ⌘T | Ctrl+Shift+T |
+| New Agent Session | ⇧⌘T | Ctrl+Shift+A |
+| New Commands Panel | ⇧⌘C | Ctrl+Shift+M |
+| New Git Panel | ⌘G | Ctrl+Shift+G |
+| Open in Editor | ⌘E | Ctrl+Shift+E |
+| Toggle Sidebar | ⌘B | Ctrl+Shift+B |
+| Settings | ⌘, | Ctrl+, |
+| Copy / Paste in terminal | ⌘C / ⌘V | Ctrl+Shift+C / Ctrl+Shift+V |
+
 ## Releases
 
-Releases are built locally on macOS and published as a `.dmg` via GitHub Releases:
+Releases are built locally and published via GitHub Releases. See [docs/RELEASING.md](docs/RELEASING.md) for the full two-platform flow:
 
 1. `./scripts/bump-version.sh X.Y.Z` — updates `package.json`, `src-tauri/tauri.conf.json`, and `src-tauri/Cargo.toml`, then commits the bump
-2. `./scripts/release-build.sh` — builds, signs, notarizes, and generates `latest.json`
-3. Smoke test the DMG, then `git tag vX.Y.Z && git push origin main vX.Y.Z`
-4. `gh release create` with the artifacts and release notes
+2. macOS lane: `./scripts/release-build.sh` — builds, signs, notarizes, and generates `latest.json`
+3. Windows lane: `pwsh scripts/release-build.ps1` — builds the NSIS installer and merges its entry into `latest.json`
+4. Smoke test the artifacts, then `git tag vX.Y.Z && git push origin main vX.Y.Z`
+5. `gh release create` with the artifacts from both lanes and the merged `latest.json`
 
 ## License
 

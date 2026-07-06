@@ -1,7 +1,9 @@
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fs;
+#[cfg(unix)]
 use std::path::Path;
+#[cfg(unix)]
 use std::process::Command;
 
 use super::helpers::{home_join, run_command};
@@ -49,11 +51,24 @@ pub fn codex_provider_windows() -> Result<Vec<UsageWindowSnapshot>, String> {
     ])
 }
 
+/// Read Claude Code OAuth credentials. macOS stores them in the Keychain;
+/// Windows and Linux store the same JSON shape at ~/.claude/.credentials.json.
+#[cfg(target_os = "macos")]
+fn claude_credentials_json() -> Result<String, String> {
+    run_command("security", &["find-generic-password", "-s", "Claude Code-credentials", "-w"])
+}
+
+#[cfg(not(target_os = "macos"))]
+fn claude_credentials_json() -> Result<String, String> {
+    let path = home_join(".claude/.credentials.json")?;
+    fs::read_to_string(&path).map_err(|e| format!("Failed to read Claude credentials file: {e}"))
+}
+
 /// Fetch Claude rate limit windows from Anthropic API.
 pub fn claude_provider_windows() -> Result<(Vec<UsageWindowSnapshot>, Vec<UsageWindowSnapshot>), String> {
-    let token_json = run_command("security", &["find-generic-password", "-s", "Claude Code-credentials", "-w"])?;
+    let token_json = claude_credentials_json()?;
     let credentials: Value = serde_json::from_str(&token_json)
-        .map_err(|e| format!("Failed to parse Claude Keychain credentials: {e}"))?;
+        .map_err(|e| format!("Failed to parse Claude credentials: {e}"))?;
     let token = credentials
         .get("claudeAiOauth")
         .and_then(|v| v.get("accessToken"))
@@ -216,6 +231,7 @@ fn antigravity_detect_process() -> Result<AntigravityProcess, String> {
     }
 }
 
+#[cfg(unix)]
 fn antigravity_process_list() -> Result<String, String> {
     let output = Command::new("/bin/ps")
         .args(["-ax", "-o", "pid=,command="])
@@ -231,6 +247,37 @@ fn antigravity_process_list() -> Result<String, String> {
     String::from_utf8(output.stdout)
         .map(|s| s.trim().to_string())
         .map_err(|e| format!("Invalid UTF-8 from /bin/ps: {e}"))
+}
+
+/// Produce the same "PID COMMAND" line format `/bin/ps` emits on unix so the
+/// caller's parsing/flag extraction stays shared.
+#[cfg(windows)]
+fn antigravity_process_list() -> Result<String, String> {
+    use sysinfo::{ProcessesToUpdate, System};
+
+    let mut sys = System::new();
+    sys.refresh_processes(ProcessesToUpdate::All, true);
+
+    let mut lines = Vec::new();
+    for (pid, process) in sys.processes() {
+        let mut command = process
+            .cmd()
+            .iter()
+            .map(|part| part.to_string_lossy())
+            .collect::<Vec<_>>()
+            .join(" ");
+        if command.is_empty() {
+            command = process
+                .exe()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_default();
+        }
+        if command.is_empty() {
+            continue;
+        }
+        lines.push(format!("{} {}", pid.as_u32(), command));
+    }
+    Ok(lines.join("\n"))
 }
 
 fn antigravity_process_kind(command: &str) -> Option<&'static str> {
@@ -291,6 +338,7 @@ fn extract_flag(flag: &str, command: &str) -> Option<String> {
     None
 }
 
+#[cfg(unix)]
 fn antigravity_listening_ports(pid: i64) -> Result<Vec<i64>, String> {
     let lsof = ["/usr/sbin/lsof", "/usr/bin/lsof"]
         .into_iter()
@@ -308,6 +356,37 @@ fn antigravity_listening_ports(pid: i64) -> Result<Vec<i64>, String> {
         let rest = &line[colon + 1..];
         let port_raw: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
         let Ok(port) = port_raw.parse::<i64>() else {
+            continue;
+        };
+        if !ports.contains(&port) {
+            ports.push(port);
+        }
+    }
+    ports.sort_unstable();
+    if ports.is_empty() {
+        Err("No Antigravity listening ports found".to_string())
+    } else {
+        Ok(ports)
+    }
+}
+
+#[cfg(windows)]
+fn antigravity_listening_ports(pid: i64) -> Result<Vec<i64>, String> {
+    let output = run_command("netstat", &["-ano"])?;
+    let mut ports = Vec::new();
+    for line in output.lines() {
+        // "  TCP    127.0.0.1:42100    0.0.0.0:0    LISTENING    1234"
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() < 5 || parts[0] != "TCP" || parts[3] != "LISTENING" {
+            continue;
+        }
+        if parts[4].parse::<i64>() != Ok(pid) {
+            continue;
+        }
+        let Some(colon) = parts[1].rfind(':') else {
+            continue;
+        };
+        let Ok(port) = parts[1][colon + 1..].parse::<i64>() else {
             continue;
         };
         if !ports.contains(&port) {

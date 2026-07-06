@@ -62,6 +62,6 @@ export function getPlainMarkdownRenderer(): MarkdownIt {
 }
 
 export function isMarkdownFile(filePath: string): boolean {
-  const base = filePath.split("/").pop()?.toLowerCase() ?? "";
+  const base = filePath.split(/[\\/]/).pop()?.toLowerCase() ?? "";
   return base.endsWith(".md") || base.endsWith(".markdown");
 }

@@ -2,10 +2,12 @@ use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, Pt
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::{Read, Write};
+#[cfg(unix)]
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
+#[cfg(unix)]
 use std::time::Duration;
 use tauri::ipc::Channel;
 
@@ -297,6 +299,7 @@ fn decode_utf8_chunks(pending: &mut Vec<u8>, incoming: &[u8]) -> Vec<String> {
 
 /// Find all descendant PIDs of the given root PID by walking the process tree.
 /// Uses `pgrep -P <pid>` to find direct children, then recurses.
+#[cfg(unix)]
 fn get_all_descendants(root_pid: i32) -> Vec<i32> {
     let mut descendants = Vec::new();
     let mut queue = vec![root_pid];
@@ -343,27 +346,54 @@ impl PtySession {
             })
             .map_err(|e| format!("Failed to open PTY: {e}"))?;
 
-        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
-        let mut cmd = CommandBuilder::new(&shell);
-        cmd.arg("-l");
-        cmd.arg("-i");
-        cmd.arg("-c");
-        if let Some(args) = args {
-            cmd.arg("exec \"$@\"");
-            cmd.arg("shep");
-            cmd.arg(command);
-            for arg in args {
-                cmd.arg(arg);
+        #[cfg(unix)]
+        let cmd = {
+            let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
+            let mut cmd = CommandBuilder::new(&shell);
+            cmd.arg("-l");
+            cmd.arg("-i");
+            cmd.arg("-c");
+            if let Some(args) = args {
+                cmd.arg("exec \"$@\"");
+                cmd.arg("shep");
+                cmd.arg(command);
+                for arg in args {
+                    cmd.arg(arg);
+                }
+            } else {
+                cmd.arg(command);
             }
-        } else {
+            cmd
+        };
+
+        #[cfg(windows)]
+        let cmd = {
+            // cmd.exe /c is the Windows counterpart of `sh -c`: it parses the
+            // command string and resolves PATH entries including the .cmd/.bat
+            // shims that npm-installed CLIs (claude, codex, ...) ship as.
+            // Unlike macOS, GUI apps inherit the user's full registry-backed
+            // environment, so no login-shell wrapper is needed for PATH.
+            let comspec = std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".to_string());
+            let mut cmd = CommandBuilder::new(&comspec);
+            cmd.arg("/c");
             cmd.arg(command);
-        }
+            if let Some(args) = args {
+                for arg in args {
+                    cmd.arg(arg);
+                }
+            }
+            cmd
+        };
+
+        #[allow(unused_mut)]
+        let mut cmd = cmd;
         cmd.cwd(cwd);
 
         for (key, val) in &env {
             cmd.env(key, val);
         }
         cmd.env("TERM", "xterm-256color");
+        #[cfg(not(windows))]
         cmd.env("TERM_PROGRAM", "iTerm.app"); // Fix for CLI tools (like gemini-cli) assuming solid backgrounds
         cmd.env("COLORTERM", "truecolor"); // Enable 24-bit color support
 
@@ -504,6 +534,7 @@ impl PtySession {
             .map_err(|e| format!("Failed to resize PTY: {e}"))
     }
 
+    #[cfg(unix)]
     pub fn kill(&mut self) -> Result<(), String> {
         self.alive.store(false, Ordering::SeqCst);
 
@@ -548,6 +579,26 @@ impl PtySession {
         self.killer
             .kill()
             .map_err(|e| format!("Failed to kill PTY: {e}"))
+    }
+
+    #[cfg(windows)]
+    pub fn kill(&mut self) -> Result<(), String> {
+        self.alive.store(false, Ordering::SeqCst);
+
+        if let Some(pid) = self.child_pid {
+            // taskkill /T walks the whole child tree (cmd.exe -> shell/agent ->
+            // its children) and /F force-terminates — the ConPTY counterpart of
+            // the process-group SIGTERM/SIGKILL escalation used on unix.
+            let _ = crate::util::quiet_command("taskkill")
+                .args(["/T", "/F", "/PID", &pid.to_string()])
+                .output();
+        }
+
+        // Backstop: portable-pty's TerminateProcess on the direct child. It can
+        // report AccessDenied for a process taskkill already reaped, which is
+        // not a failure worth surfacing.
+        let _ = self.killer.kill();
+        Ok(())
     }
 }
 

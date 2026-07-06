@@ -185,10 +185,11 @@ pub fn register_repo(repo_path: &str) -> Result<RegisteredRepo, String> {
         return Err(format!("Directory does not exist: {repo_path}"));
     }
 
-    // Add to global config if not already there
+    // Add to global config if not already there. dunce avoids the \\?\
+    // verbatim prefix std canonicalize produces on Windows — this string is
+    // the repo's identity across the whole app (git -C, watcher, UI).
     let mut config = load_global_config()?;
-    let canonical = path
-        .canonicalize()
+    let canonical = dunce::canonicalize(path)
         .map_err(|e| format!("Failed to resolve path: {e}"))?;
     let canonical_str = canonical.to_string_lossy().to_string();
 

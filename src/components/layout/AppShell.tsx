@@ -5,7 +5,7 @@ import TabBar from "./TabBar";
 import TerminalView from "../terminal/TerminalView";
 import TerminalErrorBoundary from "../terminal/TerminalErrorBoundary";
 import NoticeCenter from "../shared/NoticeCenter";
-import { PanelLeft, PanelRight } from "lucide-react";
+import { Minus, PanelLeft, PanelRight, Square, X } from "lucide-react";
 import { useRepoStore } from "../../stores/useRepoStore";
 import { useCommandStore } from "../../stores/useCommandStore";
 import { useTerminalStore } from "../../stores/useTerminalStore";
@@ -28,6 +28,8 @@ import { useUsageSettingsStore } from "../../stores/useUsageSettingsStore";
 import { useUpdateStore } from "../../stores/useUpdateStore";
 import { initNotifications } from "../../lib/notifications";
 import { getErrorMessage } from "../../lib/errors";
+import { isWindows, modKeyLabel } from "../../lib/platform";
+import { pathBasename } from "../../lib/paths";
 import { useNoticeStore } from "../../stores/useNoticeStore";
 
 import type { CommandConfig, CommandState, TerminalTabData, UnifiedTab, SessionMode, WorkspaceConfig } from "../../lib/types";
@@ -57,7 +59,7 @@ function toCommandConfig(command: CommandState): CommandConfig {
 }
 
 function fallbackWorkspaceName(repoPath: string) {
-  return repoPath.split("/").filter(Boolean).pop() ?? "Project";
+  return pathBasename(repoPath) || "Project";
 }
 
 function PanelLoader() {
@@ -282,7 +284,7 @@ export default function AppShell() {
 
   const handleRemoveProject = useCallback(
     async (repoPath: string) => {
-      const repoName = repoPath.split("/").filter(Boolean).pop() ?? "this project";
+      const repoName = pathBasename(repoPath) || "this project";
       const confirmed = await ask(
         `Remove "${repoName}" from Shep? The files on disk will not be deleted.`,
         { title: "Remove project", kind: "warning", okLabel: "Remove", cancelLabel: "Cancel" },
@@ -610,6 +612,54 @@ export default function AppShell() {
     return () => { unlisten.then((f) => f()); };
   }, [handleNewShell, handleNewAssistant, handleOpenInEditor, pushNotice]);
 
+  // Windows has no native menu (a Win32 menu strip can't sit under the custom
+  // titlebar, and native accelerators would steal Ctrl chords from the
+  // terminal), so app shortcuts are handled here. All chords use Ctrl+Shift —
+  // plain Ctrl+letter is a terminal control character — mirroring Windows
+  // Terminal conventions.
+  useEffect(() => {
+    if (!isWindows) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey && e.key === ",") {
+        e.preventDefault();
+        e.stopPropagation();
+        useUIStore.getState().toggleSettings();
+        return;
+      }
+      if (!e.ctrlKey || !e.shiftKey || e.altKey || e.metaKey) return;
+      const dispatch = (action: () => void) => {
+        e.preventDefault();
+        e.stopPropagation();
+        action();
+      };
+      switch (e.key.toLowerCase()) {
+        case "t":
+          dispatch(handleNewShell);
+          break;
+        case "a":
+          dispatch(handleNewAssistant);
+          break;
+        case "m":
+          dispatch(() => useTerminalStore.getState().addPanelTab("commands"));
+          break;
+        case "g":
+          dispatch(() => useTerminalStore.getState().addPanelTab("git"));
+          break;
+        case "b":
+          dispatch(() => useUIStore.getState().toggleSidebar());
+          break;
+        case "e":
+          dispatch(() => {
+            const repoPath = useTerminalStore.getState().activeProjectPath;
+            if (repoPath) handleOpenInEditor(repoPath);
+          });
+          break;
+      }
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [handleNewShell, handleNewAssistant, handleOpenInEditor]);
+
   const showOverlay = settingsActive || usagePanelActive || portsPanelActive;
 
   return (
@@ -628,12 +678,12 @@ export default function AppShell() {
           }
         }}
       >
-        <div className="absolute right-4 top-1/2 -translate-y-1/2 flex items-center gap-0.5 z-20">
+        <div className={`absolute ${isWindows ? "right-36" : "right-4"} top-1/2 -translate-y-1/2 flex items-center gap-0.5 z-20`}>
           <button
             onClick={(e) => { e.stopPropagation(); useUIStore.getState().toggleSidebar(); }}
             onMouseDown={(e) => e.stopPropagation()}
             className={`p-1 rounded transition-opacity hover:opacity-70 ${sidebarVisible ? "opacity-40" : "opacity-15"}`}
-            title={sidebarVisible ? "Hide sidebar (Cmd+B)" : "Show sidebar (Cmd+B)"}
+            title={sidebarVisible ? `Hide sidebar (${modKeyLabel}+${isWindows ? "Shift+" : ""}B)` : `Show sidebar (${modKeyLabel}+${isWindows ? "Shift+" : ""}B)`}
             aria-label={sidebarVisible ? "Hide sidebar" : "Show sidebar"}
           >
             <PanelLeft size={20} />
@@ -648,6 +698,31 @@ export default function AppShell() {
             <PanelRight size={20} />
           </button>
         </div>
+        {isWindows && (
+          <div className="window-caption" onMouseDown={(e) => e.stopPropagation()}>
+            <button
+              className="window-caption__button"
+              onClick={() => getCurrentWindow().minimize()}
+              aria-label="Minimize"
+            >
+              <Minus size={16} />
+            </button>
+            <button
+              className="window-caption__button"
+              onClick={() => getCurrentWindow().toggleMaximize()}
+              aria-label="Maximize"
+            >
+              <Square size={13} />
+            </button>
+            <button
+              className="window-caption__button window-caption__button--close"
+              onClick={() => getCurrentWindow().close()}
+              aria-label="Close"
+            >
+              <X size={16} />
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="app-shell__frame">

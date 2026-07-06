@@ -1,11 +1,13 @@
 import sharp from "sharp";
 import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 
 const SIZE = 1024;
 const PADDING = 180; // breathing room around the logo
 const CORNER_RADIUS = 220;
 const LOGO_PATH = new URL("../assets/shep_logo.svg", import.meta.url);
-const OUTPUT_PATH = new URL("../assets/icon-1024.png", import.meta.url).pathname;
+// fileURLToPath (not URL.pathname) so the path is valid on Windows too
+const OUTPUT_PATH = fileURLToPath(new URL("../assets/icon-1024.png", import.meta.url));
 
 function extractViewBox(svg) {
   const match = svg.match(/viewBox="([^"]+)"/i);

@@ -1,13 +1,12 @@
 use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(15);
 
 pub fn run_command(program: &str, args: &[&str]) -> Result<String, String> {
-    let mut child = Command::new(program)
+    let mut child = crate::util::quiet_command(program)
         .args(args)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())

@@ -617,7 +617,8 @@ fn estimate_text_tokens(text: &str) -> u64 {
 }
 
 fn project_name_from_path(path: &str) -> String {
-    path.rsplit('/')
+    // Provider logs record native OS paths — backslash-separated on Windows.
+    path.rsplit(['/', '\\'])
         .find(|segment| !segment.is_empty())
         .unwrap_or("unknown")
         .to_string()
@@ -721,14 +722,9 @@ fn ingest_codex_file(conn: &Connection, path: &Path) -> Result<(), String> {
                         .and_then(Value::as_str)
                         .unwrap_or_default()
                         .to_string();
-                    project = payload
-                        .get("cwd")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default()
-                        .split('/')
-                        .rfind(|s| !s.is_empty())
-                        .unwrap_or("unknown")
-                        .to_string();
+                    project = project_name_from_path(
+                        payload.get("cwd").and_then(Value::as_str).unwrap_or_default(),
+                    );
                 }
                 if let Some(ts_str) = row.get("timestamp").and_then(Value::as_str) {
                     timestamp = parse_iso_timestamp(ts_str).unwrap_or(0);
@@ -797,10 +793,23 @@ fn ingest_codex_file(conn: &Connection, path: &Path) -> Result<(), String> {
 // ── OpenCode ──────────────────────────────────────────────
 
 fn ingest_opencode(conn: &Connection) -> Result<bool, String> {
-    let db_path = home_join(".local/share/opencode/opencode.db")?;
-    if !db_path.exists() {
-        return Ok(true);
+    // OpenCode defaults to ~/.local/share/opencode on every platform, but
+    // honors XDG_DATA_HOME, and Windows installs may use %LOCALAPPDATA%.
+    let mut candidates: Vec<std::path::PathBuf> = Vec::new();
+    if let Ok(xdg) = std::env::var("XDG_DATA_HOME") {
+        if !xdg.is_empty() {
+            candidates.push(std::path::Path::new(&xdg).join("opencode/opencode.db"));
+        }
     }
+    candidates.push(home_join(".local/share/opencode/opencode.db")?);
+    #[cfg(windows)]
+    if let Some(local) = dirs::data_local_dir() {
+        candidates.push(local.join("opencode/opencode.db"));
+    }
+
+    let Some(db_path) = candidates.into_iter().find(|p| p.exists()) else {
+        return Ok(true);
+    };
 
     let cursor_key = "opencode:message-db";
     let meta = fs::metadata(&db_path).map_err(|e| e.to_string())?;
@@ -906,11 +915,7 @@ fn ingest_opencode(conn: &Connection) -> Result<bool, String> {
             .and_then(Value::as_u64)
             .unwrap_or(input + output + thoughts + cache_read + cache_write);
         let recorded_cost = payload.get("cost").and_then(Value::as_f64);
-        let project = directory
-            .split('/')
-            .rfind(|segment| !segment.is_empty())
-            .unwrap_or("unknown")
-            .to_string();
+        let project = project_name_from_path(&directory);
         let timestamp = payload
             .get("time")
             .and_then(|t| t.get("completed").or_else(|| t.get("created")))
@@ -1155,12 +1160,7 @@ fn read_pi_project(path: &Path) -> Option<String> {
     reader.read_line(&mut line).ok()?;
     let row: Value = serde_json::from_str(&line).ok()?;
     let cwd = row.get("cwd").and_then(Value::as_str)?;
-    Some(
-        cwd.rsplit('/')
-            .find(|s| !s.is_empty())
-            .unwrap_or("unknown")
-            .to_string(),
-    )
+    Some(project_name_from_path(cwd))
 }
 
 // ── Maintenance ───────────────────────────────────────────

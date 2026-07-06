@@ -8,6 +8,7 @@ import { assistantLogoSrc, getAssistantLogoClass } from "../../lib/assistantLogo
 import { handleActionKey } from "../../lib/a11y";
 import { useGitStore } from "../../stores/useGitStore";
 import tabKindMeta, { extraActions } from "../../lib/tabKindMeta";
+import { pathBasename } from "../../lib/paths";
 import type { UnifiedTab } from "../../lib/types";
 
 
@@ -115,7 +116,7 @@ export default function TabBar({
     useShallow((s) => ({ activeProjectPath: s.activeProjectPath, projectState: s.activeProjectPath ? s.projectState[s.activeProjectPath] : null })),
   );
   const projectTerminals = projectState;
-  const projectName = activeProjectPath ? activeProjectPath.split("/").pop() : null;
+  const projectName = activeProjectPath ? pathBasename(activeProjectPath) : null;
   const gitStatus = useGitStore((s) => activeProjectPath ? s.projectGitStatus[activeProjectPath] : null);
   const branch = gitStatus?.branch ?? null;
   const branchIconColor = !gitStatus || !gitStatus.is_git_repo

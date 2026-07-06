@@ -3,7 +3,7 @@ import type { ShepTheme } from "../../lib/themes";
 import { hexLuminance } from "../../lib/themes";
 import { shikiThemeFor } from "../../lib/shikiHighlighter";
 
-export const CODE_VIEW_FONT_STACK = "\"SF Mono\", \"Fira Code\", \"Cascadia Code\", monospace";
+export const CODE_VIEW_FONT_STACK = "\"SF Mono\", \"Fira Code\", \"Cascadia Code\", \"Consolas\", monospace";
 export const CODE_VIEW_FONT_SIZE = "12px";
 export const CODE_VIEW_LINE_HEIGHT = "18px";
 export const CODE_VIEW_LINE_PADDING_X = "14px";

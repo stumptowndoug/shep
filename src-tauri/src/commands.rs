@@ -169,15 +169,29 @@ pub fn reveal_in_finder(path: &str) -> Result<(), String> {
         return Err(format!("Path does not exist: {path}"));
     }
 
-    let status = Command::new("open")
-        .arg(path)
-        .status()
-        .map_err(|e| format!("Failed to open Finder: {e}"))?;
-
-    if status.success() {
+    #[cfg(windows)]
+    {
+        // explorer.exe routinely exits non-zero even on success, so a
+        // successful spawn counts as success.
+        crate::util::quiet_command("explorer")
+            .arg(path)
+            .spawn()
+            .map_err(|e| format!("Failed to open File Explorer: {e}"))?;
         Ok(())
-    } else {
-        Err(format!("Finder exited with status: {status}"))
+    }
+
+    #[cfg(not(windows))]
+    {
+        let status = Command::new("open")
+            .arg(path)
+            .status()
+            .map_err(|e| format!("Failed to open Finder: {e}"))?;
+
+        if status.success() {
+            Ok(())
+        } else {
+            Err(format!("Finder exited with status: {status}"))
+        }
     }
 }
 
@@ -193,6 +207,15 @@ pub fn open_url(url: &str, workspace: State<'_, WorkspaceManager>) -> Result<(),
         return Err(format!("URL scheme '{scheme}' is not allowed"));
     }
 
+    // rundll32 receives the URL as a plain argument, so no cmd.exe shell
+    // escaping issues with '&' or '^' in query strings.
+    #[cfg(windows)]
+    let status = crate::util::quiet_command("rundll32")
+        .args(["url.dll,FileProtocolHandler", url])
+        .status()
+        .map_err(|e| format!("Failed to open URL: {e}"))?;
+
+    #[cfg(not(windows))]
     let status = Command::new("open")
         .arg(url)
         .status()
@@ -313,6 +336,19 @@ pub fn shutdown_and_quit(app: tauri::AppHandle, pty_manager: State<'_, PtyManage
     app.exit(0);
 }
 
+/// Kill sessions and stop watchers without exiting. Used before installing an
+/// update on Windows, where the updater plugin launches the installer and
+/// terminates the process directly — bypassing the ExitRequested cleanup — so
+/// child processes must be reaped first or they orphan and hold files open.
+#[tauri::command]
+pub fn prepare_for_update(pty_manager: State<'_, PtyManager>, watcher: State<'_, GitWatcher>) {
+    if !pty_manager.begin_shutdown() {
+        return;
+    }
+    watcher.shutdown();
+    pty_manager.kill_all();
+}
+
 // ── File watcher commands ─────────────────────────────────────────
 
 #[tauri::command]
@@ -431,7 +467,9 @@ pub async fn git_diff_stats(path: String) -> Result<Vec<DiffFileStat>, String> {
 
 #[tauri::command]
 pub fn get_username() -> String {
-    std::env::var("USER").unwrap_or_default()
+    std::env::var("USER")
+        .or_else(|_| std::env::var("USERNAME"))
+        .unwrap_or_default()
 }
 
 #[tauri::command]
@@ -443,18 +481,42 @@ pub fn get_home_directory() -> Result<String, String> {
 
 #[tauri::command]
 pub fn get_default_shell() -> String {
-    std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string())
+    #[cfg(windows)]
+    {
+        // Prefer PowerShell 7+, then Windows PowerShell, then cmd.exe. Bare
+        // names are returned (not full paths) — the PTY spawn wraps commands
+        // with `cmd /c`, which resolves them from PATH.
+        for shell in ["pwsh.exe", "powershell.exe"] {
+            if which::which(shell).is_ok() {
+                return shell.to_string();
+            }
+        }
+        std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".to_string())
+    }
+
+    #[cfg(not(windows))]
+    {
+        std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string())
+    }
 }
 
 #[tauri::command]
 pub fn get_computer_name() -> String {
-    Command::new("scutil")
-        .args(["--get", "ComputerName"])
-        .output()
-        .ok()
-        .and_then(|o| String::from_utf8(o.stdout).ok())
-        .map(|s| s.trim().to_string())
-        .unwrap_or_default()
+    #[cfg(windows)]
+    {
+        std::env::var("COMPUTERNAME").unwrap_or_default()
+    }
+
+    #[cfg(not(windows))]
+    {
+        Command::new("scutil")
+            .args(["--get", "ComputerName"])
+            .output()
+            .ok()
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .map(|s| s.trim().to_string())
+            .unwrap_or_default()
+    }
 }
 
 // ── Todo commands ───────────────────────────────────────────────────
@@ -513,11 +575,21 @@ pub fn remove_skill(repo_path: &str, name: &str) -> Result<(), String> {
 
 #[tauri::command]
 pub fn check_command_exists(command: &str) -> bool {
-    Command::new("which")
-        .arg(command)
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+    // The `which` crate honors PATHEXT on Windows, so npm-installed .cmd/.ps1
+    // shims (claude.cmd, codex.cmd, ...) are found.
+    #[cfg(windows)]
+    {
+        which::which(command).is_ok()
+    }
+
+    #[cfg(not(windows))]
+    {
+        Command::new("which")
+            .arg(command)
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    }
 }
 
 #[tauri::command]
@@ -593,12 +665,41 @@ pub async fn get_models_for_provider(
     }
 }
 
+/// Build the process invocation for a CLI tool. On Windows, npm-installed
+/// CLIs are .cmd/.bat shims that CreateProcess cannot exec directly — resolve
+/// them via PATHEXT and run through `cmd /c`.
+fn cli_command(cmd: &str) -> Option<Command> {
+    #[cfg(windows)]
+    {
+        let resolved = which::which(cmd).ok()?;
+        let ext = resolved
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.to_ascii_lowercase());
+        if matches!(ext.as_deref(), Some("cmd") | Some("bat")) {
+            let mut c = crate::util::quiet_command("cmd.exe");
+            c.arg("/c").arg(resolved);
+            Some(c)
+        } else {
+            Some(crate::util::quiet_command(resolved))
+        }
+    }
+
+    #[cfg(not(windows))]
+    {
+        Some(Command::new(cmd))
+    }
+}
+
 fn query_cli_models(
     cmd: &str,
     args: &[&str],
     parser: fn(&str) -> Vec<String>,
 ) -> Vec<String> {
-    let mut child = match Command::new(cmd)
+    let Some(mut command) = cli_command(cmd) else {
+        return Vec::new();
+    };
+    let mut child = match command
         .args(args)
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -707,6 +808,7 @@ pub struct MemoryStats {
     pub children_rss: u64,
 }
 
+#[cfg(not(windows))]
 #[tauri::command]
 pub async fn get_memory_stats(pty_manager: State<'_, PtyManager>) -> Result<MemoryStats, String> {
     let app_pid = std::process::id() as i32;
@@ -732,7 +834,36 @@ pub async fn get_memory_stats(pty_manager: State<'_, PtyManager>) -> Result<Memo
     Ok(MemoryStats { app_rss, children_rss })
 }
 
+#[cfg(windows)]
+#[tauri::command]
+pub async fn get_memory_stats(pty_manager: State<'_, PtyManager>) -> Result<MemoryStats, String> {
+    use sysinfo::{Pid, ProcessesToUpdate, System};
+
+    let mut sys = System::new();
+    sys.refresh_processes(ProcessesToUpdate::All, true);
+
+    let app_rss = sys
+        .process(Pid::from_u32(std::process::id()))
+        .map(|p| p.memory())
+        .unwrap_or(0);
+
+    // The direct child + one level of descendants, matching the unix pgrep -P walk.
+    let mut children_rss: u64 = 0;
+    for pid in pty_manager.child_pids() {
+        let root = Pid::from_u32(pid);
+        children_rss += sys.process(root).map(|p| p.memory()).unwrap_or(0);
+        for process in sys.processes().values() {
+            if process.parent() == Some(root) {
+                children_rss += process.memory();
+            }
+        }
+    }
+
+    Ok(MemoryStats { app_rss, children_rss })
+}
+
 /// Get resident set size (RSS) for a single PID using `ps`.
+#[cfg(not(windows))]
 fn rss_for_pid(pid: i32) -> u64 {
     // ps -o rss= returns RSS in kilobytes
     Command::new("ps")
@@ -766,20 +897,47 @@ fn open_path_in_editor(repo_path: &str, editor_id: &str) -> Result<(), String> {
         }
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(windows)]
+    {
+        let cli = editor_cli_name(editor_id)
+            .ok_or_else(|| format!("Unsupported editor: {editor_id}"))?;
+
+        let mut cmd = cli_command(cli).ok_or_else(|| {
+            format!("Could not find '{cli}' on PATH. Install the editor's command-line launcher.")
+        })?;
+
+        cmd.arg(repo_path)
+            .spawn()
+            .map_err(|e| format!("Failed to launch {cli}: {e}"))?;
+        Ok(())
+    }
+
+    #[cfg(not(any(target_os = "macos", windows)))]
     {
         let _ = repo_path;
         let _ = editor_id;
-        Err("Open in editor is currently only implemented for macOS.".to_string())
+        Err("Open in editor is currently only implemented for macOS and Windows.".to_string())
     }
 }
 
+#[cfg(target_os = "macos")]
 fn editor_app_name(editor_id: &str) -> Option<&'static str> {
     match editor_id {
         "vscode" => Some("Visual Studio Code"),
         "zed" => Some("Zed"),
         "cursor" => Some("Cursor"),
         "sublime_text" => Some("Sublime Text"),
+        _ => None,
+    }
+}
+
+#[cfg(windows)]
+fn editor_cli_name(editor_id: &str) -> Option<&'static str> {
+    match editor_id {
+        "vscode" => Some("code"),
+        "zed" => Some("zed"),
+        "cursor" => Some("cursor"),
+        "sublime_text" => Some("subl"),
         _ => None,
     }
 }
@@ -802,7 +960,7 @@ pub struct PortInfo {
 /// failure or timeout. Prevents hangs from stalling the app (e.g. NFS mounts,
 /// broken pipes). Matches port-whisperer's 5-10s timeout pattern.
 fn run_with_timeout(cmd: &str, args: &[&str], timeout: std::time::Duration) -> String {
-    let mut child = match Command::new(cmd).args(args)
+    let mut child = match crate::util::quiet_command(cmd).args(args)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
         .spawn() {
@@ -834,6 +992,7 @@ fn run_with_timeout(cmd: &str, args: &[&str], timeout: std::time::Duration) -> S
         .unwrap_or_default()
 }
 
+#[cfg(not(windows))]
 #[tauri::command]
 pub async fn list_listening_ports(
     workspace: State<'_, WorkspaceManager>,
@@ -937,7 +1096,113 @@ pub async fn list_listening_ports(
     Ok(results)
 }
 
-/// Extract port number from lsof NAME field like "*:3000", "127.0.0.1:8080", "[::1]:5173"
+#[cfg(windows)]
+#[tauri::command]
+pub async fn list_listening_ports(
+    workspace: State<'_, WorkspaceManager>,
+) -> Result<Vec<PortInfo>, String> {
+    use sysinfo::{Pid, ProcessesToUpdate, System};
+
+    let repos = workspace.list_repos().unwrap_or_default();
+    let repo_paths: Vec<String> = repos.iter().map(|r| r.path.clone()).collect();
+    let timeout = std::time::Duration::from_secs(5);
+
+    // ── Step 1: netstat to find listening ports (TCP over v4 and v6) ──
+    let stdout = run_with_timeout("netstat", &["-ano"], timeout);
+
+    let mut port_map: std::collections::HashSet<u16> = std::collections::HashSet::new();
+    struct Entry { port: u16, pid: u32 }
+    let mut entries: Vec<Entry> = Vec::new();
+
+    for line in stdout.lines() {
+        // "  TCP    0.0.0.0:3000    0.0.0.0:0    LISTENING    1234"
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() < 5 || parts[0] != "TCP" || parts[3] != "LISTENING" { continue; }
+
+        let port: u16 = match extract_port(parts[1]) {
+            Some(p) => p,
+            None => continue,
+        };
+        let pid: u32 = match parts[4].parse() { Ok(p) => p, Err(_) => continue };
+        if pid == 0 { continue; }
+
+        // Deduplicate by port (first entry wins, like port-whisperer)
+        if !port_map.insert(port) { continue; }
+
+        entries.push(Entry { port, pid });
+    }
+
+    if entries.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // ── Step 2: process metadata (name, RSS, uptime, cmdline, cwd) ────
+    let mut sys = System::new();
+    sys.refresh_processes(ProcessesToUpdate::All, true);
+
+    let mut results: Vec<PortInfo> = Vec::with_capacity(entries.len());
+
+    for entry in entries {
+        let Some(process) = sys.process(Pid::from_u32(entry.pid)) else { continue };
+
+        let name = process.name().to_string_lossy().to_string();
+        let process_name = if name.to_ascii_lowercase().ends_with(".exe") {
+            name[..name.len() - 4].to_string()
+        } else {
+            name
+        };
+
+        // Filter out system/desktop apps
+        if !is_dev_process(&process_name) { continue; }
+
+        let cmdline = process
+            .cmd()
+            .iter()
+            .map(|part| part.to_string_lossy())
+            .collect::<Vec<_>>()
+            .join(" ");
+        let raw_cwd = process
+            .cwd()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_default();
+
+        let project_root = find_project_root(&raw_cwd);
+        let framework = detect_framework(&process_name, &cmdline, &project_root);
+        let project = match_project(&project_root, &repo_paths);
+
+        results.push(PortInfo {
+            port: entry.port,
+            pid: entry.pid,
+            process: process_name,
+            cwd: project_root,
+            project,
+            framework,
+            uptime: format_uptime(process.run_time()),
+            memory_kb: process.memory() / 1024,
+        });
+    }
+
+    results.sort_by_key(|p| p.port);
+    Ok(results)
+}
+
+/// Format seconds as ps-style etime: MM:SS, HH:MM:SS, or D-HH:MM:SS.
+#[cfg(windows)]
+fn format_uptime(total_secs: u64) -> String {
+    let days = total_secs / 86_400;
+    let hours = (total_secs % 86_400) / 3_600;
+    let minutes = (total_secs % 3_600) / 60;
+    let seconds = total_secs % 60;
+    if days > 0 {
+        format!("{days}-{hours:02}:{minutes:02}:{seconds:02}")
+    } else if hours > 0 {
+        format!("{hours:02}:{minutes:02}:{seconds:02}")
+    } else {
+        format!("{minutes:02}:{seconds:02}")
+    }
+}
+
+/// Extract port number from an address field like "*:3000", "127.0.0.1:8080", "[::1]:5173"
 fn extract_port(name_field: &str) -> Option<u16> {
     name_field.rsplit(':').next()?.parse().ok()
 }
@@ -954,6 +1219,11 @@ fn is_dev_process(process_name: &str) -> bool {
         "kernel_tas", "launchd", "mdworker", "mds_store", "cfprefsd",
         "coreaudio", "corebrigh", "airportd", "bluetoothd", "sharingd",
         "usernoted", "notificat", "cloudd",
+        // Windows system/desktop processes
+        "svchost", "system", "lsass", "wininit", "services", "spoolsv",
+        "searchhost", "runtimebroker", "msedge", "onedrive", "steam",
+        "nvcontainer", "widgets", "memcompression", "dwm", "csrss",
+        "explorer", "sihost", "taskhostw", "dllhost", "conhost",
     ];
     for app in &system_apps {
         if name.starts_with(app) { return false; }
@@ -1029,31 +1299,65 @@ fn detect_framework(process: &str, cmdline: &str, project_root: &str) -> String 
 
 fn match_project(cwd: &str, repo_paths: &[String]) -> String {
     if cwd.is_empty() { return String::new(); }
+
+    // NTFS is case-insensitive and paths arrive with mixed separators, so
+    // normalize before the prefix comparison on Windows.
+    #[cfg(windows)]
+    fn norm(path: &str) -> String {
+        path.replace('\\', "/").to_ascii_lowercase()
+    }
+    #[cfg(not(windows))]
+    fn norm(path: &str) -> String {
+        path.to_string()
+    }
+
+    let cwd_norm = norm(cwd);
     repo_paths
         .iter()
-        .filter(|repo| cwd.starts_with(repo.as_str()))
+        .filter(|repo| cwd_norm.starts_with(&norm(repo)))
         .max_by_key(|repo| repo.len())
-        .and_then(|repo| repo.rsplit('/').next())
+        .and_then(|repo| Path::new(repo).file_name().and_then(|n| n.to_str()))
         .unwrap_or("")
         .to_string()
 }
 
 #[tauri::command]
 pub async fn kill_port(pid: u32) -> Result<(), String> {
-    // SIGTERM first, then SIGKILL if needed
     let pid_str = pid.to_string();
-    let status = Command::new("kill")
-        .arg(&pid_str)
-        .status()
-        .map_err(|e| format!("Failed to kill process {pid}: {e}"))?;
 
-    if !status.success() {
-        Command::new("kill")
-            .args(["-9", &pid_str])
+    // Graceful first, then force-kill (with the child tree) if needed
+    #[cfg(windows)]
+    {
+        let status = crate::util::quiet_command("taskkill")
+            .args(["/PID", &pid_str, "/T"])
             .status()
-            .map_err(|e| format!("Failed to force-kill process {pid}: {e}"))?;
+            .map_err(|e| format!("Failed to kill process {pid}: {e}"))?;
+
+        if !status.success() {
+            crate::util::quiet_command("taskkill")
+                .args(["/F", "/T", "/PID", &pid_str])
+                .status()
+                .map_err(|e| format!("Failed to force-kill process {pid}: {e}"))?;
+        }
+        Ok(())
     }
-    Ok(())
+
+    // SIGTERM first, then SIGKILL if needed
+    #[cfg(not(windows))]
+    {
+        let status = Command::new("kill")
+            .arg(&pid_str)
+            .status()
+            .map_err(|e| format!("Failed to kill process {pid}: {e}"))?;
+
+        if !status.success() {
+            Command::new("kill")
+                .args(["-9", &pid_str])
+                .status()
+                .map_err(|e| format!("Failed to force-kill process {pid}: {e}"))?;
+        }
+        Ok(())
+    }
 }
 
 // ── Pi config commands ─────────────────────────────────────────────

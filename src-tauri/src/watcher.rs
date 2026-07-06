@@ -136,7 +136,10 @@ impl GitWatcher {
     }
 
     pub fn watch(&self, path: &str) -> Result<(), String> {
+        // Normalize so event paths reported by the OS backend prefix-match the
+        // stored root (Windows event paths come back canonical/backslashed).
         let path_buf = PathBuf::from(path);
+        let path_buf = dunce::canonicalize(&path_buf).unwrap_or(path_buf);
         let mut watched = self.watched_paths.lock().unwrap();
 
         if watched.contains(&path_buf) {
@@ -156,6 +159,7 @@ impl GitWatcher {
 
     pub fn unwatch(&self, path: &str) -> Result<(), String> {
         let path_buf = PathBuf::from(path);
+        let path_buf = dunce::canonicalize(&path_buf).unwrap_or(path_buf);
         let mut watched = self.watched_paths.lock().unwrap();
 
         if !watched.remove(&path_buf) {

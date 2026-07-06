@@ -21,6 +21,7 @@ import {
 import { ALL_USAGE_PROVIDERS } from "../usage/usageHelpers";
 import type { CursorStyle, BudgetMode, FontFamily } from "../../lib/types";
 import { getErrorMessage } from "../../lib/errors";
+import { isMac } from "../../lib/platform";
 import { listMonospaceFamilies } from "../../lib/tauri";
 
 interface AppMeta {
@@ -186,8 +187,9 @@ export default function SettingsPanel() {
 
 
   // Assemble the searchable list: always surface the bundled MesloLGS NF
-  // (the default) even if CoreText didn't return it as a system-installed
-  // family, then append everything from Rust. Dedupe by family name.
+  // (the default) even if the OS font enumerator (CoreText/fontdb) didn't
+  // return it as a system-installed family, then append everything from
+  // Rust. Dedupe by family name.
   const pickerFamilies = useMemo(() => {
     const seen = new Set<string>();
     const list: FontFamily[] = [];
@@ -481,7 +483,7 @@ export default function SettingsPanel() {
         <div className="settings-row">
           <span className="settings-row__label flex items-center gap-2">
             <span>Font</span>
-            <InfoTip text="Lists every installed monospace font on your Mac. Nerd Font variants are surfaced first — they're the best choice for powerline prompts and devicons." />
+            <InfoTip text="Lists every installed monospace font on this computer. Nerd Font variants are surfaced first — they're the best choice for powerline prompts and devicons." />
           </span>
           <div className="relative" ref={fontPickerRef}>
             <button
@@ -715,7 +717,7 @@ export default function SettingsPanel() {
           <div className="mb-4">
             <div className="text-sm text-[var(--text-secondary)] mb-2">Update downloaded and ready to install.</div>
             <button className="btn-primary" onClick={() => void restartApp()}>
-              Restart Now
+              {isMac ? "Restart Now" : "Install & Restart"}
             </button>
           </div>
         )}

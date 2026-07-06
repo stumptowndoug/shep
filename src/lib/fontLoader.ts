@@ -1,5 +1,6 @@
 import { loadFontFamily } from "./tauri";
 import { TERMINAL_FONT_FAMILY } from "./terminalConfig";
+import { isMac } from "./platform";
 
 /**
  * CSS font-stretch keywords, indexed 1..9 to match the `stretch` value we
@@ -25,13 +26,12 @@ const CSS_STRETCH = [
  */
 const SKIP_FAMILIES = new Set<string>([
   TERMINAL_FONT_FAMILY,
-  "Menlo",
-  "Monaco",
-  "Courier",
-  "Courier New",
-  "Andale Mono",
   "monospace",
   "ui-monospace",
+  "Courier New",
+  ...(isMac
+    ? ["Menlo", "Monaco", "Courier", "Andale Mono"]
+    : ["Consolas", "Cascadia Mono", "Cascadia Code", "Lucida Console"]),
 ]);
 
 /** Families already registered with document.fonts in this session. */

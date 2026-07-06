@@ -1,22 +1,15 @@
 //! macOS CoreText-based font enumeration and resolution.
 //!
-//! Two public entry points:
-//!
-//! - [`list_monospace_families`] enumerates every installed font family that
-//!   advertises the `kCTFontMonoSpaceTrait` symbolic trait. Result is cached in
-//!   a `OnceLock` because enumeration walks every installed font and only
-//!   changes when the user installs/removes fonts (an app restart recovers).
+//! - [`enumerate_monospace_families`] enumerates every installed font family
+//!   that advertises the `kCTFontMonoSpaceTrait` symbolic trait.
 //!
 //! - [`load_font_family`] resolves a family name to all of its on-disk faces
 //!   via `CTFontCollectionCreateForFamily`, reads the raw font file bytes, and
 //!   extracts CSS-compatible weight/italic/stretch values from the descriptor's
-//!   traits attribute dictionary. The frontend passes each face to the
-//!   `FontFace` constructor with proper descriptors so the browser does not
-//!   synthesize bold/italic variants.
+//!   traits attribute dictionary.
 
 use std::fs;
 use std::path::PathBuf;
-use std::sync::OnceLock;
 
 use core_foundation::{
     array::{CFArray, CFArrayRef},
@@ -30,7 +23,8 @@ use core_text::{
     font_collection,
     font_descriptor::{kCTFontTraitsAttribute, kCTFontURLAttribute, CTFontDescriptor},
 };
-use serde::Serialize;
+
+use super::{is_nerd_font_name, FontFaceData, FontFamily};
 
 // Raw CTFontDescriptor pointer, for the FFI signatures below. Equivalent to
 // `CTFontDescriptorRef` in the CoreText C headers.
@@ -62,40 +56,7 @@ extern "C" {
 /// Bit set in `kCTFontSymbolicTrait` when the font is monospace.
 const MONO_SPACE_TRAIT: u32 = 1 << 10;
 
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct FontFamily {
-    pub family: String,
-    pub face_count: usize,
-    pub is_nerd_font: bool,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct FontFaceData {
-    /// Raw TTF/OTF bytes read from disk.
-    pub data: Vec<u8>,
-    /// CSS font-weight value in the 100..=900 range.
-    pub weight: u16,
-    /// Whether the face is italic or oblique.
-    pub italic: bool,
-    /// CSS font-stretch keyword index (1 = ultra-condensed .. 9 = ultra-expanded).
-    pub stretch: u16,
-}
-
-/// Cached list of installed monospace families. Populated once per process.
-static MONO_FAMILIES: OnceLock<Vec<FontFamily>> = OnceLock::new();
-
-/// Return the cached list of installed monospace families, enumerating on
-/// first call. The result is stable for the lifetime of the process; an app
-/// restart is required to pick up newly-installed fonts.
-pub fn list_monospace_families() -> Vec<FontFamily> {
-    MONO_FAMILIES
-        .get_or_init(enumerate_monospace_families)
-        .clone()
-}
-
-fn enumerate_monospace_families() -> Vec<FontFamily> {
+pub fn enumerate_monospace_families() -> Vec<FontFamily> {
     let family_names = all_family_names();
     let mut result: Vec<FontFamily> = Vec::with_capacity(family_names.len());
 
@@ -131,13 +92,6 @@ fn enumerate_monospace_families() -> Vec<FontFamily> {
         });
     }
 
-    // Nerd Fonts first, then alphabetical within each group. Developers
-    // overwhelmingly want Nerd Font variants for powerline/devicons.
-    result.sort_by(|a, b| {
-        b.is_nerd_font
-            .cmp(&a.is_nerd_font)
-            .then_with(|| a.family.to_lowercase().cmp(&b.family.to_lowercase()))
-    });
     result
 }
 
@@ -150,11 +104,6 @@ fn all_family_names() -> Vec<String> {
         let array: CFArray<CFString> = CFArray::wrap_under_create_rule(array_ref);
         array.iter().map(|s| s.to_string()).collect()
     }
-}
-
-fn is_nerd_font_name(name: &str) -> bool {
-    let lower = name.to_lowercase();
-    lower.contains("nerd font") || lower.contains("nerdfont")
 }
 
 /// Resolve a font family name to every on-disk face. Returns an empty vec if

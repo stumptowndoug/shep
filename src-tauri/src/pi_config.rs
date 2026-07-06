@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
+#[cfg(target_os = "macos")]
 use std::process::Command;
 
 use serde::{Deserialize, Serialize};
@@ -145,6 +146,7 @@ pub fn save_pi_settings(settings: PiSettings) -> Result<(), String> {
     fs::write(&path, json).map_err(|e| format!("Failed to write pi settings: {e}"))
 }
 
+#[cfg(target_os = "macos")]
 pub fn save_pi_api_key(provider: &str, api_key: &str) -> Result<(), String> {
     validate_provider_id(provider)?;
     let service = format!("shep-pi-{provider}");
@@ -174,6 +176,17 @@ pub fn save_pi_api_key(provider: &str, api_key: &str) -> Result<(), String> {
     )
 }
 
+/// On non-macOS platforms there is no Keychain-backed `!command` reference the
+/// pi CLI can execute, so store the key directly in auth.json (a plain
+/// `api_key` entry, which pi supports natively). The file lives in the user's
+/// home directory with default user-only ACLs.
+#[cfg(not(target_os = "macos"))]
+pub fn save_pi_api_key(provider: &str, api_key: &str) -> Result<(), String> {
+    validate_provider_id(provider)?;
+    update_auth_entry(provider, api_key)
+}
+
+#[cfg(target_os = "macos")]
 pub fn delete_pi_api_key(provider: &str) -> Result<(), String> {
     validate_provider_id(provider)?;
     let service = format!("shep-pi-{provider}");
@@ -183,6 +196,12 @@ pub fn delete_pi_api_key(provider: &str) -> Result<(), String> {
         .args(["delete-generic-password", "-a", "shep-pi", "-s", &service])
         .output();
 
+    remove_auth_entry(provider)
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn delete_pi_api_key(provider: &str) -> Result<(), String> {
+    validate_provider_id(provider)?;
     remove_auth_entry(provider)
 }
 

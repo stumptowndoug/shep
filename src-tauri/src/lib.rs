@@ -7,6 +7,7 @@ mod pty;
 mod skills;
 mod todos;
 mod usage;
+mod util;
 mod watcher;
 mod workspace;
 
@@ -108,6 +109,7 @@ pub fn run() {
             commands::kill_pty,
             commands::get_pty_session_count,
             commands::shutdown_and_quit,
+            commands::prepare_for_update,
             commands::get_username,
             commands::get_home_directory,
             commands::get_default_shell,

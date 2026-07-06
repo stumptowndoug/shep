@@ -11,6 +11,7 @@ import { useNoticeStore } from "../stores/useNoticeStore";
 import { CODING_ASSISTANTS } from "../components/sidebar/constants";
 import type { Terminal } from "@xterm/xterm";
 import { getErrorMessage } from "../lib/errors";
+import { isWindows } from "../lib/platform";
 
 // Map ptyId -> xterm instance for writing output
 const terminalInstances = new Map<number, Terminal>();
@@ -100,7 +101,10 @@ function writeToPty(ptyId: number, data: string) {
 function resolveCommandCwd(repoPath: string, commandCwd: string | null) {
   const trimmed = commandCwd?.trim();
   if (!trimmed) return repoPath;
-  const relativePath = trimmed.replace(/^\.?\//, "").replace(/^\/+/, "");
+  // Normalize backslashes so `.\packages\app` and `./packages/app` are
+  // treated alike, then strip leading ./ and / to force a repo-relative join.
+  const normalized = trimmed.replace(/\\/g, "/").replace(/^[A-Za-z]:/, "");
+  const relativePath = normalized.replace(/^\.?\//, "").replace(/^\/+/, "");
   return `${repoPath}/${relativePath}`;
 }
 
@@ -312,8 +316,9 @@ export function usePty() {
 
       try {
         const shell = await getDefaultShell();
+        // `-l` (login shell) is a unix flag; Windows shells reject it.
         const ptyId = await spawnSession(
-          `${shell} -l`,
+          isWindows ? shell : `${shell} -l`,
           null,
           {},
           cols,

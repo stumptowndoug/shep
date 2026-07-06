@@ -1,8 +1,21 @@
+import { isMac } from "./platform";
+
 export const TERMINAL_FONT_SIZE = 14;
 export const TERMINAL_FONT_FAMILY = "MesloLGS NF";
 export const TERMINAL_LINE_HEIGHT = 1;
 
-const DEFAULT_FALLBACKS = ["MesloLGS NF", "Menlo", "Monaco", "Courier", "Andale Mono", "monospace"];
+// The bundled MesloLGS NF always resolves first; the rest of the chain covers
+// both macOS (Menlo, Monaco) and Windows (Cascadia Mono, Consolas) so a failed
+// user font never lands on the browser's generic default.
+const DEFAULT_FALLBACKS = [
+  "MesloLGS NF",
+  "Menlo",
+  "Monaco",
+  "Cascadia Mono",
+  "Consolas",
+  "Courier New",
+  "monospace",
+];
 const GENERIC_FAMILIES = new Set([
   "serif",
   "sans-serif",
@@ -19,13 +32,21 @@ const GENERIC_FAMILIES = new Set([
   "fangsong",
 ]);
 
-export const FONT_OPTIONS = [
-  { id: "MesloLGS NF", label: "MesloLGS Nerd Font" },
-  { id: "Menlo", label: "Menlo" },
-  { id: "Monaco", label: "Monaco" },
-  { id: "Courier", label: "Courier" },
-  { id: "Andale Mono", label: "Andale Mono" },
-] as const;
+export const FONT_OPTIONS: readonly { id: string; label: string }[] = isMac
+  ? [
+      { id: "MesloLGS NF", label: "MesloLGS Nerd Font" },
+      { id: "Menlo", label: "Menlo" },
+      { id: "Monaco", label: "Monaco" },
+      { id: "Courier", label: "Courier" },
+      { id: "Andale Mono", label: "Andale Mono" },
+    ]
+  : [
+      { id: "MesloLGS NF", label: "MesloLGS Nerd Font" },
+      { id: "Cascadia Mono", label: "Cascadia Mono" },
+      { id: "Cascadia Code", label: "Cascadia Code" },
+      { id: "Consolas", label: "Consolas" },
+      { id: "Courier New", label: "Courier New" },
+    ];
 
 export const FONT_SIZE_OPTIONS = [12, 13, 14, 15, 16, 18] as const;
 

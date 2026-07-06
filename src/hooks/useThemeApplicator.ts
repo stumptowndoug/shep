@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { getCurrentWindow, Effect, EffectState } from "@tauri-apps/api/window";
+import { isWindows } from "../lib/platform";
 import { useThemeStore } from "../stores/useThemeStore";
 import { applyThemeToTerminals } from "../components/terminal/terminalTheme";
 import { hexLuminance } from "../lib/themes";
@@ -59,8 +60,10 @@ export function useThemeApplicator(): void {
     const win = getCurrentWindow();
     if (theme.isTransparent) {
       document.body.classList.add("theme-clear");
+      // HudWindow is an NSVisualEffectView material (macOS); Windows gets the
+      // DWM equivalents — Tauri applies the first effect the OS supports.
       win.setEffects({
-        effects: [Effect.HudWindow],
+        effects: isWindows ? [Effect.Acrylic, Effect.Blur] : [Effect.HudWindow],
         state: EffectState.Active,
       });
     } else {

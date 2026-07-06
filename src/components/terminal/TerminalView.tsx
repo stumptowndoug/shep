@@ -22,6 +22,7 @@ import { createTerminalTheme } from "./terminalTheme";
 import { useThemeStore } from "../../stores/useThemeStore";
 import { notifyAgent } from "../../lib/notifications";
 import { KEYBINDING_PRESETS } from "../../lib/keybindingPresets";
+import { isWindows } from "../../lib/platform";
 import { useKeybindingStore } from "../../stores/useKeybindingStore";
 import { useTerminalSettingsStore } from "../../stores/useTerminalSettingsStore";
 
@@ -60,6 +61,9 @@ export default function TerminalView({
       scrollback: termSettings.scrollback,
       allowTransparency: true,
       allowProposedApi: true,
+      // The backend PTY is ConPTY on Windows; without this xterm's reflow and
+      // wrapped-line heuristics scramble output on resize and copy.
+      windowsPty: isWindows ? { backend: "conpty" } : undefined,
       linkHandler: {
         activate: (_ev, url) => {
           void openUrl(url);
@@ -101,6 +105,33 @@ export default function TerminalView({
 
     // Intercept key combos for custom keybindings
     term.attachCustomKeyEventHandler((ev) => {
+      // Windows terminal convention: Ctrl+Shift+C copies the selection,
+      // Ctrl+Shift+V pastes (Cmd+C/Cmd+V never reach the PTY on macOS, but
+      // every plain Ctrl+letter chord is a control character here).
+      if (
+        isWindows &&
+        ev.ctrlKey &&
+        ev.shiftKey &&
+        !ev.altKey &&
+        !ev.metaKey
+      ) {
+        const key = ev.key.toLowerCase();
+        if (key === "c" && term.hasSelection()) {
+          if (ev.type === "keydown") {
+            void navigator.clipboard.writeText(term.getSelection());
+          }
+          return false;
+        }
+        if (key === "v") {
+          if (ev.type === "keydown") {
+            void navigator.clipboard.readText().then((text) => {
+              if (text) term.paste(text);
+            });
+          }
+          return false;
+        }
+      }
+
       const settings = useKeybindingStore.getState().settings;
       for (const preset of KEYBINDING_PRESETS) {
         if (settings[preset.id] && preset.match(ev)) {

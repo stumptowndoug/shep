@@ -78,10 +78,12 @@ pub fn read_todos(repo_path: &str) -> Result<Vec<TodoFile>, String> {
             Ok(c) => c,
             Err(_) => continue,
         };
+        // Forward slashes on every platform — this string is display/grouping
+        // data for the frontend, not a filesystem path.
         let relative_path = path
             .strip_prefix(&root)
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|_| path.to_string_lossy().to_string());
+            .map(|p| p.to_string_lossy().replace('\\', "/"))
+            .unwrap_or_else(|_| path.to_string_lossy().replace('\\', "/"));
         let (sections, items) = parse_content(&content);
         files.push(TodoFile {
             path: path.to_string_lossy().to_string(),

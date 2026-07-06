@@ -21,6 +21,7 @@ import { useNoticeStore } from "../../stores/useNoticeStore";
 import { useSkillStore } from "../../stores/useSkillStore";
 import { getErrorMessage } from "../../lib/errors";
 import { handleActionKey } from "../../lib/a11y";
+import { fileManagerName } from "../../lib/platform";
 import { gitCreateWorktree, revealInFinder } from "../../lib/tauri";
 import ActivityIndicator, { getAggregateActivityStatus } from "./ActivityIndicator";
 
@@ -196,14 +197,14 @@ export default function ProjectItem({
       onClick: onOpenInEditor,
     },
     {
-      label: "Open in Finder",
+      label: `Open in ${fileManagerName}`,
       icon: <FolderOpen size={14} />,
       onClick: () => {
         revealInFinder(repo.path)
           .catch((error) => {
             pushNotice({
               tone: "error",
-              title: "Couldn't open in Finder",
+              title: `Couldn't open in ${fileManagerName}`,
               message: getErrorMessage(error),
             });
           });

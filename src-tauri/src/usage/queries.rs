@@ -279,7 +279,9 @@ fn resolve_path_alias(path: PathBuf) -> Option<ProjectAliasResolution> {
     } else {
         path
     };
-    let canonical_path = expanded.canonicalize().ok()?;
+    // dunce avoids \\?\ verbatim prefixes on Windows so canonical ids match
+    // path strings produced elsewhere in the app.
+    let canonical_path = dunce::canonicalize(&expanded).ok()?;
     let git_root = find_git_root(canonical_path.clone());
     let canonical_id_path = git_root.as_ref().unwrap_or(&canonical_path);
     Some(ProjectAliasResolution {
@@ -295,7 +297,12 @@ fn resolve_path_alias(path: PathBuf) -> Option<ProjectAliasResolution> {
 fn encoded_home_prefixes() -> Vec<String> {
     let mut prefixes = Vec::new();
     if let Some(home) = dirs::home_dir().and_then(|home| home.to_str().map(str::to_string)) {
-        let encoded_home = home.replace('/', "-");
+        // Claude Code encodes '/', '\' and ':' as '-' when building project
+        // labels (e.g. C:\Users\Josh -> C--Users-Josh on Windows).
+        let encoded_home: String = home
+            .chars()
+            .map(|c| if c == '/' || c == '\\' || c == ':' { '-' } else { c })
+            .collect();
         prefixes.push(format!("{encoded_home}-dev--shep-worktrees-"));
         prefixes.push(format!("{encoded_home}--shep-worktrees-"));
         prefixes.push(format!("{encoded_home}-dev-"));
@@ -317,7 +324,7 @@ fn resolve_project_alias(raw_label: &str) -> ProjectAliasResolution {
         };
     }
 
-    if (label.starts_with('/') || label.starts_with("~/"))
+    if (label.starts_with('/') || label.starts_with("~/") || Path::new(label).is_absolute())
         && resolve_path_alias(PathBuf::from(label)).is_some()
     {
         return resolve_path_alias(PathBuf::from(label)).unwrap();

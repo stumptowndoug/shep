@@ -100,7 +100,7 @@ export function shikiThemeFor(theme: ShepTheme): string {
 /** Detect a Shiki language from a file path, or null if unsupported.
  *  Returning null skips the Shiki call entirely and falls back to plain text. */
 export function langForFile(filePath: string): string | null {
-  const base = filePath.split("/").pop() ?? "";
+  const base = filePath.split(/[\\/]/).pop() ?? "";
   const dot = base.lastIndexOf(".");
   if (dot === -1) return null;
   const ext = base.slice(dot + 1).toLowerCase();

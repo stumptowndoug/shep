@@ -1203,7 +1203,7 @@ select {
   margin-top: 1px;
   font-size: 11px;
   color: var(--text-muted);
-  font-family: "SF Mono", "Fira Code", "Cascadia Code", monospace;
+  font-family: "SF Mono", "Fira Code", "Cascadia Code", "Consolas", monospace;
 }
 
 .command-empty-state {
@@ -1242,7 +1242,7 @@ select {
 }
 
 .command-form__input--code {
-  font-family: "SF Mono", "Fira Code", "Cascadia Code", monospace;
+  font-family: "SF Mono", "Fira Code", "Cascadia Code", "Consolas", monospace;
 }
 
 .command-form__textarea {
@@ -1251,7 +1251,7 @@ select {
   padding: 6px 8px;
   border-radius: var(--radius-sm);
   font-size: 12px;
-  font-family: "SF Mono", "Fira Code", "Cascadia Code", monospace;
+  font-family: "SF Mono", "Fira Code", "Cascadia Code", "Consolas", monospace;
   color: var(--text-primary);
   background: color-mix(in srgb, var(--overlay) 6%, transparent);
   border: 1px solid var(--border-hover);
@@ -1401,6 +1401,37 @@ select {
   color: var(--text-muted);
   pointer-events: none;
   user-select: none;
+}
+
+/* ── Windows caption buttons (frameless window, no traffic lights) ── */
+
+.window-caption {
+  position: absolute;
+  top: 0;
+  right: 0;
+  height: 100%;
+  display: flex;
+  align-items: stretch;
+  z-index: 30;
+}
+
+.window-caption__button {
+  width: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.window-caption__button:hover {
+  background-color: color-mix(in srgb, var(--overlay) 12%, transparent);
+  color: var(--app-fg);
+}
+
+.window-caption__button--close:hover {
+  background-color: #e81123;
+  color: #ffffff;
 }
 
 /* ── Sidebar usage section ─────────────────────────────── */
@@ -2433,7 +2464,7 @@ select {
  * mode toggle) can absolute-position relative to it without fighting
  * the scroll container inside DiffViewer/FileViewer. */
 .git-panel__viewer-area {
-  --code-view-font-family: "SF Mono", "Fira Code", "Cascadia Code", monospace;
+  --code-view-font-family: "SF Mono", "Fira Code", "Cascadia Code", "Consolas", monospace;
   --code-view-font-size: 12px;
   --code-view-line-height: 18px;
   --code-view-line-padding-x: 14px;
@@ -2677,7 +2708,7 @@ select {
 }
 
 .markdown-view__content code {
-  font-family: "SF Mono", "Fira Code", "Cascadia Code", monospace;
+  font-family: "SF Mono", "Fira Code", "Cascadia Code", "Consolas", monospace;
   font-size: 0.92em;
 }
 
@@ -2896,7 +2927,7 @@ select {
 .commands-panel__input--command {
   flex: 1;
   min-width: 0;
-  font-family: "SF Mono", "Fira Code", "Cascadia Code", monospace;
+  font-family: "SF Mono", "Fira Code", "Cascadia Code", "Consolas", monospace;
 }
 
 .commands-panel__auto {
@@ -3137,7 +3168,7 @@ select {
   padding: 4px 8px;
   border-radius: var(--radius-sm);
   font-size: 12px;
-  font-family: "SF Mono", "Fira Code", "Cascadia Code", monospace;
+  font-family: "SF Mono", "Fira Code", "Cascadia Code", "Consolas", monospace;
   color: var(--text-primary);
   background: color-mix(in srgb, var(--overlay) 6%, transparent);
   border: 1px solid var(--border-hover);

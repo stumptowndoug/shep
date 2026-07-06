@@ -1,6 +1,21 @@
+#[cfg(not(windows))]
 use tauri::menu::{AboutMetadataBuilder, MenuBuilder, MenuItem, SubmenuBuilder, HELP_SUBMENU_ID};
+#[cfg(not(windows))]
 use tauri::{AppHandle, Emitter, Wry};
+#[cfg(windows)]
+use tauri::{AppHandle, Wry};
 
+/// Windows has no native menu: the window is frameless with a custom titlebar
+/// (a Win32 menu strip would render above it), and native menu accelerators
+/// are translated before the webview sees keystrokes, which would steal
+/// Ctrl-key chords from the terminal. App shortcuts are handled by a keydown
+/// listener in the frontend instead (AppShell.tsx), emitting the same actions.
+#[cfg(windows)]
+pub fn setup(_app: &AppHandle<Wry>) -> tauri::Result<()> {
+    Ok(())
+}
+
+#[cfg(not(windows))]
 pub fn setup(app: &AppHandle<Wry>) -> tauri::Result<()> {
     let version = app.config().version.clone();
 

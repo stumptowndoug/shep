@@ -6,6 +6,7 @@ import { useRepoStore } from "../../stores/useRepoStore";
 import { usePiConfigStore } from "../../stores/usePiConfigStore";
 import { HandMetal, ChevronDown, Check, Info, X } from "lucide-react";
 import { assistantLogoSrc, getAssistantLogoClass } from "../../lib/assistantLogos";
+import { isMac } from "../../lib/platform";
 import { ASSISTANT_INSTALL_URLS } from "../sidebar/constants";
 
 interface SessionLauncherProps {
@@ -311,8 +312,17 @@ export default function SessionLauncher({ onStartSession }: SessionLauncherProps
                 }}
                 onMouseDown={(e) => e.stopPropagation()}
               >
-                <p className="mb-1"><strong style={{ color: "var(--text-primary)" }}>API keys are stored securely in macOS Keychain</strong></p>
-                <p>Provider config is written to <code style={{ color: "rgb(122, 162, 247)" }}>~/.pi/agent/auth.json</code> as a keychain reference that pi resolves at runtime — your key never sits in plaintext on disk.</p>
+                {isMac ? (
+                  <>
+                    <p className="mb-1"><strong style={{ color: "var(--text-primary)" }}>API keys are stored securely in macOS Keychain</strong></p>
+                    <p>Provider config is written to <code style={{ color: "rgb(122, 162, 247)" }}>~/.pi/agent/auth.json</code> as a keychain reference that pi resolves at runtime — your key never sits in plaintext on disk.</p>
+                  </>
+                ) : (
+                  <>
+                    <p className="mb-1"><strong style={{ color: "var(--text-primary)" }}>API keys are stored in pi's config file</strong></p>
+                    <p>Provider keys are written to <code style={{ color: "rgb(122, 162, 247)" }}>~/.pi/agent/auth.json</code> in your user profile, readable only by your Windows account.</p>
+                  </>
+                )}
               </div>
             )}
           </div>

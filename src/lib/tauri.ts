@@ -187,6 +187,14 @@ export function shutdownAndQuit(): Promise<void> {
   return invoke("shutdown_and_quit");
 }
 
+export function prepareForUpdate(): Promise<void> {
+  return invoke("prepare_for_update");
+}
+
+export function getPtySessionCount(): Promise<number> {
+  return invoke("get_pty_session_count");
+}
+
 // ── File watcher commands ─────────────────────────────────────────
 
 export function watchRepo(path: string): Promise<void> {
