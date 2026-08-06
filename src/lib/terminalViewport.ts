@@ -27,16 +27,19 @@ export function preserveTerminalViewport(term: Terminal, update: () => void) {
  *  xterm ignores scroll requests that already match its internal position,
  *  so a plain scrollToLine would no-op and leave the DOM stuck at the top.
  *  Jumping elsewhere first forces a real scroll; both calls land within one
- *  render frame, so the intermediate position is never painted. */
+ *  render frame, so the intermediate position is never painted. A pinned
+ *  viewport must finish with scrollToBottom(), which clears xterm's internal
+ *  user-scrolling latch. */
 export function resyncTerminalViewport(term: Terminal, bottomOffset: number): void {
   const buffer = term.buffer.active;
   if (buffer.baseY === 0) return;
 
   const target = Math.max(0, buffer.baseY - bottomOffset);
-  term.scrollToLine(target === 0 ? buffer.baseY : 0);
   if (bottomOffset === 0) {
+    term.scrollToLine(0);
     term.scrollToBottom();
   } else {
+    term.scrollToLine(target === 0 ? buffer.baseY : 0);
     term.scrollToLine(target);
   }
 }

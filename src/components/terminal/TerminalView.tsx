@@ -30,10 +30,23 @@ interface TerminalViewProps {
   visible: boolean;
 }
 
+function needsCanvasForTransparentPalette(term: Terminal): boolean {
+  const theme = term.options.theme;
+  const transparentColors = [theme?.background, theme?.black, theme?.brightBlack];
+  return term.options.allowTransparency === true && transparentColors.some((color) =>
+    color === "transparent" || color?.startsWith("rgba("),
+  );
+}
+
 // Keep terminal instances alive across tab switches
 export const terminalCache = new Map<
   number,
-  { term: Terminal; fitAddon: FitAddon; rendererAddon: WebglAddon | CanvasAddon | null }
+  {
+    term: Terminal;
+    fitAddon: FitAddon;
+    rendererAddon: WebglAddon | CanvasAddon | null;
+    webglFailed: boolean;
+  }
 >();
 
 export default function TerminalView({
@@ -43,7 +56,8 @@ export default function TerminalView({
   const containerRef = useRef<HTMLDivElement>(null);
   const mountedRef = useRef(false);
   const attachedRef = useRef(false);
-  const lastSizeRef = useRef<{ cols: number; rows: number } | null>(null);
+  const pinnedToBottomRef = useRef(true);
+  const columnResizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const getOrCreateTerminal = useCallback(() => {
     const cached = terminalCache.get(ptyId);
@@ -78,6 +92,8 @@ export default function TerminalView({
 
     // Send input to PTY
     term.onData((data) => {
+      pinnedToBottomRef.current = true;
+      term.scrollToBottom();
       writePty(ptyId, data).catch((error) => {
         if (import.meta.env.DEV) {
           console.error("Failed to write PTY input:", error);
@@ -117,9 +133,32 @@ export default function TerminalView({
       return true; // let xterm handle normally
     });
 
-    const entry = { term, fitAddon, rendererAddon: null as WebglAddon | CanvasAddon | null };
+    const entry = {
+      term,
+      fitAddon,
+      rendererAddon: null as WebglAddon | CanvasAddon | null,
+      webglFailed: false,
+    };
     terminalCache.set(ptyId, entry);
     return entry;
+  }, [ptyId]);
+
+  const applyTerminalSize = useCallback(async (cols: number, rows: number) => {
+    const cached = terminalCache.get(ptyId);
+    if (!cached) return;
+
+    const size = { cols: Math.max(2, cols), rows: Math.max(2, rows) };
+    if (cached.term.cols === size.cols && cached.term.rows === size.rows) return;
+
+    preserveTerminalViewport(cached.term, () => {
+      cached.term.resize(size.cols, size.rows);
+    });
+
+    await resizePty(ptyId, size.cols, size.rows).catch((error) => {
+      if (import.meta.env.DEV) {
+        console.error("Failed to resize PTY:", error);
+      }
+    });
   }, [ptyId]);
 
   const fitAndResize = useCallback(async () => {
@@ -129,30 +168,35 @@ export default function TerminalView({
     const proposedSize = cached.fitAddon.proposeDimensions();
     if (!proposedSize) return;
 
-    const size = { cols: proposedSize.cols, rows: proposedSize.rows };
-    const lastSize = lastSizeRef.current;
+    const nextSize = { cols: proposedSize.cols, rows: proposedSize.rows };
+    const columnsChanged = cached.term.cols !== nextSize.cols;
+    const rowsChanged = cached.term.rows !== nextSize.rows;
+    if (!columnsChanged && !rowsChanged) return;
 
-    if (
-      lastSize &&
-      lastSize.cols === size.cols &&
-      lastSize.rows === size.rows &&
-      cached.term.cols === size.cols &&
-      cached.term.rows === size.rows
-    ) {
+    const shouldDebounceColumns =
+      columnsChanged && cached.term.buffer.active.length > 200;
+
+    if (!shouldDebounceColumns) {
+      if (columnResizeTimerRef.current) {
+        clearTimeout(columnResizeTimerRef.current);
+        columnResizeTimerRef.current = null;
+      }
+      await applyTerminalSize(nextSize.cols, nextSize.rows);
       return;
     }
 
-    preserveTerminalViewport(cached.term, () => {
-      cached.fitAddon.fit();
-    });
-
-    lastSizeRef.current = size;
-    await resizePty(ptyId, size.cols, size.rows).catch((error) => {
-      if (import.meta.env.DEV) {
-        console.error("Failed to resize PTY:", error);
-      }
-    });
-  }, [ptyId]);
+    // Reflowing a long scrollback buffer on every width observation is costly.
+    // Apply row changes immediately at the current width and settle columns
+    // after the resize gesture has been quiet for 100 ms.
+    if (rowsChanged) {
+      await applyTerminalSize(cached.term.cols, nextSize.rows);
+    }
+    if (columnResizeTimerRef.current) clearTimeout(columnResizeTimerRef.current);
+    columnResizeTimerRef.current = setTimeout(() => {
+      columnResizeTimerRef.current = null;
+      void applyTerminalSize(nextSize.cols, nextSize.rows);
+    }, 100);
+  }, [applyTerminalSize, ptyId]);
 
   useEffect(() => {
     if (!containerRef.current || !visible) return;
@@ -164,41 +208,98 @@ export default function TerminalView({
       term.open(containerRef.current);
       mountedRef.current = true;
 
-      // Load renderer addon after open() so it can access the DOM.
-      // Canvas addon handles alpha compositing correctly for glass transparency.
-      // Fall back to WebGL if Canvas fails.
+      // Load renderer addon after open() so it can access the DOM. Prefer
+      // WebGL, remember failures for this cached session, then fall back to
+      // Canvas. If both fail, xterm's built-in DOM renderer remains active.
       const cached = terminalCache.get(ptyId);
       if (cached && !cached.rendererAddon) {
-        try {
-          const canvas = new CanvasAddon();
-          term.loadAddon(canvas);
-          cached.rendererAddon = canvas;
-        } catch (err) {
-          if (import.meta.env.DEV) {
-            console.warn("Canvas renderer failed, trying WebGL:", err);
-          }
+        const loadCanvasFallback = () => {
+          if (cached.rendererAddon) return;
           try {
-            const webgl = new WebglAddon();
-            term.loadAddon(webgl);
-            cached.rendererAddon = webgl;
-          } catch (err2) {
+            const canvas = new CanvasAddon();
+            term.loadAddon(canvas);
+            cached.rendererAddon = canvas;
+          } catch (error) {
             if (import.meta.env.DEV) {
-              console.warn("No accelerated renderer available:", err2);
+              console.warn("Canvas renderer unavailable; using DOM renderer:", error);
             }
           }
+        };
+
+        if (needsCanvasForTransparentPalette(term)) {
+          // WKWebView can retain WebGL's altered palette state even after the
+          // addon is disposed. Choose Canvas before WebGL touches a terminal
+          // whose transparent background/palette is known to render poorly.
+          cached.webglFailed = true;
+          if (import.meta.env.DEV) {
+            console.debug("Transparent terminal palette requires Canvas renderer");
+          }
+        } else if (!cached.webglFailed) {
+          let webgl: WebglAddon | null = null;
+          try {
+            webgl = new WebglAddon();
+            const loadedWebgl = webgl;
+            loadedWebgl.onContextLoss(() => {
+              if (cached.rendererAddon !== loadedWebgl) return;
+              cached.rendererAddon = null;
+              cached.webglFailed = true;
+              loadedWebgl.dispose();
+              loadCanvasFallback();
+            });
+            term.loadAddon(loadedWebgl);
+            cached.rendererAddon = loadedWebgl;
+          } catch (error) {
+            webgl?.dispose();
+            cached.webglFailed = true;
+            if (import.meta.env.DEV) {
+              console.warn("WebGL renderer unavailable; trying Canvas:", error);
+            }
+          }
+        }
+        if (!cached.rendererAddon) {
+          loadCanvasFallback();
         }
       }
     }
 
+    const surface = containerRef.current;
+    const syncPinnedAfterEvent = () => {
+      queueMicrotask(() => {
+        if (disposed) return;
+        pinnedToBottomRef.current = terminalBottomOffset(term) === 0;
+      });
+    };
+    const handleWheelCapture = (event: WheelEvent) => {
+      if (event.deltaY < 0) pinnedToBottomRef.current = false;
+      else syncPinnedAfterEvent();
+    };
+    const handleKeyDownCapture = (event: KeyboardEvent) => {
+      const viewportKey = event.shiftKey && [
+        "PageUp",
+        "PageDown",
+        "Home",
+        "End",
+        "ArrowUp",
+        "ArrowDown",
+      ].includes(event.key);
+      if (viewportKey) {
+        if (["PageUp", "Home", "ArrowUp"].includes(event.key)) {
+          pinnedToBottomRef.current = false;
+        }
+        syncPinnedAfterEvent();
+        return;
+      }
+
+      // Normal terminal input resumes follow mode before xterm emits onData.
+      pinnedToBottomRef.current = true;
+      term.scrollToBottom();
+    };
+    surface.addEventListener("wheel", handleWheelCapture, { capture: true });
+    surface.addEventListener("keydown", handleKeyDownCapture, { capture: true });
+
     const attachTerminal = async () => {
       await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
       if (disposed) return;
-
-      // Snapshot the scroll position from xterm's internal buffer before
-      // touching anything: while the container was display:none the browser
-      // zeroed the DOM viewport's scrollTop, so the internal position is the
-      // only surviving record of where the user was.
-      const bottomOffset = terminalBottomOffset(term);
 
       // Re-apply the current theme now that the container is visible.
       // Theme changes that occurred while hidden were deferred to avoid
@@ -237,10 +338,15 @@ export default function TerminalView({
       // fitAndResize skips the fit (and its viewport preservation) when the
       // dimensions didn't change — the common case when returning to a tab —
       // so the zeroed DOM scrollTop must be re-asserted unconditionally.
-      resyncTerminalViewport(term, bottomOffset);
+      // Recompute immediately before the pending-output flush. The buffer may
+      // have changed while theme/settings/fit work ran, so an earlier offset
+      // is not safe to reuse here.
+      resyncTerminalViewport(term, terminalBottomOffset(term));
 
       if (!attachedRef.current) {
-        registerTerminal(ptyId, term);
+        registerTerminal(ptyId, term, () => {
+          if (pinnedToBottomRef.current) term.scrollToBottom();
+        });
         flushPendingOutput(ptyId);
         attachedRef.current = true;
       }
@@ -248,7 +354,6 @@ export default function TerminalView({
       window.setTimeout(() => {
         if (disposed) return;
         void fitAndResize();
-        resyncTerminalViewport(term, bottomOffset);
         term.focus();
       }, 100);
 
@@ -280,18 +385,23 @@ export default function TerminalView({
 
     void attachTerminal();
 
-    // ResizeObserver for auto-fitting
+    // ResizeObserver for auto-fitting. fitAndResize applies rows immediately
+    // and owns the long-buffer column debounce.
     const observer = new ResizeObserver(() => {
-      requestAnimationFrame(() => {
-        if (disposed) return;
-        void fitAndResize();
-      });
+      if (disposed) return;
+      void fitAndResize();
     });
     observer.observe(containerRef.current);
 
     return () => {
       disposed = true;
       observer.disconnect();
+      surface.removeEventListener("wheel", handleWheelCapture, { capture: true });
+      surface.removeEventListener("keydown", handleKeyDownCapture, { capture: true });
+      if (columnResizeTimerRef.current) {
+        clearTimeout(columnResizeTimerRef.current);
+        columnResizeTimerRef.current = null;
+      }
     };
   }, [ptyId, visible, getOrCreateTerminal, fitAndResize]);
 
@@ -306,7 +416,11 @@ export default function TerminalView({
       }
       mountedRef.current = false;
       attachedRef.current = false;
-      lastSizeRef.current = null;
+      pinnedToBottomRef.current = true;
+      if (columnResizeTimerRef.current) {
+        clearTimeout(columnResizeTimerRef.current);
+        columnResizeTimerRef.current = null;
+      }
     };
   }, [ptyId]);
 

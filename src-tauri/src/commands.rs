@@ -274,6 +274,15 @@ pub fn write_pty(
 }
 
 #[tauri::command]
+pub fn acknowledge_pty_output(
+    pty_id: u32,
+    bytes: usize,
+    pty_manager: State<'_, PtyManager>,
+) -> Result<(), String> {
+    pty_manager.acknowledge_output(pty_id, bytes)
+}
+
+#[tauri::command]
 pub fn update_pty_color_theme(
     color_theme: PtyColorTheme,
     pty_manager: State<'_, PtyManager>,

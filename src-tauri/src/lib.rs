@@ -103,6 +103,7 @@ pub fn run() {
             commands::reveal_in_finder,
             commands::spawn_pty,
             commands::write_pty,
+            commands::acknowledge_pty_output,
             commands::update_pty_color_theme,
             commands::resize_pty,
             commands::kill_pty,
