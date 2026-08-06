@@ -112,8 +112,22 @@ xterm 6 upgrade provides real synchronized-output support.
 - Upgrade 5.5 → 6.x for real mode-2026 support (BSU/ESU atomic flush, DECRQM
   feature-detection so Claude Code uses it properly). Re-test addon compat
   (canvas addon is deprecated in 6.x — WebGL/DOM only).
-- Watch 7.0 / PR #5770 for the viewport-sync-during-2026 fix; keep the Phase 2
-  Rust filter until it ships, then remove.
+- Watch 7.0 / PR #5770 for the viewport-sync-during-2026 fix; keep the Phase 1
+  viewport/follow defenses until it ships, then re-test whether they can be
+  simplified. The rejected Phase 2 clear-sequence filter remains removed.
+
+Implementation status (2026-08-06): upgraded the stable package family together
+to xterm 6.0.0, Fit 0.11.0, Unicode11 0.9.0, Web Links 0.12.0, and WebGL 0.19.0.
+The removed Canvas addon is no longer imported or installed. Shep prefers WebGL
+for opaque palettes and, on initialization failure or context loss, disposes it
+so xterm restores its built-in DOM renderer. Native testing showed that xterm's
+WebGL atlas deliberately forces ANSI foreground glyphs opaque, which changes
+Shep's translucent dark-theme black/bright-black colors; those palettes now use
+DOM directly to preserve their compositing. The xterm 6 custom scrollbar is
+themed via the new `ITheme.scrollbarSlider*` fields, and the installed core was
+verified to handle mode 2026 plus its DECRQM response. TypeScript, the production
+bundle, and all 41 Rust tests pass; native palette/replay/interactive validation
+remains the final gate.
 
 ### Phase 4 — Rust VT state core (durable-sessions foundation)
 

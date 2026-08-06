@@ -3,7 +3,7 @@ import { hexLuminance } from "../../lib/themes";
 import type { ShepTheme } from "../../lib/themes";
 import type { TerminalSettings } from "../../lib/types";
 import { resizePty } from "../../lib/tauri";
-import { terminalCache } from "./TerminalView";
+import { reconcileTerminalRenderer, terminalCache } from "./TerminalView";
 import { buildCSSFontFamily } from "../../lib/terminalConfig";
 import { preserveTerminalViewport } from "../../lib/terminalViewport";
 
@@ -29,6 +29,9 @@ export function createTerminalTheme(theme: ShepTheme): ITheme {
     foreground: theme.termForeground,
     cursor: theme.termCursor,
     selectionBackground: theme.termSelection,
+    scrollbarSliderBackground: withAlpha(theme.termForeground, 0.24),
+    scrollbarSliderHoverBackground: withAlpha(theme.termForeground, 0.4),
+    scrollbarSliderActiveBackground: withAlpha(theme.termForeground, 0.5),
     black: light ? theme.termBlack : withAlpha(theme.termBlack, 0.4),
     red: theme.termRed,
     green: theme.termGreen,
@@ -59,6 +62,7 @@ export function applyThemeToTerminals(theme: ShepTheme): void {
     if (!el || el.offsetParent === null) continue;
 
     entry.term.options.theme = xtermTheme;
+    reconcileTerminalRenderer(entry.term, entry);
     entry.term.refresh(0, entry.term.rows - 1);
   }
 }

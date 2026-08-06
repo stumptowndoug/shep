@@ -1,6 +1,5 @@
 import { useEffect, useRef, useCallback } from "react";
 import { Terminal } from "@xterm/xterm";
-import { CanvasAddon } from "@xterm/addon-canvas";
 import { FitAddon } from "@xterm/addon-fit";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebLinksAddon } from "@xterm/addon-web-links";
@@ -30,12 +29,81 @@ interface TerminalViewProps {
   visible: boolean;
 }
 
-function needsCanvasForTransparentPalette(term: Terminal): boolean {
+interface TerminalRendererState {
+  rendererAddon: WebglAddon | null;
+  webglFailed: boolean;
+}
+
+function isTranslucentColor(color: string | undefined): boolean {
+  if (!color) return false;
+  const rgba = color.match(/rgba\([^)]*,\s*([\d.]+)\s*\)$/i);
+  if (rgba) return Number(rgba[1]) < 1;
+  if (/^#[\da-f]{8}$/i.test(color)) {
+    return Number.parseInt(color.slice(7, 9), 16) < 255;
+  }
+  return false;
+}
+
+function requiresDomRenderer(term: Terminal): boolean {
   const theme = term.options.theme;
-  const transparentColors = [theme?.background, theme?.black, theme?.brightBlack];
-  return term.options.allowTransparency === true && transparentColors.some((color) =>
-    color === "transparent" || color?.startsWith("rgba("),
-  );
+  return [
+    theme?.black,
+    theme?.red,
+    theme?.green,
+    theme?.yellow,
+    theme?.blue,
+    theme?.magenta,
+    theme?.cyan,
+    theme?.white,
+    theme?.brightBlack,
+    theme?.brightRed,
+    theme?.brightGreen,
+    theme?.brightYellow,
+    theme?.brightBlue,
+    theme?.brightMagenta,
+    theme?.brightCyan,
+    theme?.brightWhite,
+  ].some(isTranslucentColor);
+}
+
+export function reconcileTerminalRenderer(
+  term: Terminal,
+  state: TerminalRendererState,
+): void {
+  // WebGL intentionally makes ANSI foreground glyphs opaque. Shep uses
+  // translucent black/bright-black on dark themes, so DOM is required to
+  // preserve the palette's compositing rather than merely its RGB channels.
+  if (requiresDomRenderer(term)) {
+    const loadedWebgl = state.rendererAddon;
+    state.rendererAddon = null;
+    loadedWebgl?.dispose();
+    return;
+  }
+
+  if (!term.element || state.rendererAddon || state.webglFailed) return;
+
+  let webgl: WebglAddon | null = null;
+  try {
+    webgl = new WebglAddon();
+    const loadedWebgl = webgl;
+    loadedWebgl.onContextLoss(() => {
+      if (state.rendererAddon !== loadedWebgl) return;
+      state.rendererAddon = null;
+      state.webglFailed = true;
+      loadedWebgl.dispose();
+      if (import.meta.env.DEV) {
+        console.warn("WebGL context lost; using xterm's DOM renderer");
+      }
+    });
+    term.loadAddon(loadedWebgl);
+    state.rendererAddon = loadedWebgl;
+  } catch (error) {
+    webgl?.dispose();
+    state.webglFailed = true;
+    if (import.meta.env.DEV) {
+      console.warn("WebGL renderer unavailable; using xterm's DOM renderer:", error);
+    }
+  }
 }
 
 // Keep terminal instances alive across tab switches
@@ -44,7 +112,7 @@ export const terminalCache = new Map<
   {
     term: Terminal;
     fitAddon: FitAddon;
-    rendererAddon: WebglAddon | CanvasAddon | null;
+    rendererAddon: WebglAddon | null;
     webglFailed: boolean;
   }
 >();
@@ -136,7 +204,7 @@ export default function TerminalView({
     const entry = {
       term,
       fitAddon,
-      rendererAddon: null as WebglAddon | CanvasAddon | null,
+      rendererAddon: null as WebglAddon | null,
       webglFailed: false,
     };
     terminalCache.set(ptyId, entry);
@@ -208,58 +276,10 @@ export default function TerminalView({
       term.open(containerRef.current);
       mountedRef.current = true;
 
-      // Load renderer addon after open() so it can access the DOM. Prefer
-      // WebGL, remember failures for this cached session, then fall back to
-      // Canvas. If both fail, xterm's built-in DOM renderer remains active.
+      // Prefer WebGL for opaque palettes after open() so it can access the DOM.
+      // Translucent palettes and WebGL failures use xterm's built-in renderer.
       const cached = terminalCache.get(ptyId);
-      if (cached && !cached.rendererAddon) {
-        const loadCanvasFallback = () => {
-          if (cached.rendererAddon) return;
-          try {
-            const canvas = new CanvasAddon();
-            term.loadAddon(canvas);
-            cached.rendererAddon = canvas;
-          } catch (error) {
-            if (import.meta.env.DEV) {
-              console.warn("Canvas renderer unavailable; using DOM renderer:", error);
-            }
-          }
-        };
-
-        if (needsCanvasForTransparentPalette(term)) {
-          // WKWebView can retain WebGL's altered palette state even after the
-          // addon is disposed. Choose Canvas before WebGL touches a terminal
-          // whose transparent background/palette is known to render poorly.
-          cached.webglFailed = true;
-          if (import.meta.env.DEV) {
-            console.debug("Transparent terminal palette requires Canvas renderer");
-          }
-        } else if (!cached.webglFailed) {
-          let webgl: WebglAddon | null = null;
-          try {
-            webgl = new WebglAddon();
-            const loadedWebgl = webgl;
-            loadedWebgl.onContextLoss(() => {
-              if (cached.rendererAddon !== loadedWebgl) return;
-              cached.rendererAddon = null;
-              cached.webglFailed = true;
-              loadedWebgl.dispose();
-              loadCanvasFallback();
-            });
-            term.loadAddon(loadedWebgl);
-            cached.rendererAddon = loadedWebgl;
-          } catch (error) {
-            webgl?.dispose();
-            cached.webglFailed = true;
-            if (import.meta.env.DEV) {
-              console.warn("WebGL renderer unavailable; trying Canvas:", error);
-            }
-          }
-        }
-        if (!cached.rendererAddon) {
-          loadCanvasFallback();
-        }
-      }
+      if (cached) reconcileTerminalRenderer(term, cached);
     }
 
     const surface = containerRef.current;

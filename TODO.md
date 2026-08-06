@@ -15,7 +15,7 @@
   - [ ] per-CLI prompt-pattern detection for agents with no status signal
 - [ ] Audit and upgrade dependencies for the next release
   - [ ] inventory frontend and Rust updates with compatibility/security notes
-  - [ ] upgrade xterm.js 5.5 → 6.x on a dedicated branch; remove Canvas addon and retest WebGL alpha + DOM fallback
+  - [x] split xterm.js 6.x upgrade to dedicated `upgrade/xterm-6-phase-3` branch
   - [ ] run terminal repro, interactive shell, build, and full Rust regression checks
   - [ ] split risky upgrades into separate PRs before release
 - [ ] Session-name-derived tab and sidebar titles
@@ -26,6 +26,13 @@
   - [ ] treat all file formats as undocumented — graceful fallback if schema changes
 
 ## 🚧 In Progress
+
+- [ ] Upgrade xterm.js 5.5 → 6.x
+  - [x] inventory core/addon API and CSS changes against the installed versions
+  - [x] upgrade xterm packages together and remove the deprecated Canvas addon
+  - [x] prefer WebGL for opaque palettes; use built-in DOM for translucent palettes, initialization failure, or context loss
+  - [ ] verify ANSI palette, Phase 0 replay, manual scroll/follow, and interactive Claude/OpenCode sessions
+  - [x] run TypeScript, production build, and full Rust tests
 
 ## ✅ Done
 

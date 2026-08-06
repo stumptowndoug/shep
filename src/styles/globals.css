@@ -2247,7 +2247,7 @@ select {
 
 .terminal-surface .xterm-viewport,
 .terminal-surface .xterm-screen,
-.terminal-surface .xterm-scroll-area {
+.terminal-surface .xterm-scrollable-element {
   background: transparent !important;
 }
 
