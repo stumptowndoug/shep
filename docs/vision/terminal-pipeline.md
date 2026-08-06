@@ -126,8 +126,22 @@ Shep's translucent dark-theme black/bright-black colors; those palettes now use
 DOM directly to preserve their compositing. The xterm 6 custom scrollbar is
 themed via the new `ITheme.scrollbarSlider*` fields, and the installed core was
 verified to handle mode 2026 plus its DECRQM response. TypeScript, the production
-bundle, and all 41 Rust tests pass; native palette/replay/interactive validation
-remains the final gate.
+bundle, and all 41 Rust tests pass. Native palette, replay, manual follow,
+interactive-agent, and live theme-switch validation passed on 2026-08-06.
+
+Opaque-palette experiment (2026-08-06): branch
+`experiment/xterm-opaque-ansi-webgl` replaces the dark-theme 40%-alpha ANSI
+black/bright-black entries with opaque colors pre-composited against `appBg`,
+preserving their normal perceived color without relying on translucent glyphs.
+Native testing exposed a second constraint: WebGL's rectangle renderer paints
+the default background with alpha 1, turning xterm's `transparent` background
+black. Making every terminal surface opaque was rejected because it removes the
+intended glass/gradient treatment. The resulting policy is explicit rather than
+color-derived: `ShepTheme.isTransparent` themes keep a transparent terminal
+surface and use xterm's DOM renderer; solid themes use an opaque `appBg` surface
+and prefer WebGL. Live theme changes dispose or load only the renderer addon,
+preserving the terminal instance, PTY, buffer, and viewport; WebGL initialization
+or context loss still falls back to DOM.
 
 ### Phase 4 — Rust VT state core (durable-sessions foundation)
 

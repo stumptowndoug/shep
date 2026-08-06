@@ -18,6 +18,9 @@
   - [x] split xterm.js 6.x upgrade to dedicated `upgrade/xterm-6-phase-3` branch
   - [ ] run terminal repro, interactive shell, build, and full Rust regression checks
   - [ ] split risky upgrades into separate PRs before release
+- [ ] Tune light terminal theme palettes
+  - [ ] review ANSI black/bright-black contrast, selection, cursor, and scrollbar colors
+  - [ ] compare solid light themes under WebGL without changing renderer policy
 - [ ] Session-name-derived tab and sidebar titles
   - [ ] capture OSC title changes via xterm.js onTitleChange as the universal baseline
   - [ ] read name from ~/.claude/sessions/<pid>.json for Claude Code
@@ -27,14 +30,20 @@
 
 ## 🚧 In Progress
 
-- [ ] Upgrade xterm.js 5.5 → 6.x
+## ✅ Done
+
+- [x] Upgrade xterm.js 5.5 → 6.x
   - [x] inventory core/addon API and CSS changes against the installed versions
   - [x] upgrade xterm packages together and remove the deprecated Canvas addon
-  - [x] prefer WebGL for opaque palettes; use built-in DOM for translucent palettes, initialization failure, or context loss
-  - [ ] verify ANSI palette, Phase 0 replay, manual scroll/follow, and interactive Claude/OpenCode sessions
+  - [x] prefer WebGL for solid themes; use built-in DOM for glass themes, initialization failure, or context loss
+  - [x] verify ANSI palette, Phase 0 replay, manual scroll/follow, and interactive Claude/OpenCode sessions
   - [x] run TypeScript, production build, and full Rust tests
-
-## ✅ Done
+  - [x] finalize opaque ANSI colors with an explicit glass/DOM renderer policy on `experiment/xterm-opaque-ansi-webgl`
+    - [x] compare muted palette appearance against the hybrid DOM baseline
+    - [x] reject opaque terminal surfaces for glass themes after native testing
+    - [x] route `isTransparent` themes to DOM and solid themes to WebGL
+    - [x] verify live solid ↔ glass switching preserves the terminal and viewport
+    - [x] compare Phase 0 replay responsiveness and normal interactive use
 
 - [x] Fix xterm scroll misbehavior during long agent output
   - [x] root-cause investigation — see docs/vision/terminal-pipeline.md for full diagnosis and plan

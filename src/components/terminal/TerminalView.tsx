@@ -23,99 +23,13 @@ import { notifyAgent } from "../../lib/notifications";
 import { KEYBINDING_PRESETS } from "../../lib/keybindingPresets";
 import { useKeybindingStore } from "../../stores/useKeybindingStore";
 import { useTerminalSettingsStore } from "../../stores/useTerminalSettingsStore";
+import { terminalCache } from "./terminalCache";
+import { reconcileTerminalRenderer } from "./terminalRenderer";
 
 interface TerminalViewProps {
   ptyId: number;
   visible: boolean;
 }
-
-interface TerminalRendererState {
-  rendererAddon: WebglAddon | null;
-  webglFailed: boolean;
-}
-
-function isTranslucentColor(color: string | undefined): boolean {
-  if (!color) return false;
-  const rgba = color.match(/rgba\([^)]*,\s*([\d.]+)\s*\)$/i);
-  if (rgba) return Number(rgba[1]) < 1;
-  if (/^#[\da-f]{8}$/i.test(color)) {
-    return Number.parseInt(color.slice(7, 9), 16) < 255;
-  }
-  return false;
-}
-
-function requiresDomRenderer(term: Terminal): boolean {
-  const theme = term.options.theme;
-  return [
-    theme?.black,
-    theme?.red,
-    theme?.green,
-    theme?.yellow,
-    theme?.blue,
-    theme?.magenta,
-    theme?.cyan,
-    theme?.white,
-    theme?.brightBlack,
-    theme?.brightRed,
-    theme?.brightGreen,
-    theme?.brightYellow,
-    theme?.brightBlue,
-    theme?.brightMagenta,
-    theme?.brightCyan,
-    theme?.brightWhite,
-  ].some(isTranslucentColor);
-}
-
-export function reconcileTerminalRenderer(
-  term: Terminal,
-  state: TerminalRendererState,
-): void {
-  // WebGL intentionally makes ANSI foreground glyphs opaque. Shep uses
-  // translucent black/bright-black on dark themes, so DOM is required to
-  // preserve the palette's compositing rather than merely its RGB channels.
-  if (requiresDomRenderer(term)) {
-    const loadedWebgl = state.rendererAddon;
-    state.rendererAddon = null;
-    loadedWebgl?.dispose();
-    return;
-  }
-
-  if (!term.element || state.rendererAddon || state.webglFailed) return;
-
-  let webgl: WebglAddon | null = null;
-  try {
-    webgl = new WebglAddon();
-    const loadedWebgl = webgl;
-    loadedWebgl.onContextLoss(() => {
-      if (state.rendererAddon !== loadedWebgl) return;
-      state.rendererAddon = null;
-      state.webglFailed = true;
-      loadedWebgl.dispose();
-      if (import.meta.env.DEV) {
-        console.warn("WebGL context lost; using xterm's DOM renderer");
-      }
-    });
-    term.loadAddon(loadedWebgl);
-    state.rendererAddon = loadedWebgl;
-  } catch (error) {
-    webgl?.dispose();
-    state.webglFailed = true;
-    if (import.meta.env.DEV) {
-      console.warn("WebGL renderer unavailable; using xterm's DOM renderer:", error);
-    }
-  }
-}
-
-// Keep terminal instances alive across tab switches
-export const terminalCache = new Map<
-  number,
-  {
-    term: Terminal;
-    fitAddon: FitAddon;
-    rendererAddon: WebglAddon | null;
-    webglFailed: boolean;
-  }
->();
 
 export default function TerminalView({
   ptyId,
@@ -276,10 +190,16 @@ export default function TerminalView({
       term.open(containerRef.current);
       mountedRef.current = true;
 
-      // Prefer WebGL for opaque palettes after open() so it can access the DOM.
-      // Translucent palettes and WebGL failures use xterm's built-in renderer.
+      // Load WebGL after open() so it can access the DOM. Initialization or
+      // context-loss failures restore xterm's built-in DOM renderer.
       const cached = terminalCache.get(ptyId);
-      if (cached) reconcileTerminalRenderer(term, cached);
+      if (cached) {
+        reconcileTerminalRenderer(
+          term,
+          cached,
+          useThemeStore.getState().theme,
+        );
+      }
     }
 
     const surface = containerRef.current;
@@ -324,7 +244,15 @@ export default function TerminalView({
       // Re-apply the current theme now that the container is visible.
       // Theme changes that occurred while hidden were deferred to avoid
       // corrupting xterm's scroll state.
-      term.options.theme = createTerminalTheme(useThemeStore.getState().theme);
+      const currentTheme = useThemeStore.getState().theme;
+      const cachedEntry = terminalCache.get(ptyId);
+      if (currentTheme.isTransparent && cachedEntry) {
+        reconcileTerminalRenderer(term, cachedEntry, currentTheme);
+      }
+      term.options.theme = createTerminalTheme(currentTheme);
+      if (!currentTheme.isTransparent && cachedEntry) {
+        reconcileTerminalRenderer(term, cachedEntry, currentTheme);
+      }
 
       // Re-apply terminal settings (font, cursor, scrollback) that may have
       // changed while this terminal was hidden. `applyTerminalSettings` skips
@@ -343,7 +271,6 @@ export default function TerminalView({
       term.options.fontFamily = nextCssFont;
       term.options.fontSize = currentTermSettings.fontSize;
 
-      const cachedEntry = terminalCache.get(ptyId);
       if (fontMetricsChanged) {
         cachedEntry?.rendererAddon?.clearTextureAtlas?.();
       }
