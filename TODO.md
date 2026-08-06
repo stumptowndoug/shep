@@ -13,11 +13,6 @@
   - [ ] watch ~/.claude/sessions/<pid>.json status field for Claude Code (match by PTY child pid, cwd fallback)
   - [ ] heuristic: stale statusUpdatedAt + no PTY output = possibly stuck
   - [ ] per-CLI prompt-pattern detection for agents with no status signal
-- [ ] Audit and upgrade dependencies for the next release
-  - [ ] inventory frontend and Rust updates with compatibility/security notes
-  - [x] split xterm.js 6.x upgrade to dedicated `upgrade/xterm-6-phase-3` branch
-  - [ ] run terminal repro, interactive shell, build, and full Rust regression checks
-  - [ ] split risky upgrades into separate PRs before release
 - [ ] Tune light terminal theme palettes
   - [ ] review ANSI black/bright-black contrast, selection, cursor, and scrollbar colors
   - [ ] compare solid light themes under WebGL without changing renderer policy
@@ -29,6 +24,17 @@
   - [ ] treat all file formats as undocumented — graceful fallback if schema changes
 
 ## 🚧 In Progress
+
+- [ ] Audit and upgrade dependencies for the next release
+  - [x] inventory frontend and Rust updates with compatibility/security notes — see `docs/vision/dependency-audit-2026-08.md`
+  - [x] split xterm.js 6.x upgrade to dedicated `upgrade/xterm-6-phase-3` branch
+  - [x] land same-major frontend security batch (markdown-it 14.3, Vite 7.3.6, React plugin 5.2, patched transitive toolchain)
+  - [x] verify first batch with pnpm audit, TypeScript, production build, and all 41 Rust tests
+  - [ ] upgrade Sharp/libvips in a native-tooling batch
+  - [ ] refresh Tauri 2.11 and the Rust lockfile in a platform-regression batch
+  - [ ] evaluate frontend and Rust API/toolchain majors in focused branches
+  - [ ] run terminal repro, interactive shell, build, and full Rust regression checks
+  - [ ] split risky upgrades into separate PRs before release
 
 ## ✅ Done
 
