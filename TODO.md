@@ -25,6 +25,14 @@
 
 ## 🚧 In Progress
 
+- [ ] Release the next Shep version
+  - [ ] open and merge the dependency/terminal integration PR into `main`
+  - [ ] update local `main` and choose the release version
+  - [ ] bump versions with `scripts/bump-version.sh`
+  - [ ] build, sign, notarize, and generate updater metadata
+  - [ ] smoke-test the packaged DMG
+  - [ ] tag, push, and publish the GitHub release
+
 ## ✅ Done
 
 - [x] Audit and upgrade dependencies for the next release
