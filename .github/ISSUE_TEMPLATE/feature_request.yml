@@ -1,0 +1,46 @@
+name: Feature request
+description: Propose a user problem or product improvement for discussion
+title: "[Feature]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please describe the problem before proposing an implementation. Code changes should not begin until scope and approach are agreed with a maintainer.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem should Shep solve?
+      description: Explain the workflow or user need rather than only the desired implementation.
+    validations:
+      required: true
+
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome
+      description: Describe what success would look like to a user.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Note current workarounds or simpler approaches you considered.
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Include examples, screenshots, or links that clarify the request.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues for similar requests.
+          required: true
+        - label: I understand that opening an issue does not imply approval to begin implementation.
+          required: true

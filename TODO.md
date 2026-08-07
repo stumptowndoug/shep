@@ -25,6 +25,12 @@
 
 ## 🚧 In Progress
 
+- [ ] Define public contribution intake
+  - [x] restrict pull requests to collaborators
+  - [x] require an issue before implementation proposals
+  - [x] add structured bug and feature issue forms
+  - [x] document how unsolicited pull requests are handled
+
 ## ✅ Done
 
 - [x] Release Shep v0.6.0
