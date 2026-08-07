@@ -27,8 +27,9 @@
 
 - [ ] Release the next Shep version
   - [x] open dependency/terminal integration PR #57 into `main`
-  - [ ] merge PR #57 after review and required checks
-  - [ ] update local `main` and choose the release version
+  - [x] merge PR #57 after review and required checks
+  - [x] update local `main` to merge commit `14efb5d`
+  - [ ] choose the release version
   - [ ] bump versions with `scripts/bump-version.sh`
   - [ ] build, sign, notarize, and generate updater metadata
   - [ ] smoke-test the packaged DMG
