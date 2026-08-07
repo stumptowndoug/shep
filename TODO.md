@@ -29,7 +29,7 @@
   - [x] open dependency/terminal integration PR #57 into `main`
   - [x] merge PR #57 after review and required checks
   - [x] update local `main` to merge commit `14efb5d`
-  - [ ] choose the release version
+  - [x] choose release version `0.6.0`
   - [ ] bump versions with `scripts/bump-version.sh`
   - [ ] build, sign, notarize, and generate updater metadata
   - [ ] smoke-test the packaged DMG
