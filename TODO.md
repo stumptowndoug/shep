@@ -26,7 +26,8 @@
 ## 🚧 In Progress
 
 - [ ] Release the next Shep version
-  - [ ] open and merge the dependency/terminal integration PR into `main`
+  - [x] open dependency/terminal integration PR #57 into `main`
+  - [ ] merge PR #57 after review and required checks
   - [ ] update local `main` and choose the release version
   - [ ] bump versions with `scripts/bump-version.sh`
   - [ ] build, sign, notarize, and generate updater metadata
