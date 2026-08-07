@@ -25,7 +25,9 @@
 
 ## 🚧 In Progress
 
-- [ ] Release the next Shep version
+## ✅ Done
+
+- [x] Release Shep v0.6.0
   - [x] open dependency/terminal integration PR #57 into `main`
   - [x] merge PR #57 after review and required checks
   - [x] update local `main` to merge commit `14efb5d`
@@ -33,9 +35,7 @@
   - [x] bump versions with `scripts/bump-version.sh`
   - [x] build, sign, notarize, and generate updater metadata
   - [x] smoke-test the packaged DMG
-  - [ ] tag, push, and publish the GitHub release
-
-## ✅ Done
+  - [x] tag, push, and publish `v0.6.0` on GitHub
 
 - [x] Audit and upgrade dependencies for the next release
   - [x] inventory frontend and Rust updates with compatibility/security notes — see `docs/vision/dependency-audit-2026-08.md`
