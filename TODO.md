@@ -30,9 +30,9 @@
   - [x] merge PR #57 after review and required checks
   - [x] update local `main` to merge commit `14efb5d`
   - [x] choose release version `0.6.0`
-  - [ ] bump versions with `scripts/bump-version.sh`
-  - [ ] build, sign, notarize, and generate updater metadata
-  - [ ] smoke-test the packaged DMG
+  - [x] bump versions with `scripts/bump-version.sh`
+  - [x] build, sign, notarize, and generate updater metadata
+  - [x] smoke-test the packaged DMG
   - [ ] tag, push, and publish the GitHub release
 
 ## ✅ Done
