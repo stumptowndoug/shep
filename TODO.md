@@ -25,18 +25,22 @@
 
 ## 🚧 In Progress
 
-- [ ] Audit and upgrade dependencies for the next release
+## ✅ Done
+
+- [x] Audit and upgrade dependencies for the next release
   - [x] inventory frontend and Rust updates with compatibility/security notes — see `docs/vision/dependency-audit-2026-08.md`
   - [x] split xterm.js 6.x upgrade to dedicated `upgrade/xterm-6-phase-3` branch
   - [x] land same-major frontend security batch (markdown-it 14.3, Vite 7.3.6, React plugin 5.2, patched transitive toolchain)
   - [x] verify first batch with pnpm audit, TypeScript, production build, and all 41 Rust tests
-  - [ ] upgrade Sharp/libvips in a native-tooling batch
-  - [ ] refresh Tauri 2.11 and the Rust lockfile in a platform-regression batch
-  - [ ] evaluate frontend and Rust API/toolchain majors in focused branches
-  - [ ] run terminal repro, interactive shell, build, and full Rust regression checks
-  - [ ] split risky upgrades into separate PRs before release
-
-## ✅ Done
+  - [x] replace obsolete Sharp icon tooling with the Tauri CLI
+  - [x] refresh Tauri 2.11 and the Rust lockfile in a platform-regression batch
+  - [x] evaluate frontend and Rust API/toolchain majors in focused branches
+  - [x] integrate approved dependency lanes on `integration/next-release-dependencies`
+    - [x] regenerate combined pnpm and Cargo lockfiles
+    - [x] run frontend audit/build and exact-Rust-1.95 full Rust tests
+    - [x] run native terminal/platform/database/font/Git/diff smoke matrix
+  - [x] run terminal repro, interactive shell, build, and full Rust regression checks
+  - [x] preserve focused upgrade branches as separate rollback and PR boundaries
 
 - [x] Upgrade xterm.js 5.5 → 6.x
   - [x] inventory core/addon API and CSS changes against the installed versions

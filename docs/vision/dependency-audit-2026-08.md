@@ -1,6 +1,6 @@
 # Next-release dependency audit — August 2026
 
-Status: in progress · 2026-08-06
+Status: complete · 2026-08-06
 
 This audit starts from the completed xterm.js 6 / terminal-pipeline work. The
 terminal upgrade remains isolated on `upgrade/xterm-6-phase-3`; this branch
@@ -38,56 +38,62 @@ still emits its existing large-chunk warning and a Node 26 `module.register()`
 deprecation from the toolchain; neither is introduced as an application error
 by this batch.
 
-## Lane 2 — Sharp 0.35 native-binary update
+## Lane 2 — icon tooling
 
-Upgrade Sharp 0.34.5 to 0.35.x separately. The current high-severity audit
-finding is inherited from bundled libvips. Shep currently uses Sharp only from
-`scripts/generate-icon.mjs`, so the app does not process user-provided images,
-but release tooling should still move to the patched native package.
+Completed on `upgrade/sharp-0.35` (`33118d6`). Sharp was only used by the
+one-off `scripts/generate-icon.mjs`; removing both and using Tauri's built-in
+`tauri icon assets/shep.png` command eliminated the libvips advisory and a
+native build dependency without changing application runtime behavior.
 
-Verification should regenerate every application icon on each supported build
-host and compare dimensions, alpha, color profile, and packaging output. This
-is kept separate because Sharp and libvips are native, platform-specific
-artifacts despite Sharp's 0.x version change looking small.
+The generated icon set and native packaging output were checked on the focused
+branch.
 
 ## Lane 3 — Tauri and Rust lockfile refresh
 
-`cargo update --dry-run -v` identifies roughly 213 compatible lockfile changes.
-Notable direct-compatible moves include Tauri 2.10 -> 2.11 and tauri-build
-2.5 -> 2.6. A current RustSec scan finds:
+Completed on `upgrade/tauri-2.11-rust-lock` (`8c900a2`) and incorporated into
+the integration graph. Direct moves include Tauri 2.10 -> 2.11, tauri-build
+2.5 -> 2.6, and corresponding JavaScript API/CLI/plugin releases. The combined
+lockfile was freshly resolved under Rust 1.95, replacing the vulnerable
+quick-xml, rkyv, and rustls-webpki versions identified in the baseline.
 
-- four entries across quick-xml 0.37.5 and 0.38.4;
-- one entry for rkyv 0.7.46;
-- three entries for rustls-webpki 0.103.10.
-
-The dry run advances the Tauri/plist XML chain and updates rustls-webpki to a
-patched compatible release, but it also changes a broad platform dependency
-surface. Land this as its own branch/PR, inspect why both quick-xml versions and
-rkyv remain in the all-target graph, then run the full Rust suite plus native
-updater, PTY, notification, shell, persistence, and packaging checks. Re-run
-RustSec after the refresh; do not silence advisories merely because a vulnerable
-crate is platform-specific without documenting the reachable target.
-
-The same pass should reconcile the declared Rust MSRV with the actual Tauri and
-dependency requirements. Raising MSRV is a release policy decision, not an
-incidental lockfile edit.
+The declared source-build requirement is now Rust 1.95 because rusqlite 0.40's
+dependency graph uses APIs stabilized in that release. README and Cargo
+metadata carry the same requirement.
 
 ## Lane 4 — API/toolchain majors
 
-Defer these until release notes and Shep call sites are reviewed in dedicated
-branches:
+Reviewed and completed in dedicated branches before integration:
 
-- Vite 8 and `@vitejs/plugin-react` 6;
-- Shiki 4 and `@shikijs/markdown-it` 4;
-- markdown-it 15;
-- TypeScript 7;
-- lucide-react 1.x;
-- Rust direct majors such as notify 8, rusqlite 0.40, portable-pty 0.9, and
-  core-text 22.
+- Pierre Diffs 1.3 / Shiki 4 (`26ed9aa`);
+- Vite 8 / React plugin 6 / Tailwind 4.3 (`3cdab2b`);
+- markdown-it 15 (`469c724`), preserving Shep's bare-domain link behavior;
+- TypeScript 7 (`9ab8a58`) and lucide-react 1 (`bb7ec02`);
+- notify 8 (`d2c29a4`), core-text 22 (`9749cd2`), portable-pty 0.9
+  (`07f79bf`), and rusqlite 0.40 (`35d01a9`).
 
-These upgrades are not needed to close the immediately reachable frontend
-advisories. Keeping them separate preserves a clear rollback boundary and lets
-each branch carry its own migration notes and focused regression coverage.
+Each focused branch passed its relevant build/test and native smoke checks.
+They remain separate rollback boundaries even though this integration branch
+combines their approved results for the next release.
+
+## Integrated result
+
+`integration/next-release-dependencies` combines the approved lanes and
+regenerates both lockfiles from the final manifests.
+
+- `pnpm audit`: no known vulnerabilities.
+- `pnpm build`: TypeScript 7 and Vite 8 production build passes. The existing
+  large-chunk warning remains informational.
+- `cargo +1.95.0 test --locked`: all 41 tests pass, including PTY flow control,
+  fresh-database migration/seeding, and usage-provider ingest coverage.
+- RustSec: no blocking vulnerabilities. The all-target lockfile retains 17
+  allowed warnings for GTK3-era Linux transitive crates, proc-macro-error, and
+  legacy unic crates; these are tracked as dependency-ecosystem warnings rather
+  than suppressed application vulnerabilities.
+- Native Tauri 2.11 development build launches cleanly with terminal color
+  suppression removed from the automation environment.
+- Final hands-on integrated smoke testing passed terminal output/colors,
+  renderer/theme switching, scrolling/follow behavior, platform/database/font
+  settings, Git diffs, Markdown rendering, and normal shell/agent use.
 
 ## Release validation matrix
 

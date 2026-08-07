@@ -6,52 +6,52 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "icons": "tauri icon assets/shep.png",
     "preview": "vite preview",
     "tauri": "tauri"
   },
   "dependencies": {
-    "@pierre/diffs": "^1.1.17",
+    "@pierre/diffs": "^1.3.4",
     "@pierre/trees": "1.0.0-beta.3",
-    "@shikijs/markdown-it": "^3.23.0",
-    "@tauri-apps/api": "^2.10.1",
-    "@tauri-apps/plugin-dialog": "^2.6.0",
+    "@shikijs/markdown-it": "^4.4.2",
+    "@tauri-apps/api": "^2.11.1",
+    "@tauri-apps/plugin-dialog": "^2.7.2",
     "@tauri-apps/plugin-notification": "^2.3.3",
     "@tauri-apps/plugin-process": "^2.3.1",
     "@tauri-apps/plugin-shell": "^2.3.5",
-    "@tauri-apps/plugin-updater": "^2.10.0",
+    "@tauri-apps/plugin-updater": "^2.10.1",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-unicode11": "^0.9.0",
     "@xterm/addon-web-links": "^0.12.0",
     "@xterm/addon-webgl": "^0.19.0",
     "@xterm/xterm": "^6.0.0",
-    "lucide-react": "^0.577.0",
-    "markdown-it": "^14.3.0",
+    "lucide-react": "^1.29.0",
+    "markdown-it": "^15.0.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
-    "shiki": "^3.23.0",
+    "shiki": "^4.4.2",
     "zustand": "^5.0.11"
   },
   "devDependencies": {
-    "@tailwindcss/vite": "^4.2.1",
-    "@tauri-apps/cli": "^2.10.1",
-    "@types/markdown-it": "^14.1.2",
+    "@tailwindcss/vite": "^4.3.3",
+    "@tauri-apps/cli": "^2.11.4",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
-    "@vitejs/plugin-react": "^5.2.0",
-    "sharp": "^0.34.5",
-    "tailwindcss": "^4.2.1",
-    "typescript": "^5.9.3",
-    "vite": "^7.3.6"
+    "@vitejs/plugin-react": "^6.0.5",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^7.0.2",
+    "vite": "^8.2.1"
   },
   "pnpm": {
     "overrides": {
+      "@shikijs/transformers": "4.4.2",
       "esbuild": "0.28.1",
       "picomatch": "4.0.4",
-      "postcss": "8.5.23"
+      "postcss": "8.5.23",
+      "shiki": "4.4.2"
     },
     "onlyBuiltDependencies": [
-      "esbuild",
-      "sharp"
+      "esbuild"
     ]
   }
 }

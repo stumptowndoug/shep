@@ -51,7 +51,7 @@ For building from source:
 
 - Node.js 20+
 - `pnpm`
-- Rust via `rustup`
+- Rust 1.95+ via `rustup`
 - Xcode Command Line Tools
 
 ## Getting Started
