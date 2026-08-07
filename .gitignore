@@ -7,3 +7,4 @@ target/
 .planning/
 latest.json
 .claude/settings.local.json
+TODO.md
