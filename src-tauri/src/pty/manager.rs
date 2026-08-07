@@ -62,6 +62,15 @@ impl PtyManager {
         session.write(data)
     }
 
+    pub fn acknowledge_output(&self, pty_id: u32, bytes: usize) -> Result<(), String> {
+        let sessions = self.sessions.lock().unwrap();
+        let session = sessions
+            .get(&pty_id)
+            .ok_or_else(|| format!("PTY {pty_id} not found"))?;
+        session.acknowledge_output(bytes);
+        Ok(())
+    }
+
     pub fn set_color_theme(&self, color_theme: PtyColorTheme) -> Result<(), String> {
         let sessions = self.sessions.lock().unwrap();
         for session in sessions.values() {

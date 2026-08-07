@@ -1,6 +1,5 @@
 import { useEffect, useRef, useCallback } from "react";
 import { Terminal } from "@xterm/xterm";
-import { CanvasAddon } from "@xterm/addon-canvas";
 import { FitAddon } from "@xterm/addon-fit";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebLinksAddon } from "@xterm/addon-web-links";
@@ -24,17 +23,13 @@ import { notifyAgent } from "../../lib/notifications";
 import { KEYBINDING_PRESETS } from "../../lib/keybindingPresets";
 import { useKeybindingStore } from "../../stores/useKeybindingStore";
 import { useTerminalSettingsStore } from "../../stores/useTerminalSettingsStore";
+import { terminalCache } from "./terminalCache";
+import { reconcileTerminalRenderer } from "./terminalRenderer";
 
 interface TerminalViewProps {
   ptyId: number;
   visible: boolean;
 }
-
-// Keep terminal instances alive across tab switches
-export const terminalCache = new Map<
-  number,
-  { term: Terminal; fitAddon: FitAddon; rendererAddon: WebglAddon | CanvasAddon | null }
->();
 
 export default function TerminalView({
   ptyId,
@@ -43,7 +38,8 @@ export default function TerminalView({
   const containerRef = useRef<HTMLDivElement>(null);
   const mountedRef = useRef(false);
   const attachedRef = useRef(false);
-  const lastSizeRef = useRef<{ cols: number; rows: number } | null>(null);
+  const pinnedToBottomRef = useRef(true);
+  const columnResizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const getOrCreateTerminal = useCallback(() => {
     const cached = terminalCache.get(ptyId);
@@ -78,6 +74,8 @@ export default function TerminalView({
 
     // Send input to PTY
     term.onData((data) => {
+      pinnedToBottomRef.current = true;
+      term.scrollToBottom();
       writePty(ptyId, data).catch((error) => {
         if (import.meta.env.DEV) {
           console.error("Failed to write PTY input:", error);
@@ -117,9 +115,32 @@ export default function TerminalView({
       return true; // let xterm handle normally
     });
 
-    const entry = { term, fitAddon, rendererAddon: null as WebglAddon | CanvasAddon | null };
+    const entry = {
+      term,
+      fitAddon,
+      rendererAddon: null as WebglAddon | null,
+      webglFailed: false,
+    };
     terminalCache.set(ptyId, entry);
     return entry;
+  }, [ptyId]);
+
+  const applyTerminalSize = useCallback(async (cols: number, rows: number) => {
+    const cached = terminalCache.get(ptyId);
+    if (!cached) return;
+
+    const size = { cols: Math.max(2, cols), rows: Math.max(2, rows) };
+    if (cached.term.cols === size.cols && cached.term.rows === size.rows) return;
+
+    preserveTerminalViewport(cached.term, () => {
+      cached.term.resize(size.cols, size.rows);
+    });
+
+    await resizePty(ptyId, size.cols, size.rows).catch((error) => {
+      if (import.meta.env.DEV) {
+        console.error("Failed to resize PTY:", error);
+      }
+    });
   }, [ptyId]);
 
   const fitAndResize = useCallback(async () => {
@@ -129,30 +150,35 @@ export default function TerminalView({
     const proposedSize = cached.fitAddon.proposeDimensions();
     if (!proposedSize) return;
 
-    const size = { cols: proposedSize.cols, rows: proposedSize.rows };
-    const lastSize = lastSizeRef.current;
+    const nextSize = { cols: proposedSize.cols, rows: proposedSize.rows };
+    const columnsChanged = cached.term.cols !== nextSize.cols;
+    const rowsChanged = cached.term.rows !== nextSize.rows;
+    if (!columnsChanged && !rowsChanged) return;
 
-    if (
-      lastSize &&
-      lastSize.cols === size.cols &&
-      lastSize.rows === size.rows &&
-      cached.term.cols === size.cols &&
-      cached.term.rows === size.rows
-    ) {
+    const shouldDebounceColumns =
+      columnsChanged && cached.term.buffer.active.length > 200;
+
+    if (!shouldDebounceColumns) {
+      if (columnResizeTimerRef.current) {
+        clearTimeout(columnResizeTimerRef.current);
+        columnResizeTimerRef.current = null;
+      }
+      await applyTerminalSize(nextSize.cols, nextSize.rows);
       return;
     }
 
-    preserveTerminalViewport(cached.term, () => {
-      cached.fitAddon.fit();
-    });
-
-    lastSizeRef.current = size;
-    await resizePty(ptyId, size.cols, size.rows).catch((error) => {
-      if (import.meta.env.DEV) {
-        console.error("Failed to resize PTY:", error);
-      }
-    });
-  }, [ptyId]);
+    // Reflowing a long scrollback buffer on every width observation is costly.
+    // Apply row changes immediately at the current width and settle columns
+    // after the resize gesture has been quiet for 100 ms.
+    if (rowsChanged) {
+      await applyTerminalSize(cached.term.cols, nextSize.rows);
+    }
+    if (columnResizeTimerRef.current) clearTimeout(columnResizeTimerRef.current);
+    columnResizeTimerRef.current = setTimeout(() => {
+      columnResizeTimerRef.current = null;
+      void applyTerminalSize(nextSize.cols, nextSize.rows);
+    }, 100);
+  }, [applyTerminalSize, ptyId]);
 
   useEffect(() => {
     if (!containerRef.current || !visible) return;
@@ -164,46 +190,69 @@ export default function TerminalView({
       term.open(containerRef.current);
       mountedRef.current = true;
 
-      // Load renderer addon after open() so it can access the DOM.
-      // Canvas addon handles alpha compositing correctly for glass transparency.
-      // Fall back to WebGL if Canvas fails.
+      // Load WebGL after open() so it can access the DOM. Initialization or
+      // context-loss failures restore xterm's built-in DOM renderer.
       const cached = terminalCache.get(ptyId);
-      if (cached && !cached.rendererAddon) {
-        try {
-          const canvas = new CanvasAddon();
-          term.loadAddon(canvas);
-          cached.rendererAddon = canvas;
-        } catch (err) {
-          if (import.meta.env.DEV) {
-            console.warn("Canvas renderer failed, trying WebGL:", err);
-          }
-          try {
-            const webgl = new WebglAddon();
-            term.loadAddon(webgl);
-            cached.rendererAddon = webgl;
-          } catch (err2) {
-            if (import.meta.env.DEV) {
-              console.warn("No accelerated renderer available:", err2);
-            }
-          }
-        }
+      if (cached) {
+        reconcileTerminalRenderer(
+          term,
+          cached,
+          useThemeStore.getState().theme,
+        );
       }
     }
+
+    const surface = containerRef.current;
+    const syncPinnedAfterEvent = () => {
+      queueMicrotask(() => {
+        if (disposed) return;
+        pinnedToBottomRef.current = terminalBottomOffset(term) === 0;
+      });
+    };
+    const handleWheelCapture = (event: WheelEvent) => {
+      if (event.deltaY < 0) pinnedToBottomRef.current = false;
+      else syncPinnedAfterEvent();
+    };
+    const handleKeyDownCapture = (event: KeyboardEvent) => {
+      const viewportKey = event.shiftKey && [
+        "PageUp",
+        "PageDown",
+        "Home",
+        "End",
+        "ArrowUp",
+        "ArrowDown",
+      ].includes(event.key);
+      if (viewportKey) {
+        if (["PageUp", "Home", "ArrowUp"].includes(event.key)) {
+          pinnedToBottomRef.current = false;
+        }
+        syncPinnedAfterEvent();
+        return;
+      }
+
+      // Normal terminal input resumes follow mode before xterm emits onData.
+      pinnedToBottomRef.current = true;
+      term.scrollToBottom();
+    };
+    surface.addEventListener("wheel", handleWheelCapture, { capture: true });
+    surface.addEventListener("keydown", handleKeyDownCapture, { capture: true });
 
     const attachTerminal = async () => {
       await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
       if (disposed) return;
 
-      // Snapshot the scroll position from xterm's internal buffer before
-      // touching anything: while the container was display:none the browser
-      // zeroed the DOM viewport's scrollTop, so the internal position is the
-      // only surviving record of where the user was.
-      const bottomOffset = terminalBottomOffset(term);
-
       // Re-apply the current theme now that the container is visible.
       // Theme changes that occurred while hidden were deferred to avoid
       // corrupting xterm's scroll state.
-      term.options.theme = createTerminalTheme(useThemeStore.getState().theme);
+      const currentTheme = useThemeStore.getState().theme;
+      const cachedEntry = terminalCache.get(ptyId);
+      if (currentTheme.isTransparent && cachedEntry) {
+        reconcileTerminalRenderer(term, cachedEntry, currentTheme);
+      }
+      term.options.theme = createTerminalTheme(currentTheme);
+      if (!currentTheme.isTransparent && cachedEntry) {
+        reconcileTerminalRenderer(term, cachedEntry, currentTheme);
+      }
 
       // Re-apply terminal settings (font, cursor, scrollback) that may have
       // changed while this terminal was hidden. `applyTerminalSettings` skips
@@ -222,7 +271,6 @@ export default function TerminalView({
       term.options.fontFamily = nextCssFont;
       term.options.fontSize = currentTermSettings.fontSize;
 
-      const cachedEntry = terminalCache.get(ptyId);
       if (fontMetricsChanged) {
         cachedEntry?.rendererAddon?.clearTextureAtlas?.();
       }
@@ -237,10 +285,15 @@ export default function TerminalView({
       // fitAndResize skips the fit (and its viewport preservation) when the
       // dimensions didn't change — the common case when returning to a tab —
       // so the zeroed DOM scrollTop must be re-asserted unconditionally.
-      resyncTerminalViewport(term, bottomOffset);
+      // Recompute immediately before the pending-output flush. The buffer may
+      // have changed while theme/settings/fit work ran, so an earlier offset
+      // is not safe to reuse here.
+      resyncTerminalViewport(term, terminalBottomOffset(term));
 
       if (!attachedRef.current) {
-        registerTerminal(ptyId, term);
+        registerTerminal(ptyId, term, () => {
+          if (pinnedToBottomRef.current) term.scrollToBottom();
+        });
         flushPendingOutput(ptyId);
         attachedRef.current = true;
       }
@@ -248,7 +301,6 @@ export default function TerminalView({
       window.setTimeout(() => {
         if (disposed) return;
         void fitAndResize();
-        resyncTerminalViewport(term, bottomOffset);
         term.focus();
       }, 100);
 
@@ -280,18 +332,23 @@ export default function TerminalView({
 
     void attachTerminal();
 
-    // ResizeObserver for auto-fitting
+    // ResizeObserver for auto-fitting. fitAndResize applies rows immediately
+    // and owns the long-buffer column debounce.
     const observer = new ResizeObserver(() => {
-      requestAnimationFrame(() => {
-        if (disposed) return;
-        void fitAndResize();
-      });
+      if (disposed) return;
+      void fitAndResize();
     });
     observer.observe(containerRef.current);
 
     return () => {
       disposed = true;
       observer.disconnect();
+      surface.removeEventListener("wheel", handleWheelCapture, { capture: true });
+      surface.removeEventListener("keydown", handleKeyDownCapture, { capture: true });
+      if (columnResizeTimerRef.current) {
+        clearTimeout(columnResizeTimerRef.current);
+        columnResizeTimerRef.current = null;
+      }
     };
   }, [ptyId, visible, getOrCreateTerminal, fitAndResize]);
 
@@ -306,7 +363,11 @@ export default function TerminalView({
       }
       mountedRef.current = false;
       attachedRef.current = false;
-      lastSizeRef.current = null;
+      pinnedToBottomRef.current = true;
+      if (columnResizeTimerRef.current) {
+        clearTimeout(columnResizeTimerRef.current);
+        columnResizeTimerRef.current = null;
+      }
     };
   }, [ptyId]);
 
