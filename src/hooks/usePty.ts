@@ -24,6 +24,7 @@ import { useCommandStore } from "../stores/useCommandStore";
 import { useTerminalStore, nextTabId } from "../stores/useTerminalStore";
 import { useRepoStore } from "../stores/useRepoStore";
 import { useNoticeStore } from "../stores/useNoticeStore";
+import { useProjectSettingsStore } from "../stores/useProjectSettingsStore";
 import { CODING_ASSISTANTS } from "../components/sidebar/constants";
 import type { Terminal } from "@xterm/xterm";
 import { getErrorMessage } from "../lib/errors";
@@ -962,7 +963,11 @@ export function usePty() {
   const resumeAssistant = useCallback(
     async (session: SessionHistoryEntry, cols: number, rows: number) => {
       const assistant = CODING_ASSISTANTS.find((entry) => entry.id === session.provider);
-      const commandArgs = sessionResumeArgs(session.provider, session.sessionId);
+      const resumeArgs = sessionResumeArgs(session.provider, session.sessionId);
+      const mode = useProjectSettingsStore.getState().settings.defaultAgentMode;
+      const commandArgs = resumeArgs && mode === "yolo" && assistant?.yoloFlag
+        ? [assistant.yoloFlag, ...resumeArgs]
+        : resumeArgs;
       if (!assistant || !commandArgs) {
         pushNotice({
           tone: "error",
@@ -994,7 +999,7 @@ export function usePty() {
           commandName: null,
           assistantId: session.provider,
           providerSessionId: session.sessionId,
-          sessionMode: "standard",
+          sessionMode: mode,
           labelSource: session.title ? "session" : "default",
         });
 

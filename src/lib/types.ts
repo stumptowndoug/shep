@@ -42,8 +42,8 @@ export type AgentLabelMode = "repository" | "title";
 
 export interface ProjectSettings {
   autoImportWorktrees: boolean;
-  showAgentSessionsInSidebar: boolean;
   agentLabelMode: AgentLabelMode;
+  defaultAgentMode: SessionMode;
   showTodos: boolean;
   /** Shape of a lazily created TODO.md. */
   todoFileStyle: TodoFileStyle;

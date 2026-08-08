@@ -243,9 +243,10 @@ export function recordSessionHistoryActivity(
 
 export function listSessionHistory(
   projectPath: string | null = null,
+  query: string | null = null,
   limit = 50,
 ): Promise<SessionHistoryEntry[]> {
-  return invoke("list_session_history", { projectPath, limit });
+  return invoke("list_session_history", { projectPath, query, limit });
 }
 
 // ── App lifecycle commands ────────────────────────────────────────

@@ -246,7 +246,8 @@ function detectCodex(screen: string, title: string): AgentScreenDetection {
 
 function detectAntigravity(screen: string): AgentScreenDetection {
   const lower = screen.toLocaleLowerCase();
-  const recent = lastNonEmptyLines(screen, 8);
+  const recent = lastNonEmptyLines(screen, 12);
+  const recentLower = recent.toLocaleLowerCase();
 
   if (
     lower.includes("requesting permission for:") &&
@@ -257,6 +258,19 @@ function detectAntigravity(screen: string): AgentScreenDetection {
       "antigravity-permission-prompt",
       "Antigravity is visibly requesting permission",
       evidenceFor(screen, "requesting permission for:"),
+    );
+  }
+
+  if (
+    /question\s+\d+\s*\/\s*\d+\s*:/iu.test(recent) &&
+    recentLower.includes("enter select") &&
+    recentLower.includes("esc skip")
+  ) {
+    return matched(
+      "blocked",
+      "antigravity-question",
+      "Antigravity is waiting for an answer to a visible question",
+      evidenceFor(recent, "question"),
     );
   }
 
@@ -281,6 +295,15 @@ function detectAntigravity(screen: string): AgentScreenDetection {
       "antigravity-background-tasks",
       "Antigravity reports active background tasks",
       taskLine.trim(),
+    );
+  }
+
+  if (/^\s*>\s*$/mu.test(recent) && recentLower.includes("? for shortcuts")) {
+    return matched(
+      "idle",
+      "antigravity-live-prompt",
+      "Antigravity's live prompt is ready for input",
+      evidenceFor(recent, "? for shortcuts"),
     );
   }
 
@@ -312,7 +335,12 @@ function detectOpenCode(screen: string): AgentScreenDetection {
     );
   }
 
-  const interruptHint = ["esc to interrupt", "ctrl+c to interrupt", "press esc to interrupt"]
+  const interruptHint = [
+    "esc interrupt",
+    "esc to interrupt",
+    "ctrl+c to interrupt",
+    "press esc to interrupt",
+  ]
     .find((needle) => lower.includes(needle));
   if (interruptHint) {
     return matched(
@@ -332,12 +360,52 @@ function detectOpenCode(screen: string): AgentScreenDetection {
     );
   }
 
+  const spinnerLine = recent
+    .split("\n")
+    .find((line) => /^\s*[\u2800-\u28ff]+\s+(?:Thinking|Working)\b/iu.test(line));
+  if (spinnerLine) {
+    return matched(
+      "working",
+      "opencode-spinner",
+      "OpenCode's working spinner is visible",
+      spinnerLine.trim(),
+    );
+  }
+
+  const idleHint = ["ask anything...", "ctrl+p commands"]
+    .find((needle) => lower.includes(needle));
+  if (idleHint) {
+    return matched(
+      "idle",
+      "opencode-live-prompt",
+      "OpenCode's live prompt is ready for input",
+      evidenceFor(recent, idleHint),
+    );
+  }
+
   return fallback("OpenCode");
 }
 
 function detectPi(screen: string): AgentScreenDetection {
-  const recent = lastNonEmptyLines(screen, 8);
-  if (recent.includes("Working...")) {
+  const recent = lastNonEmptyLines(screen, 12);
+  const lower = recent.toLocaleLowerCase();
+
+  const inputFooter = lower.includes("enter submit") && (
+    lower.includes("esc cancel") || lower.includes("escape cancel")
+  );
+  const questionSelector = lower.includes("question") &&
+    lower.includes("enter select") &&
+    (lower.includes("esc cancel") || lower.includes("esc dismiss"));
+  if (inputFooter || questionSelector) {
+    return matched(
+      "blocked",
+      "pi-extension-input",
+      "Pi is waiting for input from a visible extension form",
+      evidenceFor(recent, inputFooter ? "enter submit" : "enter select"),
+    );
+  }
+
+  if (lower.includes("working...")) {
     return matched(
       "working",
       "pi-working-literal",
@@ -345,6 +413,16 @@ function detectPi(screen: string): AgentScreenDetection {
       evidenceFor(recent, "Working..."),
     );
   }
+
+  if (lower.includes("mcp:") || lower.includes("ctrl+c/ctrl+d clear/exit")) {
+    return matched(
+      "idle",
+      "pi-live-prompt",
+      "Pi's live prompt is ready for input",
+      evidenceFor(recent, lower.includes("mcp:") ? "MCP:" : "ctrl+c/ctrl+d clear/exit"),
+    );
+  }
+
   return fallback("Pi");
 }
 

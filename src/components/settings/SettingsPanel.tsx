@@ -388,19 +388,6 @@ export default function SettingsPanel() {
 
         <div className="settings-row">
           <span className="settings-row__label flex items-center gap-2">
-            <span>Agent Sessions in Sidebar</span>
-            <InfoTip text="Shows the global agent session section above Projects. Project tabs and agent sessions remain available inside each project when this is off." />
-          </span>
-          <button
-            onClick={() => void updateProjectSettings({ showAgentSessionsInSidebar: !projectSettings.showAgentSessionsInSidebar })}
-            className={`option-card option-card--compact ${projectSettings.showAgentSessionsInSidebar ? "selected" : ""}`}
-          >
-            {projectSettings.showAgentSessionsInSidebar ? "On" : "Off"}
-          </button>
-        </div>
-
-        <div className="settings-row">
-          <span className="settings-row__label flex items-center gap-2">
             <span>Agent Label</span>
             <InfoTip text="Choose what identifies live agents in tabs and the sidebar. Session titles are still retained for history when Repository is selected. Manual tab renames always take priority." />
           </span>
@@ -416,6 +403,28 @@ export default function SettingsPanel() {
               className={`option-card option-card--compact ${projectSettings.agentLabelMode === "title" ? "selected" : ""}`}
             >
               Session title
+            </button>
+          </div>
+        </div>
+
+        <div className="settings-row">
+          <span className="settings-row__label flex items-center gap-2">
+            <span>Default Agent Mode</span>
+            <InfoTip text="YOLO starts supported agents with permission checks disabled and also applies when resuming sessions. Pi already runs tools without a separate approval layer." />
+          </span>
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={() => void updateProjectSettings({ defaultAgentMode: "standard" })}
+              className={`option-card option-card--compact ${projectSettings.defaultAgentMode === "standard" ? "selected" : ""}`}
+            >
+              Standard
+            </button>
+            <button
+              onClick={() => void updateProjectSettings({ defaultAgentMode: "yolo" })}
+              className={`option-card option-card--compact ${projectSettings.defaultAgentMode === "yolo" ? "selected" : ""}`}
+              title="Start agents with approval prompts disabled"
+            >
+              YOLO
             </button>
           </div>
         </div>

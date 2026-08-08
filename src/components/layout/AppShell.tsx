@@ -25,6 +25,7 @@ import { useEditorStore } from "../../stores/useEditorStore";
 import { useTerminalSettingsStore } from "../../stores/useTerminalSettingsStore";
 import { useUsageStore } from "../../stores/useUsageStore";
 import { useUsageSettingsStore } from "../../stores/useUsageSettingsStore";
+import { useProjectSettingsStore } from "../../stores/useProjectSettingsStore";
 import { useUpdateStore } from "../../stores/useUpdateStore";
 import { initNotifications } from "../../lib/notifications";
 import { getErrorMessage } from "../../lib/errors";
@@ -170,6 +171,7 @@ export default function AppShell() {
   // Derive which kind of local tab is active (for panel content rendering)
   const activeTab = tabs.find((t) => t.id === activeTabId) ?? null;
   const { loadSettings: loadEditorSettings } = useEditorStore.getState();
+  const { loadSettings: loadProjectSettings } = useProjectSettingsStore.getState();
   const { loadSettings: loadTerminalSettings } = useTerminalSettingsStore.getState();
   const { fetchSnapshots: fetchUsageSnapshots } = useUsageStore.getState();
   const { loadSettings: loadUsageSettings } = useUsageSettingsStore.getState();
@@ -178,6 +180,7 @@ export default function AppShell() {
     fetchRepos();
     fetchGroups();
     void loadEditorSettings();
+    void loadProjectSettings();
     void loadTerminalSettings();
     void loadUsageSettings();
     void fetchUsageSnapshots();
@@ -204,7 +207,7 @@ export default function AppShell() {
       window.clearTimeout(updateTimer);
       window.clearTimeout(usageRefreshTimer);
     };
-  }, [fetchRepos, fetchGroups, loadEditorSettings, loadTerminalSettings, loadUsageSettings, fetchUsageSnapshots, pushNotice]);
+  }, [fetchRepos, fetchGroups, loadEditorSettings, loadProjectSettings, loadTerminalSettings, loadUsageSettings, fetchUsageSnapshots, pushNotice]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {

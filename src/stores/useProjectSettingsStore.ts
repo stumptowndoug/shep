@@ -4,8 +4,8 @@ import { getProjectSettings, saveProjectSettings } from "../lib/tauri";
 
 const DEFAULT_SETTINGS: ProjectSettings = {
   autoImportWorktrees: true,
-  showAgentSessionsInSidebar: true,
   agentLabelMode: "repository",
+  defaultAgentMode: "yolo",
   showTodos: true,
   todoFileStyle: "kanban",
 };
@@ -28,7 +28,14 @@ export const useProjectSettingsStore = create<ProjectSettingsStore>((set, get) =
   loadSettings: async () => {
     try {
       const settings = await getProjectSettings();
-      set({ settings, hasLoaded: true, error: null });
+      set({
+        settings: {
+          ...settings,
+          defaultAgentMode: settings.defaultAgentMode === "standard" ? "standard" : "yolo",
+        },
+        hasLoaded: true,
+        error: null,
+      });
     } catch (error) {
       set({ settings: DEFAULT_SETTINGS, hasLoaded: true, error: String(error) });
     }
