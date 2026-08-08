@@ -52,11 +52,12 @@ pub struct EditorSettings {
 pub struct ProjectSettings {
     #[serde(default = "default_true", rename = "autoImportWorktrees")]
     pub auto_import_worktrees: bool,
-    #[serde(default = "default_true", rename = "showAgentSessionsInSidebar")]
-    pub show_agent_sessions_in_sidebar: bool,
     /// Label shown for live agent sessions: "repository" or "title".
     #[serde(default = "default_agent_label_mode", rename = "agentLabelMode")]
     pub agent_label_mode: String,
+    /// Permission mode used when starting or resuming agent sessions.
+    #[serde(default = "default_agent_session_mode", rename = "defaultAgentMode")]
+    pub default_agent_mode: String,
     #[serde(default = "default_true", rename = "showTodos")]
     pub show_todos: bool,
     /// Shape of a lazily created TODO.md: "kanban" (columned board) or "list".
@@ -72,12 +73,16 @@ fn default_agent_label_mode() -> String {
     "repository".to_string()
 }
 
+fn default_agent_session_mode() -> String {
+    "yolo".to_string()
+}
+
 impl Default for ProjectSettings {
     fn default() -> Self {
         ProjectSettings {
             auto_import_worktrees: true,
-            show_agent_sessions_in_sidebar: true,
             agent_label_mode: default_agent_label_mode(),
+            default_agent_mode: default_agent_session_mode(),
             show_todos: true,
             todo_file_style: default_todo_file_style(),
         }
@@ -335,4 +340,30 @@ pub struct WorkspaceConfig {
     pub commands: Vec<CommandConfig>,
     #[serde(default)]
     pub assistants: Vec<AssistantConfig>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn project_settings_default_agent_mode_to_yolo() {
+        let settings: ProjectSettings = serde_yaml::from_str(
+            "autoImportWorktrees: true\nagentLabelMode: repository\nshowTodos: true\ntodoFileStyle: kanban\n",
+        )
+        .unwrap();
+
+        assert_eq!(settings.default_agent_mode, "yolo");
+        assert_eq!(ProjectSettings::default().default_agent_mode, "yolo");
+    }
+
+    #[test]
+    fn project_settings_preserve_an_explicit_standard_agent_mode() {
+        let settings: ProjectSettings = serde_yaml::from_str(
+            "autoImportWorktrees: true\ndefaultAgentMode: standard\nshowTodos: true\ntodoFileStyle: kanban\n",
+        )
+        .unwrap();
+
+        assert_eq!(settings.default_agent_mode, "standard");
+    }
 }

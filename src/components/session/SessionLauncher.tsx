@@ -4,6 +4,7 @@ import { CODING_ASSISTANTS } from "../sidebar/constants";
 import { checkCommandExists, getModelsForProvider } from "../../lib/tauri";
 import { useRepoStore } from "../../stores/useRepoStore";
 import { usePiConfigStore } from "../../stores/usePiConfigStore";
+import { useProjectSettingsStore } from "../../stores/useProjectSettingsStore";
 import { HandMetal, ChevronDown, Check, Info, X } from "lucide-react";
 import { assistantLogoSrc, getAssistantLogoClass } from "../../lib/assistantLogos";
 import { ASSISTANT_INSTALL_URLS } from "../sidebar/constants";
@@ -18,11 +19,12 @@ interface SessionLauncherProps {
 
 export default function SessionLauncher({ onStartSession }: SessionLauncherProps) {
   const activeRepoPath = useRepoStore((s) => s.activeRepoPath);
+  const defaultAgentMode = useProjectSettingsStore((s) => s.settings.defaultAgentMode);
 
   const [selectedAssistant, setSelectedAssistant] = useState<CodingAssistant | null>(null);
   const [available, setAvailable] = useState<Record<string, boolean>>({});
   const [installPopover, setInstallPopover] = useState<string | null>(null);
-  const [mode, setMode] = useState<SessionMode>("standard");
+  const [mode, setMode] = useState<SessionMode>(defaultAgentMode);
   const [launching, setLaunching] = useState(false);
 
   const [selectedModel, setSelectedModel] = useState<string | null>(null);
@@ -109,7 +111,11 @@ export default function SessionLauncher({ onStartSession }: SessionLauncherProps
   }, [availableModels, modelSearch, selectedAssistant, selectedPiProvider]);
 
   const supportsModelSelection = (id: string) => id !== "pi" && id !== "opencode";
-  const supportsMode = (id: string) => id !== "pi" && id !== "opencode";
+  const supportsMode = (id: string) => id !== "pi";
+
+  useEffect(() => {
+    setMode(defaultAgentMode);
+  }, [defaultAgentMode]);
 
   const handleSelectAssistant = (assistant: CodingAssistant) => {
     const requestId = modelRequestRef.current + 1;

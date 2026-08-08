@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronRight, Clock3, LoaderCircle, RefreshCcw, Search } from "lucide-react";
 import { CODING_ASSISTANTS } from "../sidebar/constants";
 import { assistantLogoSrc, getAssistantLogoClass } from "../../lib/assistantLogos";
@@ -78,11 +78,13 @@ export default function HistoryPanel({
 }: HistoryPanelProps) {
   const [scope, setScope] = useState<HistoryScope>("all");
   const [query, setQuery] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
   const [sessions, setSessions] = useState<SessionHistoryEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [availableProviders, setAvailableProviders] = useState<Record<string, boolean>>({});
   const [resumingKey, setResumingKey] = useState<string | null>(null);
+  const loadRequestId = useRef(0);
   const projectState = useTerminalStore((state) => state.projectState);
   const tabActivity = useTerminalStore((state) => state.tabActivity);
 
@@ -90,18 +92,26 @@ export default function HistoryPanel({
     if (!activeRepoPath && scope === "project") setScope("all");
   }, [activeRepoPath, scope]);
 
+  useEffect(() => {
+    const timer = window.setTimeout(() => setSearchQuery(query.trim()), 200);
+    return () => window.clearTimeout(timer);
+  }, [query]);
+
   const loadSessions = useCallback(async () => {
+    const requestId = loadRequestId.current + 1;
+    loadRequestId.current = requestId;
     setLoading(true);
     setError(null);
     try {
       const projectPath = scope === "project" ? activeRepoPath : null;
-      setSessions(await listSessionHistory(projectPath, 200));
+      const nextSessions = await listSessionHistory(projectPath, searchQuery || null, 200);
+      if (loadRequestId.current === requestId) setSessions(nextSessions);
     } catch (loadError) {
-      setError(getErrorMessage(loadError));
+      if (loadRequestId.current === requestId) setError(getErrorMessage(loadError));
     } finally {
-      setLoading(false);
+      if (loadRequestId.current === requestId) setLoading(false);
     }
-  }, [activeRepoPath, scope]);
+  }, [activeRepoPath, scope, searchQuery]);
 
   useEffect(() => {
     void loadSessions();
@@ -137,21 +147,6 @@ export default function HistoryPanel({
     return keys;
   }, [projectState, tabActivity]);
 
-  const filteredSessions = useMemo(() => {
-    const needle = query.trim().toLocaleLowerCase();
-    if (!needle) return sessions;
-    return sessions.filter((session) =>
-      [
-        session.title,
-        providerLabel(session.provider),
-        session.provider,
-        projectName(session.projectPath),
-        session.projectPath,
-        session.model,
-      ].some((value) => value?.toLocaleLowerCase().includes(needle)),
-    );
-  }, [query, sessions]);
-
   const selectedProjectName = activeRepoPath ? projectName(activeRepoPath) : null;
   const knownProjects = useMemo(() => new Set(knownRepoPaths), [knownRepoPaths]);
 
@@ -171,7 +166,7 @@ export default function HistoryPanel({
         <div>
           <h2 className="history-panel__title">Session history</h2>
           <p className="history-panel__description">
-            Find conversations Shep has seen. Resume actions are coming next.
+            Find and resume conversations Shep has seen.
           </p>
         </div>
         <button
@@ -223,7 +218,11 @@ export default function HistoryPanel({
           {scope === "project" && selectedProjectName ? selectedProjectName : "All projects"}
         </span>
         {!loading && !error && (
-          <span>{filteredSessions.length}{query.trim() ? ` of ${sessions.length}` : ""} sessions</span>
+          <span>
+            {searchQuery
+              ? `${sessions.length === 200 ? "First " : ""}${sessions.length} matching sessions`
+              : `${sessions.length} sessions`}
+          </span>
         )}
       </div>
 
@@ -241,21 +240,21 @@ export default function HistoryPanel({
         </div>
       )}
 
-      {!error && !loading && filteredSessions.length === 0 && (
+      {!error && !loading && sessions.length === 0 && (
         <div className="history-state">
           <Clock3 size={20} />
-          <strong>{query.trim() ? "No matching sessions" : "No saved sessions yet"}</strong>
+          <strong>{searchQuery ? "No matching sessions" : "No saved sessions yet"}</strong>
           <span>
-            {query.trim()
+            {searchQuery
               ? "Try a title, provider, repository, or model."
               : "New agent sessions appear here after Shep discovers their provider session ID."}
           </span>
         </div>
       )}
 
-      {!error && filteredSessions.length > 0 && (
+      {!error && sessions.length > 0 && (
         <div className="history-list" role="list" aria-label="Saved agent sessions">
-          {filteredSessions.map((session) => {
+          {sessions.map((session) => {
             const key = sessionKey(session.provider, session.sessionId);
             const isActive = activeSessions.has(key);
             const logoSrc = assistantLogoSrc[session.provider];

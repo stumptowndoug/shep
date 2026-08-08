@@ -100,15 +100,13 @@ export default function Sidebar({
   return (
     <div className="w-72 shrink-0 flex flex-col h-full pr-4 mr-4 border-r border-[var(--glass-border)]" onContextMenu={(e) => e.preventDefault()}>
       <div className="flex-1 overflow-y-auto min-h-0">
-        {projectSettings.showAgentSessionsInSidebar && (
-          <AgentSessionList
-            sessions={agentSessions}
-            activeRepoPath={activeRepoPath}
-            activeTabId={activeTabId}
-            labelMode={projectSettings.agentLabelMode}
-            onSelectSession={onSelectProjectTab}
-          />
-        )}
+        <AgentSessionList
+          sessions={agentSessions}
+          activeRepoPath={activeRepoPath}
+          activeTabId={activeTabId}
+          labelMode={projectSettings.agentLabelMode}
+          onSelectSession={onSelectProjectTab}
+        />
         <div className="sidebar-section px-2 pb-2">
           <SidebarSectionToggle
             label="Projects"

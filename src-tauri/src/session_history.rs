@@ -1,5 +1,5 @@
 use crate::usage::UsageDb;
-use rusqlite::{params, Connection};
+use rusqlite::{params, params_from_iter, types::Value, Connection};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
@@ -117,40 +117,60 @@ pub fn record_activity(
 pub fn list(
     db: &UsageDb,
     project_path: Option<&str>,
+    query: Option<&str>,
     limit: Option<u32>,
 ) -> Result<Vec<SessionHistoryEntry>, String> {
     let conn = db
         .conn
         .lock()
         .map_err(|_| "Session history database lock was poisoned".to_string())?;
-    list_from_connection(&conn, project_path, limit)
+    list_from_connection(&conn, project_path, query, limit)
 }
 
 fn list_from_connection(
     conn: &Connection,
     project_path: Option<&str>,
+    query: Option<&str>,
     limit: Option<u32>,
 ) -> Result<Vec<SessionHistoryEntry>, String> {
     let limit = i64::from(limit.unwrap_or(50).clamp(1, 200));
     let columns = "provider, session_id, project_path, title, model,
                    started_at, last_activity_at, ended_at";
-    let (sql, project) = match project_path.map(str::trim).filter(|path| !path.is_empty()) {
-        Some(path) => (
-            format!(
-                "SELECT {columns} FROM session_history
-                 WHERE project_path = ?1
-                 ORDER BY last_activity_at DESC LIMIT ?2"
-            ),
-            Some(path),
-        ),
-        None => (
-            format!(
-                "SELECT {columns} FROM session_history
-                 ORDER BY last_activity_at DESC LIMIT ?1"
-            ),
-            None,
-        ),
-    };
+    let project = project_path.map(str::trim).filter(|path| !path.is_empty());
+    let query = query.map(str::trim).filter(|value| !value.is_empty());
+    let mut filters = Vec::new();
+    let mut values = Vec::new();
+
+    if let Some(project) = project {
+        values.push(Value::Text(project.to_string()));
+        filters.push(format!("project_path = ?{}", values.len()));
+    }
+
+    if let Some(query) = query {
+        let escaped = query
+            .replace('\\', "\\\\")
+            .replace('%', "\\%")
+            .replace('_', "\\_");
+        values.push(Value::Text(format!("%{escaped}%")));
+        let parameter = format!("?{}", values.len());
+        filters.push(format!(
+            "(title LIKE {parameter} ESCAPE '\\' COLLATE NOCASE
+              OR provider LIKE {parameter} ESCAPE '\\' COLLATE NOCASE
+              OR project_path LIKE {parameter} ESCAPE '\\' COLLATE NOCASE
+              OR model LIKE {parameter} ESCAPE '\\' COLLATE NOCASE)"
+        ));
+    }
+
+    let mut sql = format!("SELECT {columns} FROM session_history");
+    if !filters.is_empty() {
+        sql.push_str(" WHERE ");
+        sql.push_str(&filters.join(" AND "));
+    }
+    values.push(Value::Integer(limit));
+    sql.push_str(&format!(
+        " ORDER BY last_activity_at DESC LIMIT ?{}",
+        values.len()
+    ));
 
     let mut statement = conn
         .prepare(&sql)
@@ -167,12 +187,9 @@ fn list_from_connection(
             ended_at: row.get(7)?,
         })
     };
-    let rows = if let Some(project) = project {
-        statement.query_map(params![project, limit], map_row)
-    } else {
-        statement.query_map(params![limit], map_row)
-    }
-    .map_err(|error| format!("Failed to query session history: {error}"))?;
+    let rows = statement
+        .query_map(params_from_iter(values.iter()), map_row)
+        .map_err(|error| format!("Failed to query session history: {error}"))?;
 
     rows.collect::<Result<Vec<_>, _>>()
         .map_err(|error| format!("Failed to read session history: {error}"))
@@ -238,7 +255,7 @@ mod tests {
         .unwrap();
         record_activity(&db, "codex", "session-1", 1_500, true).unwrap();
 
-        let project_rows = list(&db, Some("/repo"), Some(10)).unwrap();
+        let project_rows = list(&db, Some("/repo"), None, Some(10)).unwrap();
         assert_eq!(project_rows.len(), 1);
         assert_eq!(
             project_rows[0],
@@ -254,10 +271,100 @@ mod tests {
             }
         );
 
-        let all_rows = list(&db, None, Some(10)).unwrap();
+        let all_rows = list(&db, None, None, Some(10)).unwrap();
         assert_eq!(all_rows.len(), 2);
         assert_eq!(all_rows[0].session_id, "session-1");
         assert_eq!(all_rows[1].session_id, "session-2");
+    }
+
+    #[test]
+    fn searches_every_saved_session_before_applying_the_limit() {
+        let db = UsageDb::open_in_memory();
+        upsert(
+            &db,
+            record(
+                "claude",
+                "older-match",
+                "/archive",
+                Some("Needle migration"),
+                Some("Claude Opus"),
+                1,
+                1,
+            ),
+        )
+        .unwrap();
+
+        for index in 0..205 {
+            upsert(
+                &db,
+                record(
+                    "codex",
+                    &format!("recent-{index}"),
+                    "/repo",
+                    Some("Routine task"),
+                    Some("gpt-5"),
+                    index + 2,
+                    index + 2,
+                ),
+            )
+            .unwrap();
+        }
+
+        let recent = list(&db, None, None, Some(200)).unwrap();
+        assert_eq!(recent.len(), 200);
+        assert!(!recent.iter().any(|entry| entry.session_id == "older-match"));
+
+        let matches = list(&db, None, Some("needle"), Some(200)).unwrap();
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].session_id, "older-match");
+    }
+
+    #[test]
+    fn search_respects_project_scope_and_treats_wildcards_literally() {
+        let db = UsageDb::open_in_memory();
+        upsert(
+            &db,
+            record(
+                "opencode",
+                "literal-match",
+                "/repo",
+                Some("Reach 100% coverage"),
+                None,
+                10,
+                10,
+            ),
+        )
+        .unwrap();
+        upsert(
+            &db,
+            record(
+                "opencode",
+                "wildcard-only",
+                "/repo",
+                Some("Reach 100 percent coverage"),
+                None,
+                20,
+                20,
+            ),
+        )
+        .unwrap();
+        upsert(
+            &db,
+            record(
+                "opencode",
+                "other-project",
+                "/other",
+                Some("Reach 100% coverage"),
+                None,
+                30,
+                30,
+            ),
+        )
+        .unwrap();
+
+        let matches = list(&db, Some("/repo"), Some("100%"), Some(200)).unwrap();
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].session_id, "literal-match");
     }
 
     #[test]

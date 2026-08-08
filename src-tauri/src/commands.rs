@@ -374,10 +374,11 @@ pub fn record_session_history_activity(
 #[tauri::command]
 pub fn list_session_history(
     project_path: Option<String>,
+    query: Option<String>,
     limit: Option<u32>,
     db: State<'_, UsageDb>,
 ) -> Result<Vec<SessionHistoryEntry>, String> {
-    session_history::list(db.inner(), project_path.as_deref(), limit)
+    session_history::list(db.inner(), project_path.as_deref(), query.as_deref(), limit)
 }
 
 // ── App lifecycle commands ────────────────────────────────────────
