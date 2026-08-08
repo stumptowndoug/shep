@@ -6,7 +6,8 @@
 # - Verifies the Developer ID certificate is actually installed in Keychain
 # - Verifies the updater signing key file exists and exports its contents
 # - Verifies package.json / tauri.conf.json / Cargo.toml versions match
-# - Runs pnpm install, pnpm tauri build, post-build-dmg.sh, generate-update-json.sh
+# - Runs pnpm install, pnpm tauri build, post-build-dmg.sh, final DMG notarization,
+#   and generate-update-json.sh
 # - Prints a summary of the resulting artifacts
 #
 # Usage: ./scripts/release-build.sh
@@ -146,6 +147,18 @@ pnpm tauri build
 
 step "Patching DMG (post-build-dmg.sh)"
 ./scripts/post-build-dmg.sh
+
+FINAL_DMG="src-tauri/target/release/bundle/dmg/shep_${VERSION}_aarch64.dmg"
+
+step "Notarizing final DMG"
+xcrun notarytool submit "$FINAL_DMG" \
+  --apple-id "$APPLE_ID" \
+  --password "$APPLE_PASSWORD" \
+  --team-id "$APPLE_TEAM_ID" \
+  --wait
+
+step "Stapling final DMG"
+xcrun stapler staple "$FINAL_DMG"
 
 step "Generating latest.json (generate-update-json.sh)"
 bash scripts/generate-update-json.sh
