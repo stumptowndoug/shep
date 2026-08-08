@@ -28,6 +28,8 @@ import type {
   DiffFileStat,
   TodoFile,
   SkillInfo,
+  SessionHistoryEntry,
+  SessionHistoryUpsert,
 } from "./types";
 
 // ── Workspace commands ──────────────────────────────────────────────
@@ -183,6 +185,52 @@ export function resizePty(
 
 export function killPty(ptyId: number): Promise<void> {
   return invoke("kill_pty", { ptyId });
+}
+
+export interface SessionTitleMatch {
+  sessionId: string;
+  title: string | null;
+}
+
+export function resolveSessionTitle(
+  ptyId: number,
+  assistantId: string,
+  repoPath: string,
+  startedAfterMs: number,
+  sessionId: string | null,
+): Promise<SessionTitleMatch | null> {
+  return invoke("resolve_session_title", {
+    ptyId,
+    assistantId,
+    repoPath,
+    startedAfterMs,
+    sessionId,
+  });
+}
+
+export function upsertSessionHistory(record: SessionHistoryUpsert): Promise<void> {
+  return invoke("upsert_session_history", { record });
+}
+
+export function recordSessionHistoryActivity(
+  provider: string,
+  sessionId: string,
+  timestamp: number,
+  ended: boolean,
+): Promise<void> {
+  return invoke("record_session_history_activity", {
+    provider,
+    sessionId,
+    timestamp,
+    ended,
+  });
+}
+
+export function listSessionHistory(
+  projectPath: string | null = null,
+  limit = 50,
+): Promise<SessionHistoryEntry[]> {
+  return invoke("list_session_history", { projectPath, limit });
 }
 
 // ── App lifecycle commands ────────────────────────────────────────

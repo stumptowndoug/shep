@@ -4,6 +4,8 @@ mod git;
 mod menu;
 mod pi_config;
 mod pty;
+mod session_history;
+mod session_titles;
 mod skills;
 mod todos;
 mod usage;
@@ -107,6 +109,10 @@ pub fn run() {
             commands::update_pty_color_theme,
             commands::resize_pty,
             commands::kill_pty,
+            commands::resolve_session_title,
+            commands::upsert_session_history,
+            commands::record_session_history_activity,
+            commands::list_session_history,
             commands::get_pty_session_count,
             commands::shutdown_and_quit,
             commands::get_username,

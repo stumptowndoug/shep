@@ -297,6 +297,30 @@ fn migrate(conn: &Connection) -> Result<(), String> {
             .map_err(|e| format!("Failed to run migration v11: {e}"))?;
     }
 
+    if version < 12 {
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS session_history (
+                provider TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                project_path TEXT NOT NULL,
+                title TEXT,
+                model TEXT,
+                started_at INTEGER NOT NULL,
+                last_activity_at INTEGER NOT NULL,
+                ended_at INTEGER,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                PRIMARY KEY (provider, session_id)
+             );
+             CREATE INDEX IF NOT EXISTS idx_session_history_project_activity
+                ON session_history(project_path, last_activity_at DESC);
+             CREATE INDEX IF NOT EXISTS idx_session_history_activity
+                ON session_history(last_activity_at DESC);
+             INSERT INTO schema_version (version) VALUES (12);",
+        )
+        .map_err(|e| format!("Failed to run migration v12: {e}"))?;
+    }
+
     Ok(())
 }
 
@@ -402,7 +426,17 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM model_pricing", [], |row| row.get(0))
             .unwrap();
 
-        assert_eq!(version, 11);
+        let history_table: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master
+                 WHERE type = 'table' AND name = 'session_history'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        assert_eq!(version, 12);
+        assert_eq!(history_table, 1);
         assert!(pricing_rows > 0);
     }
 
@@ -441,7 +475,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(stale_count, 0);
-        assert_eq!(version, 11);
+        assert_eq!(version, 12);
     }
 
     #[test]
@@ -497,7 +531,7 @@ mod tests {
 
         assert_eq!(codex_rows, 0);
         assert_eq!(claude_rows, 3);
-        assert_eq!(version, 11);
+        assert_eq!(version, 12);
     }
 
     #[test]
@@ -553,7 +587,7 @@ mod tests {
 
         assert_eq!(antigravity_rows, 0);
         assert_eq!(claude_rows, 3);
-        assert_eq!(version, 11);
+        assert_eq!(version, 12);
     }
 
     #[test]
@@ -617,6 +651,6 @@ mod tests {
         assert_eq!(google_rows, 2);
         assert_eq!(anthropic_rows, 2);
         assert_eq!(unknown_rows, 1);
-        assert_eq!(version, 11);
+        assert_eq!(version, 12);
     }
 }

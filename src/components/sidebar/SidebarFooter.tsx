@@ -1,4 +1,4 @@
-import { ChartNoAxesCombined, Radio } from "lucide-react";
+import { ChartNoAxesCombined, History, Radio } from "lucide-react";
 import { useUIStore } from "../../stores/useUIStore";
 import GearIcon from "./icons/GearIcon";
 
@@ -6,7 +6,8 @@ export default function SidebarFooter() {
   const settingsActive = useUIStore((s) => s.settingsActive);
   const usageActive = useUIStore((s) => s.usagePanelActive);
   const portsActive = useUIStore((s) => s.portsPanelActive);
-  const { toggleSettings, toggleUsagePanel, togglePortsPanel } = useUIStore.getState();
+  const historyActive = useUIStore((s) => s.historyPanelActive);
+  const { toggleSettings, toggleUsagePanel, togglePortsPanel, toggleHistoryPanel } = useUIStore.getState();
   const base = "sidebar-footer-btn";
 
   return (
@@ -19,6 +20,14 @@ export default function SidebarFooter() {
         >
           <GearIcon size={20} />
           <span className="text-[10px]">Settings</span>
+        </button>
+        <button
+          onClick={toggleHistoryPanel}
+          className={`${base} ${historyActive ? "active" : ""}`}
+          aria-label="Open session history"
+        >
+          <History size={18} />
+          <span className="text-[10px]">History</span>
         </button>
         <button
           onClick={toggleUsagePanel}

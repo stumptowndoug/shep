@@ -266,6 +266,7 @@ export default function ProjectList({
                 activeTabId={activeTabId}
                 onSelectTab={onSelectTab}
                 onCloseTab={onCloseTab}
+                repositoryName={repo.name}
               />
             </CollapsibleSection>
 

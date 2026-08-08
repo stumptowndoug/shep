@@ -4,10 +4,13 @@ import {
   spawnPty,
   killPty,
   getDefaultShell,
+  resolveSessionTitle,
+  upsertSessionHistory,
+  recordSessionHistoryActivity,
 } from "../lib/tauri";
 import { useThemeStore } from "../stores/useThemeStore";
 import { hexLuminance } from "../lib/themes";
-import type { PtyOutput, CommandConfig, SessionMode } from "../lib/types";
+import type { PtyOutput, CommandConfig, SessionHistoryEntry, SessionMode } from "../lib/types";
 import { toPtyColorTheme } from "../lib/ptyColorTheme";
 import { useCommandStore } from "../stores/useCommandStore";
 import { useTerminalStore, nextTabId } from "../stores/useTerminalStore";
@@ -16,6 +19,7 @@ import { useNoticeStore } from "../stores/useNoticeStore";
 import { CODING_ASSISTANTS } from "../components/sidebar/constants";
 import type { Terminal } from "@xterm/xterm";
 import { getErrorMessage } from "../lib/errors";
+import { sessionResumeArgs } from "../lib/sessionResume";
 import {
   clearTerminalPipelineCounters,
   recordPendingOutput,
@@ -70,10 +74,141 @@ const activityActive = new Set<number>();
 const ACTIVITY_TIMEOUT = 3000;
 const stoppingPtys = new Set<number>();
 
+interface SessionTitleResolverState {
+  cancelled: boolean;
+  sessionId: string | null;
+  persistedKey: string | null;
+  timer: ReturnType<typeof setTimeout> | null;
+}
+
+const sessionTitleResolvers = new Map<number, SessionTitleResolverState>();
+
+function stopSessionTitleResolver(ptyId: number) {
+  const resolver = sessionTitleResolvers.get(ptyId);
+  if (!resolver) return;
+  resolver.cancelled = true;
+  if (resolver.timer) clearTimeout(resolver.timer);
+  sessionTitleResolvers.delete(ptyId);
+}
+
+function startSessionTitleResolver(
+  ptyId: number,
+  assistantId: string,
+  repoPath: string,
+  startedAfterMs: number,
+  model?: string,
+  knownSessionId: string | null = null,
+) {
+  stopSessionTitleResolver(ptyId);
+  const resolver: SessionTitleResolverState = {
+    cancelled: false,
+    sessionId: knownSessionId,
+    persistedKey: null,
+    timer: null,
+  };
+  sessionTitleResolvers.set(ptyId, resolver);
+
+  const poll = async () => {
+    if (resolver.cancelled || sessionTitleResolvers.get(ptyId) !== resolver) return;
+    const store = useTerminalStore.getState();
+    const tab = store.findTabByPtyId(ptyId);
+    const activity = store.tabActivity[ptyId];
+    if (!tab || activity?.alive === false) {
+      stopSessionTitleResolver(ptyId);
+      return;
+    }
+
+    try {
+      const match = await resolveSessionTitle(
+        ptyId,
+        assistantId,
+        repoPath,
+        startedAfterMs,
+        resolver.sessionId,
+      );
+      if (match) {
+        resolver.sessionId = match.sessionId;
+        useTerminalStore
+          .getState()
+          .setTabSessionInfo(ptyId, match.sessionId, match.title);
+        const persistedKey = `${match.sessionId}\u0000${match.title ?? ""}`;
+        if (resolver.persistedKey !== persistedKey) {
+          const lastActivityAt = Date.now();
+          await upsertSessionHistory({
+            provider: assistantId,
+            sessionId: match.sessionId,
+            projectPath: repoPath,
+            title: match.title,
+            model: model ?? null,
+            startedAt: startedAfterMs,
+            lastActivityAt,
+          });
+          resolver.persistedKey = persistedKey;
+          historyActivityWrites.set(ptyId, lastActivityAt);
+        }
+        if (
+          match.title &&
+          assistantId !== "codex" &&
+          assistantId !== "antigravity" &&
+          assistantId !== "opencode"
+        ) {
+          stopSessionTitleResolver(ptyId);
+          return;
+        }
+      }
+    } catch (error) {
+      if (import.meta.env.DEV) {
+        console.warn(`Failed to resolve ${assistantId} session title:`, error);
+      }
+    }
+
+    if (resolver.cancelled || sessionTitleResolvers.get(ptyId) !== resolver) return;
+    resolver.timer = setTimeout(poll, resolver.sessionId ? 5_000 : 1_000);
+  };
+
+  void poll();
+}
+
+const HISTORY_ACTIVITY_WRITE_INTERVAL_MS = 30_000;
+const historyActivityWrites = new Map<number, number>();
+
+async function persistSessionActivity(ptyId: number, ended: boolean): Promise<void> {
+  const tab = useTerminalStore.getState().findTabByPtyId(ptyId);
+  if (
+    !tab ||
+    tab.kind !== "assistant" ||
+    !tab.assistantId ||
+    !tab.providerSessionId
+  ) {
+    return;
+  }
+
+  const timestamp = Date.now();
+  const lastWrite = historyActivityWrites.get(ptyId) ?? 0;
+  if (!ended && timestamp - lastWrite < HISTORY_ACTIVITY_WRITE_INTERVAL_MS) return;
+  historyActivityWrites.set(ptyId, timestamp);
+
+  try {
+    await recordSessionHistoryActivity(
+      tab.assistantId,
+      tab.providerSessionId,
+      timestamp,
+      ended,
+    );
+  } catch (error) {
+    if (import.meta.env.DEV) {
+      console.warn(`Failed to update ${tab.assistantId} session history:`, error);
+    }
+  } finally {
+    if (ended) historyActivityWrites.delete(ptyId);
+  }
+}
+
 function cleanupActivityState(ptyId: number) {
   const timer = activityTimers.get(ptyId);
   if (timer) { clearTimeout(timer); activityTimers.delete(ptyId); }
   activityActive.delete(ptyId);
+  historyActivityWrites.delete(ptyId);
 }
 
 export function registerTerminal(
@@ -282,6 +417,7 @@ export function usePty() {
         if (!activityActive.has(ptyId)) {
           activityActive.add(ptyId);
           setTabActive(ptyId, true);
+          void persistSessionActivity(ptyId, false);
         }
 
         // Reset the idle timer — after 3s of no output, mark as inactive
@@ -293,7 +429,9 @@ export function usePty() {
           activityTimers.delete(ptyId);
         }, ACTIVITY_TIMEOUT));
       } else if (msg.event === "exit") {
+        void persistSessionActivity(ptyId, true);
         cleanupActivityState(ptyId);
+        stopSessionTitleResolver(ptyId);
         setTabExited(ptyId, msg.data.code);
         const stoppedByUser = stoppingPtys.delete(ptyId);
         if (commandName) {
@@ -395,7 +533,9 @@ export function usePty() {
             repoPath: activeRepoPath,
             commandName,
             assistantId: null,
+            providerSessionId: null,
             sessionMode: null,
+            labelSource: "default",
           });
         }
 
@@ -484,7 +624,9 @@ export function usePty() {
           repoPath: activeRepoPath,
           commandName: null,
           assistantId: null,
+          providerSessionId: null,
           sessionMode: null,
+          labelSource: "default",
         });
 
         return ptyId;
@@ -524,6 +666,7 @@ export function usePty() {
       }
 
       try {
+        const startedAfterMs = Date.now();
         const ptyId = await spawnSession(
           assistant.command,
           commandArgs,
@@ -544,8 +687,11 @@ export function usePty() {
           repoPath: activeRepoPath,
           commandName: null,
           assistantId,
+          providerSessionId: null,
           sessionMode: mode,
+          labelSource: "default",
         });
+        startSessionTitleResolver(ptyId, assistantId, activeRepoPath, startedAfterMs, model);
 
         return ptyId;
       } catch (e) {
@@ -563,6 +709,84 @@ export function usePty() {
     [activeRepoPath, spawnSession, addTab, pushNotice],
   );
 
+  const resumeAssistant = useCallback(
+    async (session: SessionHistoryEntry, cols: number, rows: number) => {
+      const assistant = CODING_ASSISTANTS.find((entry) => entry.id === session.provider);
+      const commandArgs = sessionResumeArgs(session.provider, session.sessionId);
+      if (!assistant || !commandArgs) {
+        pushNotice({
+          tone: "error",
+          title: "Resume isn’t supported",
+          message: `Shep doesn’t know how to resume ${session.provider} sessions yet.`,
+        });
+        return null;
+      }
+
+      try {
+        const resumedAt = Date.now();
+        const ptyId = await spawnSession(
+          assistant.command,
+          commandArgs,
+          {},
+          cols,
+          rows,
+          null,
+          session.projectPath,
+        );
+        if (!ptyId) return null;
+
+        addTab({
+          id: nextTabId(),
+          kind: "assistant",
+          label: session.title ?? assistant.name,
+          ptyId,
+          repoPath: session.projectPath,
+          commandName: null,
+          assistantId: session.provider,
+          providerSessionId: session.sessionId,
+          sessionMode: "standard",
+          labelSource: session.title ? "session" : "default",
+        });
+
+        historyActivityWrites.set(ptyId, resumedAt);
+        void upsertSessionHistory({
+          provider: session.provider,
+          sessionId: session.sessionId,
+          projectPath: session.projectPath,
+          title: session.title,
+          model: session.model,
+          startedAt: session.startedAt,
+          lastActivityAt: resumedAt,
+        }).catch((error) => {
+          if (import.meta.env.DEV) {
+            console.warn(`Failed to mark ${session.provider} session as resumed:`, error);
+          }
+        });
+        startSessionTitleResolver(
+          ptyId,
+          session.provider,
+          session.projectPath,
+          resumedAt,
+          session.model ?? undefined,
+          session.sessionId,
+        );
+
+        return ptyId;
+      } catch (error) {
+        if (import.meta.env.DEV) {
+          console.error(`Failed to resume ${assistant.name}:`, error);
+        }
+        pushNotice({
+          tone: "error",
+          title: `Couldn’t resume ${assistant.name}`,
+          message: getErrorMessage(error),
+        });
+        return null;
+      }
+    },
+    [addTab, pushNotice, spawnSession],
+  );
+
   const closeTab = useCallback(
     async (tabId: string) => {
       const state = useTerminalStore.getState();
@@ -573,12 +797,14 @@ export function usePty() {
       if (!tab || (tab.kind !== "terminal" && tab.kind !== "assistant")) return;
 
       cleanupActivityState(tab.ptyId);
+      stopSessionTitleResolver(tab.ptyId);
       stoppingPtys.add(tab.ptyId);
       await killPty(tab.ptyId).catch(() => {
         stoppingPtys.delete(tab.ptyId);
       });
       unregisterTerminal(tab.ptyId);
       removeActivity(tab.ptyId);
+      await persistSessionActivity(tab.ptyId, true);
 
       if (tab.commandName) {
         setCommandStatus(tab.commandName, "stopped");
@@ -597,12 +823,14 @@ export function usePty() {
     for (const tab of tabs) {
       if (tab.kind !== "terminal" && tab.kind !== "assistant") continue;
       cleanupActivityState(tab.ptyId);
+      stopSessionTitleResolver(tab.ptyId);
       stoppingPtys.add(tab.ptyId);
       await killPty(tab.ptyId).catch(() => {
         stoppingPtys.delete(tab.ptyId);
       });
       unregisterTerminal(tab.ptyId);
       removeActivity(tab.ptyId);
+      await persistSessionActivity(tab.ptyId, true);
     }
   }, [removeActivity]);
 
@@ -612,6 +840,7 @@ export function usePty() {
     restartCommand,
     spawnBlankShell,
     launchAssistant,
+    resumeAssistant,
     closeTab,
     killProjectPtys,
   };

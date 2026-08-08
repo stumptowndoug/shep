@@ -38,10 +38,12 @@ export interface EditorSettings {
 }
 
 export type TodoFileStyle = "kanban" | "list";
+export type AgentLabelMode = "repository" | "title";
 
 export interface ProjectSettings {
   autoImportWorktrees: boolean;
   showAgentSessionsInSidebar: boolean;
+  agentLabelMode: AgentLabelMode;
   showTodos: boolean;
   /** Shape of a lazily created TODO.md. */
   todoFileStyle: TodoFileStyle;
@@ -95,6 +97,7 @@ export interface CommandState {
 }
 
 export type SessionMode = "standard" | "yolo";
+export type TerminalLabelSource = "default" | "terminal" | "session" | "user";
 
 // ── Unified tab model ──────────────────────────────────────────────
 
@@ -113,7 +116,23 @@ export interface TerminalTabData extends TabBase {
   repoPath: string;
   commandName: string | null;
   assistantId: string | null;
+  providerSessionId: string | null;
   sessionMode: SessionMode | null;
+  labelSource: TerminalLabelSource;
+}
+
+export interface SessionHistoryUpsert {
+  provider: string;
+  sessionId: string;
+  projectPath: string;
+  title: string | null;
+  model: string | null;
+  startedAt: number;
+  lastActivityAt: number;
+}
+
+export interface SessionHistoryEntry extends SessionHistoryUpsert {
+  endedAt: number | null;
 }
 
 export interface PanelTabData extends TabBase {

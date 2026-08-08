@@ -6,6 +6,7 @@ interface AssistantListProps {
   activeTabId: string | null;
   onSelectTab: (tabId: string) => void;
   onCloseTab: (tabId: string) => void;
+  repositoryName: string;
 }
 
 export default function AssistantList({
@@ -13,6 +14,7 @@ export default function AssistantList({
   activeTabId,
   onSelectTab,
   onCloseTab,
+  repositoryName,
 }: AssistantListProps) {
   return (
     <>
@@ -23,6 +25,7 @@ export default function AssistantList({
             isActive={tab.id === activeTabId}
             onClick={() => onSelectTab(tab.id)}
             onClose={() => onCloseTab(tab.id)}
+            repositoryName={repositoryName}
           />
         </div>
       ))}

@@ -4,6 +4,7 @@ interface UIStore {
   settingsActive: boolean;
   usagePanelActive: boolean;
   portsPanelActive: boolean;
+  historyPanelActive: boolean;
   sidebarVisible: boolean;
   diffPanelVisible: boolean;
   username: string | null;
@@ -11,6 +12,7 @@ interface UIStore {
   toggleSettings: () => void;
   toggleUsagePanel: () => void;
   togglePortsPanel: () => void;
+  toggleHistoryPanel: () => void;
   deactivateAllOverlays: () => void;
   toggleSidebar: () => void;
   toggleDiffPanel: () => void;
@@ -22,12 +24,14 @@ const deactivateAll = {
   settingsActive: false,
   usagePanelActive: false,
   portsPanelActive: false,
+  historyPanelActive: false,
 };
 
 export const useUIStore = create<UIStore>((set) => ({
   settingsActive: false,
   usagePanelActive: false,
   portsPanelActive: false,
+  historyPanelActive: false,
   sidebarVisible: true,
   diffPanelVisible: true,
   username: null,
@@ -46,6 +50,11 @@ export const useUIStore = create<UIStore>((set) => ({
     set((s) => {
       if (s.portsPanelActive) return { portsPanelActive: false };
       return { ...deactivateAll, portsPanelActive: true };
+    }),
+  toggleHistoryPanel: () =>
+    set((s) => {
+      if (s.historyPanelActive) return { historyPanelActive: false };
+      return { ...deactivateAll, historyPanelActive: true };
     }),
   deactivateAllOverlays: () => set(deactivateAll),
   toggleSidebar: () => set((s) => ({ sidebarVisible: !s.sidebarVisible })),

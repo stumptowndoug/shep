@@ -23,6 +23,7 @@ import { notifyAgent } from "../../lib/notifications";
 import { KEYBINDING_PRESETS } from "../../lib/keybindingPresets";
 import { useKeybindingStore } from "../../stores/useKeybindingStore";
 import { useTerminalSettingsStore } from "../../stores/useTerminalSettingsStore";
+import { useTerminalStore } from "../../stores/useTerminalStore";
 import { terminalCache } from "./terminalCache";
 import { reconcileTerminalRenderer } from "./terminalRenderer";
 
@@ -86,6 +87,12 @@ export default function TerminalView({
     // Track terminal bell (attention request)
     term.onBell(() => {
       void notifyAgent(ptyId, "Terminal bell");
+    });
+
+    // OSC 0/2 title changes are the provider-neutral baseline for naming
+    // terminal and agent tabs. Explicit user renames remain authoritative.
+    term.onTitleChange((title) => {
+      useTerminalStore.getState().setTabTitleFromPty(ptyId, title);
     });
 
     // Intercept OSC 9 notifications from coding agents (Claude Code, Codex, Gemini)

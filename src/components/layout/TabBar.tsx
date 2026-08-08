@@ -9,6 +9,8 @@ import { handleActionKey } from "../../lib/a11y";
 import { useGitStore } from "../../stores/useGitStore";
 import tabKindMeta, { extraActions } from "../../lib/tabKindMeta";
 import type { UnifiedTab } from "../../lib/types";
+import { useProjectSettingsStore } from "../../stores/useProjectSettingsStore";
+import { agentDisplayLabel } from "../../lib/agentLabels";
 
 
 function NewSessionButton({ onNewAssistant, onNewShell, onNewCommands, onNewGit, onOpenInEditor }: { onNewAssistant: () => void; onNewShell: () => void; onNewCommands: () => void; onNewGit: () => void; onOpenInEditor: () => void }) {
@@ -116,6 +118,7 @@ export default function TabBar({
   );
   const projectTerminals = projectState;
   const projectName = activeProjectPath ? activeProjectPath.split("/").pop() : null;
+  const agentLabelMode = useProjectSettingsStore((s) => s.settings.agentLabelMode);
   const gitStatus = useGitStore((s) => activeProjectPath ? s.projectGitStatus[activeProjectPath] : null);
   const branch = gitStatus?.branch ?? null;
   const branchIconColor = !gitStatus || !gitStatus.is_git_repo
@@ -186,14 +189,15 @@ export default function TabBar({
     window.addEventListener("pointercancel", onCancel);
   }, [computeDropIndex, reorderTab]);
 
-  // Only subscribe to global overlay state (Settings, Usage, Ports)
-  const { settingsActive, usagePanelActive, portsPanelActive } = useUIStore(useShallow((s) => ({
+  // Only subscribe to global overlay state.
+  const { settingsActive, usagePanelActive, portsPanelActive, historyPanelActive } = useUIStore(useShallow((s) => ({
     settingsActive: s.settingsActive,
     usagePanelActive: s.usagePanelActive,
     portsPanelActive: s.portsPanelActive,
+    historyPanelActive: s.historyPanelActive,
   })));
 
-  const anyOverlay = settingsActive || usagePanelActive || portsPanelActive;
+  const anyOverlay = settingsActive || usagePanelActive || portsPanelActive || historyPanelActive;
 
   const handleSelectTab = (tabId: string) => {
     useUIStore.getState().deactivateAllOverlays();
@@ -217,6 +221,9 @@ export default function TabBar({
         {tabs.map((tab, i) => {
           const isActive = tab.id === activeTabId && !anyOverlay;
           const isDragging = tab.id === dragTabId;
+          const displayLabel = tab.kind === "assistant"
+            ? agentDisplayLabel(tab, agentLabelMode, projectName ?? undefined)
+            : { text: tab.label, isTitle: false };
 
           const showDropBefore = dropIndex !== null && dragTabId && tab.id !== dragTabId && dropIndex === i;
           const showDropAfter = dropIndex !== null && dragTabId && tab.id !== dragTabId && dropIndex === i + 1 && i === tabs.length - 1;
@@ -234,13 +241,13 @@ export default function TabBar({
               role="tab"
               tabIndex={0}
               aria-selected={isActive}
-              aria-label={`Open tab ${tab.label}`}
+              aria-label={`Open tab ${displayLabel.text}`}
             >
               <TabIcon tab={tab} />
               {editingTabId === tab.id ? (
                 <input
                   className="tab-rename-input"
-                  defaultValue={tab.label}
+                  defaultValue={displayLabel.text}
                   autoFocus
                   autoCapitalize="off"
                   autoCorrect="off"
@@ -248,13 +255,13 @@ export default function TabBar({
                   onFocus={(e) => e.target.select()}
                   onBlur={(e) => {
                     const val = e.target.value.trim();
-                    if (val && val !== tab.label) updateTab(tab.id, { label: val });
+                    if (val && val !== displayLabel.text) updateTab(tab.id, { label: val });
                     setEditingTabId(null);
                   }}
                   onKeyDown={(e) => {
                     if (e.key === "Enter") e.currentTarget.blur();
                     if (e.key === "Escape") {
-                      e.currentTarget.value = tab.label;
+                      e.currentTarget.value = displayLabel.text;
                       e.currentTarget.blur();
                     }
                   }}
@@ -264,19 +271,19 @@ export default function TabBar({
               ) : (
                 <>
                   <span
-                    className="truncate max-w-32"
+                    className={`truncate max-w-32${displayLabel.isTitle ? " session-title-output" : ""}`}
                     onDoubleClick={isRenameable(tab) ? (e) => {
                       e.stopPropagation();
                       setEditingTabId(tab.id);
                     } : undefined}
                   >
-                    {tab.label}
+                    {displayLabel.text}
                   </span>
                 </>
               )}
               <button
                 className="tab-close"
-                aria-label={`Close tab ${tab.label}`}
+                aria-label={`Close tab ${displayLabel.text}`}
                 onClick={(e) => {
                   e.stopPropagation();
                   onClose(tab.id);

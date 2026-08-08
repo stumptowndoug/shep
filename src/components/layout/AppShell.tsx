@@ -30,7 +30,7 @@ import { initNotifications } from "../../lib/notifications";
 import { getErrorMessage } from "../../lib/errors";
 import { useNoticeStore } from "../../stores/useNoticeStore";
 
-import type { CommandConfig, CommandState, TerminalTabData, UnifiedTab, SessionMode, WorkspaceConfig } from "../../lib/types";
+import type { CommandConfig, CommandState, SessionHistoryEntry, TerminalTabData, UnifiedTab, SessionMode, WorkspaceConfig } from "../../lib/types";
 const LAST_REPO_STORAGE_KEY = "shep:last-repo-path";
 
 // Stable empty arrays to avoid infinite re-render loops with zustand v5's
@@ -43,6 +43,7 @@ const CommandsPanel = lazy(() => import("../commands/CommandsPanel"));
 const SessionLauncher = lazy(() => import("../session/SessionLauncher"));
 const UsagePanel = lazy(() => import("../usage/UsagePanel"));
 const PortsPanel = lazy(() => import("../ports/PortsPanel"));
+const HistoryPanel = lazy(() => import("../history/HistoryPanel"));
 const DiffSummaryPanel = lazy(() => import("../git/DiffSummaryPanel"));
 const TodosPanel = lazy(() => import("../todos/TodosPanel"));
 
@@ -72,7 +73,7 @@ export default function AppShell() {
   const activeConfig = useRepoStore((s) => s.activeConfig);
   const setActiveConfig = useRepoStore((s) => s.setActiveConfig);
   const pushNotice = useNoticeStore((s) => s.pushNotice);
-  const { startCommand, stopCommand, spawnBlankShell, launchAssistant, closeTab, killProjectPtys } =
+  const { startCommand, stopCommand, spawnBlankShell, launchAssistant, resumeAssistant, closeTab, killProjectPtys } =
     usePty();
 
   const restoreAttemptedRef = useRef(false);
@@ -156,11 +157,12 @@ export default function AppShell() {
   );
 
   const {
-    settingsActive, usagePanelActive, portsPanelActive, sidebarVisible, diffPanelVisible,
+    settingsActive, usagePanelActive, portsPanelActive, historyPanelActive, sidebarVisible, diffPanelVisible,
   } = useUIStore(useShallow((s) => ({
     settingsActive: s.settingsActive,
     usagePanelActive: s.usagePanelActive,
     portsPanelActive: s.portsPanelActive,
+    historyPanelActive: s.historyPanelActive,
     sidebarVisible: s.sidebarVisible,
     diffPanelVisible: s.diffPanelVisible,
   })));
@@ -440,6 +442,47 @@ export default function AppShell() {
     [launchAssistant, getTerminalDimensions],
   );
 
+  const handleResumeSession = useCallback(
+    async (session: SessionHistoryEntry) => {
+      const terminalStore = useTerminalStore.getState();
+      const existingTab = terminalStore.projectState[session.projectPath]?.tabs.find(
+        (tab): tab is TerminalTabData =>
+          tab.kind === "assistant" &&
+          tab.assistantId === session.provider &&
+          tab.providerSessionId === session.sessionId &&
+          terminalStore.tabActivity[tab.ptyId]?.alive,
+      );
+
+      if (!useRepoStore.getState().repos.some((repo) => repo.path === session.projectPath)) {
+        pushNotice({
+          tone: "error",
+          title: "Project isn’t in Shep",
+          message: "Add the session’s project again before resuming this conversation.",
+        });
+        return false;
+      }
+
+      if (useRepoStore.getState().activeRepoPath !== session.projectPath) {
+        await handleSelectRepo(session.projectPath);
+      }
+      if (useRepoStore.getState().activeRepoPath !== session.projectPath) return false;
+
+      if (existingTab) {
+        useUIStore.getState().deactivateAllOverlays();
+        useTerminalStore.getState().setActiveTab(existingTab.id);
+        useTerminalStore.getState().clearTabBell(existingTab.ptyId);
+        return true;
+      }
+
+      const { cols, rows } = getTerminalDimensions();
+      const ptyId = await resumeAssistant(session, cols, rows);
+      if (!ptyId) return false;
+      useUIStore.getState().deactivateAllOverlays();
+      return true;
+    },
+    [getTerminalDimensions, handleSelectRepo, pushNotice, resumeAssistant],
+  );
+
   const handleNewShell = useCallback(() => {
     useUIStore.getState().deactivateAllOverlays();
     const { cols, rows } = getTerminalDimensions();
@@ -610,7 +653,7 @@ export default function AppShell() {
     return () => { unlisten.then((f) => f()); };
   }, [handleNewShell, handleNewAssistant, handleOpenInEditor, pushNotice]);
 
-  const showOverlay = settingsActive || usagePanelActive || portsPanelActive;
+  const showOverlay = settingsActive || usagePanelActive || portsPanelActive || historyPanelActive;
 
   return (
     <div className="app-shell">
@@ -684,7 +727,7 @@ export default function AppShell() {
           />
 
           <div ref={terminalContainerRef} className="terminal-stage">
-            {/* Global overlays (Settings, Usage, Ports) */}
+            {/* Global overlays (Settings, History, Usage, Ports) */}
             {settingsActive && (
               <Suspense fallback={<PanelLoader />}>
                 <SettingsPanel />
@@ -698,6 +741,15 @@ export default function AppShell() {
             {portsPanelActive && (
               <Suspense fallback={<PanelLoader />}>
                 <PortsPanel />
+              </Suspense>
+            )}
+            {historyPanelActive && (
+              <Suspense fallback={<PanelLoader />}>
+                <HistoryPanel
+                  activeRepoPath={activeRepoPath}
+                  knownRepoPaths={repos.map((repo) => repo.path)}
+                  onResumeSession={handleResumeSession}
+                />
               </Suspense>
             )}
 

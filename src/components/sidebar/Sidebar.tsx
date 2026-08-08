@@ -158,6 +158,7 @@ export default function Sidebar({
             sessions={agentSessions}
             activeRepoPath={activeRepoPath}
             activeTabId={activeTabId}
+            labelMode={projectSettings.agentLabelMode}
             onSelectSession={onSelectProjectTab}
           />
         )}

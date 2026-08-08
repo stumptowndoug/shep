@@ -54,6 +54,9 @@ pub struct ProjectSettings {
     pub auto_import_worktrees: bool,
     #[serde(default = "default_true", rename = "showAgentSessionsInSidebar")]
     pub show_agent_sessions_in_sidebar: bool,
+    /// Label shown for live agent sessions: "repository" or "title".
+    #[serde(default = "default_agent_label_mode", rename = "agentLabelMode")]
+    pub agent_label_mode: String,
     #[serde(default = "default_true", rename = "showTodos")]
     pub show_todos: bool,
     /// Shape of a lazily created TODO.md: "kanban" (columned board) or "list".
@@ -65,11 +68,16 @@ fn default_todo_file_style() -> String {
     "kanban".to_string()
 }
 
+fn default_agent_label_mode() -> String {
+    "repository".to_string()
+}
+
 impl Default for ProjectSettings {
     fn default() -> Self {
         ProjectSettings {
             auto_import_worktrees: true,
             show_agent_sessions_in_sidebar: true,
+            agent_label_mode: default_agent_label_mode(),
             show_todos: true,
             todo_file_style: default_todo_file_style(),
         }
