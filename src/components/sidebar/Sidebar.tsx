@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { RepoInfo, RepoGroup, CommandState } from "../../lib/types";
+import type { RepoInfo, RepoGroup, TabActivity } from "../../lib/types";
 import { useTerminalStore } from "../../stores/useTerminalStore";
-import { useCommandStore } from "../../stores/useCommandStore";
 import { useGitStore } from "../../stores/useGitStore";
 import { useProjectSettingsStore } from "../../stores/useProjectSettingsStore";
 import ProjectList from "./ProjectList";
@@ -9,22 +8,28 @@ import SidebarFooter from "./SidebarFooter";
 import SidebarUsage from "./SidebarUsage";
 import AgentSessionList, { type AgentSessionItem } from "./AgentSessionList";
 import SidebarSectionToggle from "./SidebarSectionToggle";
+import type { ProjectActionKind } from "../shared/ProjectActionMenu";
+
+function agentSessionPriority(activity: TabActivity | undefined): number {
+  if (activity?.bell || activity?.agentState === "blocked") return 0;
+  if (activity && !activity.alive && activity.exitCode !== 0) return 0;
+  if (activity?.agentState === "possibly_stuck") return 1;
+  if (activity?.agentDone) return 2;
+  if (activity?.active || activity?.agentState === "working") return 3;
+  return 4;
+}
 
 interface SidebarProps {
   repos: RepoInfo[];
   groups: RepoGroup[];
   activeRepoPath: string | null;
   activeTabId: string | null;
-  commands: CommandState[];
   onSelectRepo: (repoPath: string) => void;
   onAddProject: (repoPath: string) => Promise<void>;
   onRemoveProject: (repoPath: string) => void;
-  onNewAssistant: () => void;
   onOpenInEditor: (repoPath: string) => void;
-  onSelectTab: (tabId: string) => void;
+  onProjectAction: (repoPath: string, action: ProjectActionKind) => void;
   onSelectProjectTab: (repoPath: string, tabId: string) => void;
-  onCloseTab: (tabId: string) => void;
-  onNewShell: () => void;
   onRenameGroup: (groupId: string, newName: string) => void;
   onDeleteGroup: (groupId: string) => void;
   onMoveToGroup: (repoPath: string, groupId: string | null) => Promise<void>;
@@ -35,16 +40,12 @@ export default function Sidebar({
   groups,
   activeRepoPath,
   activeTabId,
-  commands,
   onSelectRepo,
   onAddProject,
   onRemoveProject,
-  onNewAssistant,
   onOpenInEditor,
-  onSelectTab,
+  onProjectAction,
   onSelectProjectTab,
-  onCloseTab,
-  onNewShell,
   onRenameGroup,
   onDeleteGroup,
   onMoveToGroup,
@@ -52,57 +53,11 @@ export default function Sidebar({
   // Projects always starts expanded on launch; collapsing is per-session only.
   const [projectsCollapsed, setProjectsCollapsed] = useState(false);
   const projectState = useTerminalStore((s) => s.projectState);
-  const projectCommands = useCommandStore((s) => s.projectCommands);
   const tabActivity = useTerminalStore((s) => s.tabActivity);
   const gitStatuses = useGitStore((s) => s.projectGitStatus);
   const projectSettings = useProjectSettingsStore((s) => s.settings);
   const projectSettingsLoaded = useProjectSettingsStore((s) => s.hasLoaded);
   const loadProjectSettings = useProjectSettingsStore((s) => s.loadSettings);
-
-  // Only subscribe to the fields that affect the sidebar activity indicators.
-  // Returns a stable string so the selector doesn't trigger re-renders when
-  // unrelated tabActivity fields change.
-  const activityKey = useTerminalStore((s) => {
-    const parts: string[] = [];
-    for (const [ptyId, a] of Object.entries(s.tabActivity)) {
-      if (a.active || a.bell || !a.alive) {
-        parts.push(`${ptyId}:${a.active ? "a" : ""}${a.bell ? "b" : ""}${!a.alive ? `x${a.exitCode}` : ""}`);
-      }
-    }
-    return parts.join(",");
-  });
-
-  const projectActivity = useMemo(() => {
-    const tabActivity = useTerminalStore.getState().tabActivity;
-    const activity: Record<string, { terminalCount: number; runningCount: number; hasAttention: boolean; hasCrash: boolean; hasActive: boolean }> = {};
-    for (const repo of repos) {
-      const ps = projectState[repo.path];
-      const repoTabs = ps?.tabs ?? [];
-      const cmds = projectCommands[repo.path] ?? [];
-      let hasAttention = false;
-      let hasCrash = false;
-      let hasActive = false;
-      let liveTerminalCount = 0;
-      for (const tab of repoTabs) {
-        if (tab.kind !== "terminal" && tab.kind !== "assistant") continue;
-        const a = tabActivity[tab.ptyId];
-        if (a) {
-          if (a.bell) hasAttention = true;
-          if (a.active) hasActive = true;
-          if (!a.alive && a.exitCode !== 0) hasCrash = true;
-        }
-        if (!a || a.alive) liveTerminalCount += 1;
-      }
-      activity[repo.path] = {
-        terminalCount: liveTerminalCount,
-        runningCount: cmds.filter((c) => c.status === "running").length,
-        hasAttention,
-        hasCrash,
-        hasActive,
-      };
-    }
-    return activity;
-  }, [repos, projectState, projectCommands, activityKey]);
 
   const agentSessions = useMemo<AgentSessionItem[]>(() => {
     const repoNames = new Map(repos.map((repo) => [repo.path, repo.name]));
@@ -120,25 +75,17 @@ export default function Sidebar({
     }
 
     return sessions.sort((a, b) => {
-      const aIsActive = a.tab.repoPath === activeRepoPath && a.tab.id === activeTabId;
-      const bIsActive = b.tab.repoPath === activeRepoPath && b.tab.id === activeTabId;
-      if (aIsActive !== bIsActive) return aIsActive ? -1 : 1;
-
       const aActivity = tabActivity[a.tab.ptyId];
       const bActivity = tabActivity[b.tab.ptyId];
-      const aNeedsAttention = Boolean(aActivity?.bell || (aActivity && !aActivity.alive && aActivity.exitCode !== 0));
-      const bNeedsAttention = Boolean(bActivity?.bell || (bActivity && !bActivity.alive && bActivity.exitCode !== 0));
-      if (aNeedsAttention !== bNeedsAttention) return aNeedsAttention ? -1 : 1;
+      const priorityDifference = agentSessionPriority(aActivity) - agentSessionPriority(bActivity);
+      if (priorityDifference !== 0) return priorityDifference;
 
-      const aIsStreaming = Boolean(aActivity?.active);
-      const bIsStreaming = Boolean(bActivity?.active);
-      if (aIsStreaming !== bIsStreaming) return aIsStreaming ? -1 : 1;
+      const aIsSelected = a.tab.repoPath === activeRepoPath && a.tab.id === activeTabId;
+      const bIsSelected = b.tab.repoPath === activeRepoPath && b.tab.id === activeTabId;
+      if (aIsSelected !== bIsSelected) return aIsSelected ? -1 : 1;
 
-      const aAlive = aActivity?.alive ?? true;
-      const bAlive = bActivity?.alive ?? true;
-      if (aAlive !== bAlive) return aAlive ? -1 : 1;
-
-      return a.projectName.localeCompare(b.projectName) || a.tab.label.localeCompare(b.tab.label);
+      const recentDifference = (bActivity?.lastOutputAt ?? 0) - (aActivity?.lastOutputAt ?? 0);
+      return recentDifference || a.projectName.localeCompare(b.projectName) || a.tab.label.localeCompare(b.tab.label);
     });
   }, [repos, projectState, tabActivity, gitStatuses, activeRepoPath, activeTabId]);
 
@@ -174,17 +121,11 @@ export default function Sidebar({
               repos={repos}
               groups={groups}
               activeRepoPath={activeRepoPath}
-              activeTabId={activeTabId}
-              commands={commands}
-              projectActivity={projectActivity}
               onSelectRepo={onSelectRepo}
               onAddProject={onAddProject}
               onRemoveProject={onRemoveProject}
-              onNewAssistant={onNewAssistant}
               onOpenInEditor={onOpenInEditor}
-              onSelectTab={onSelectTab}
-              onCloseTab={onCloseTab}
-              onNewShell={onNewShell}
+              onProjectAction={onProjectAction}
               onRenameGroup={onRenameGroup}
               onDeleteGroup={onDeleteGroup}
               onMoveToGroup={onMoveToGroup}

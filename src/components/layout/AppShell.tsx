@@ -29,6 +29,7 @@ import { useUpdateStore } from "../../stores/useUpdateStore";
 import { initNotifications } from "../../lib/notifications";
 import { getErrorMessage } from "../../lib/errors";
 import { useNoticeStore } from "../../stores/useNoticeStore";
+import type { ProjectActionKind } from "../shared/ProjectActionMenu";
 
 import type { CommandConfig, CommandState, SessionHistoryEntry, TerminalTabData, UnifiedTab, SessionMode, WorkspaceConfig } from "../../lib/types";
 const LAST_REPO_STORAGE_KEY = "shep:last-repo-path";
@@ -125,7 +126,6 @@ export default function AppShell() {
     (s) => (s.activeProjectPath ? s.projectCommands[s.activeProjectPath] ?? EMPTY_COMMANDS : EMPTY_COMMANDS),
   );
 
-  const { setActiveTab } = useTerminalStore.getState();
 
   const persistWorkspaceCommands = useCallback(
     async (nextCommands: CommandConfig[]) => {
@@ -385,17 +385,6 @@ export default function AppShell() {
     [startCommand, getTerminalDimensions],
   );
 
-  const handleSelectSidebarTab = useCallback((tabId: string) => {
-    useUIStore.getState().deactivateAllOverlays();
-    setActiveTab(tabId);
-    const store = useTerminalStore.getState();
-    const allTabs = activeRepoPath ? store.getAllProjectTabs(activeRepoPath) : [];
-    const tab = allTabs.find((t) => t.id === tabId);
-    if (tab && (tab.kind === "terminal" || tab.kind === "assistant")) {
-      store.clearTabBell(tab.ptyId);
-    }
-  }, [setActiveTab, activeRepoPath]);
-
   const handleSelectSidebarProjectTab = useCallback(async (repoPath: string, tabId: string) => {
     useUIStore.getState().deactivateAllOverlays();
     if (repoPath !== activeRepoPath) {
@@ -488,6 +477,38 @@ export default function AppShell() {
     const { cols, rows } = getTerminalDimensions();
     spawnBlankShell(cols, rows);
   }, [spawnBlankShell, getTerminalDimensions]);
+
+  const handleProjectAction = useCallback(async (repoPath: string, action: ProjectActionKind) => {
+    await handleSelectRepo(repoPath);
+    if (useTerminalStore.getState().activeProjectPath !== repoPath) return;
+
+    const store = useTerminalStore.getState();
+    switch (action) {
+      case "assistant":
+        store.addPanelTab("launcher");
+        break;
+      case "terminal": {
+        useUIStore.getState().deactivateAllOverlays();
+        const { cols, rows } = getTerminalDimensions();
+        await spawnBlankShell(cols, rows, repoPath);
+        break;
+      }
+      case "commands":
+        store.addPanelTab("commands");
+        break;
+      case "git":
+        store.addPanelTab("git");
+        break;
+      case "todos":
+        store.addPanelTab("todos");
+        break;
+    }
+  }, [getTerminalDimensions, handleSelectRepo, spawnBlankShell]);
+
+  const handleActiveProjectAction = useCallback((action: ProjectActionKind) => {
+    const repoPath = useTerminalStore.getState().activeProjectPath;
+    if (repoPath) void handleProjectAction(repoPath, action);
+  }, [handleProjectAction]);
 
   const handleCreateCommand = useCallback(
     async (command: CommandConfig) => {
@@ -700,16 +721,12 @@ export default function AppShell() {
             groups={groups}
             activeRepoPath={activeRepoPath}
             activeTabId={showOverlay ? null : activeTabId}
-            commands={commands}
             onSelectRepo={handleSelectRepo}
             onAddProject={handleAddProject}
             onRemoveProject={handleRemoveProject}
-            onNewAssistant={handleNewAssistant}
             onOpenInEditor={handleOpenInEditor}
-            onSelectTab={handleSelectSidebarTab}
+            onProjectAction={handleProjectAction}
             onSelectProjectTab={handleSelectSidebarProjectTab}
-            onCloseTab={handleCloseTab}
-            onNewShell={handleNewShell}
             onRenameGroup={handleRenameGroup}
             onDeleteGroup={handleDeleteGroup}
             onMoveToGroup={handleMoveToGroup}
@@ -719,11 +736,7 @@ export default function AppShell() {
         <div className="workspace-panel">
           <TabBar
             onClose={handleCloseTab}
-            onNewShell={handleNewShell}
-            onNewAssistant={handleNewAssistant}
-            onNewCommands={() => useTerminalStore.getState().addPanelTab("commands")}
-            onNewGit={() => useTerminalStore.getState().addPanelTab("git")}
-            onOpenInEditor={() => { const p = useTerminalStore.getState().activeProjectPath; if (p) handleOpenInEditor(p); }}
+            onProjectAction={handleActiveProjectAction}
           />
 
           <div ref={terminalContainerRef} className="terminal-stage">

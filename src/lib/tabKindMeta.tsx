@@ -1,4 +1,4 @@
-import { FolderTree, Terminal, SquareTerminal, List, ListTodo, ExternalLink } from "lucide-react";
+import { FolderTree, Terminal, SquareTerminal, List, ListTodo } from "lucide-react";
 import type { TabKind } from "./types";
 
 export interface TabKindMeta {
@@ -37,14 +37,5 @@ const meta: Record<TabKind, TabKindMeta> = {
     icon: (size) => <ListTodo size={size} />,
   },
 };
-
-/** Extra actions shown in the + menu but not tab kinds */
-export const extraActions = {
-  openInEditor: {
-    label: "Open in Editor",
-    icon: (size: number) => <ExternalLink size={size} />,
-    shortcut: "⌘E",
-  },
-} as const;
 
 export default meta;

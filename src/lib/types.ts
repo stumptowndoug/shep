@@ -135,6 +135,11 @@ export interface SessionHistoryEntry extends SessionHistoryUpsert {
   endedAt: number | null;
 }
 
+export interface AgentRuntimeStatus {
+  status: string;
+  statusUpdatedAt: number;
+}
+
 export interface PanelTabData extends TabBase {
   kind: PanelTabKind;
 }
@@ -163,6 +168,24 @@ export interface TabActivity {
   lastOutputAt: number | null;
   lastAttentionAt: number | null;
   lastNotificationMessage: string | null;
+  agentState: AgentRuntimeState | null;
+  agentStatusUpdatedAt: number | null;
+  agentStatusSource: AgentStatusSource | null;
+  agentStatusReason: string | null;
+  agentStatusRuleId: string | null;
+  agentDone: boolean;
+}
+
+export type AgentSemanticState = "working" | "idle" | "blocked";
+export type AgentRuntimeState = AgentSemanticState | "possibly_stuck";
+export type AgentStatusSource = "provider" | "screen" | "fallback" | "heuristic";
+
+export interface AgentStatusObservation {
+  state: AgentRuntimeState;
+  updatedAt: number;
+  source: AgentStatusSource;
+  reason: string;
+  ruleId: string | null;
 }
 
 // ── Coding assistants ───────────────────────────────────────────────

@@ -1,36 +1,24 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from "react";
-import type { RepoInfo, RepoGroup, CommandState, TerminalTabData } from "../../lib/types";
+import type { RepoInfo, RepoGroup } from "../../lib/types";
 import { open } from "@tauri-apps/plugin-dialog";
-import tabKindMeta from "../../lib/tabKindMeta";
-import { useTerminalStore } from "../../stores/useTerminalStore";
 import { useGitStore } from "../../stores/useGitStore";
 import { useRepoStore } from "../../stores/useRepoStore";
 import { useNoticeStore } from "../../stores/useNoticeStore";
 import { getErrorMessage } from "../../lib/errors";
 import ProjectItem from "./ProjectItem";
 import GroupHeader from "./GroupHeader";
-import CollapsibleSection from "./CollapsibleSection";
-import AssistantList from "./AssistantList";
-import TerminalList from "./TerminalList";
-import CommandsRow from "./CommandsRow";
 import GitStatusRow from "./GitStatusRow";
-import TodoRow from "./TodoRow";
+import ProjectActionMenu, { type ProjectActionKind } from "../shared/ProjectActionMenu";
 
 interface ProjectListProps {
   repos: RepoInfo[];
   groups: RepoGroup[];
   activeRepoPath: string | null;
-  activeTabId: string | null;
-  commands: CommandState[];
-  projectActivity: Record<string, { terminalCount: number; runningCount: number; hasAttention: boolean; hasCrash: boolean; hasActive: boolean }>;
   onSelectRepo: (repoPath: string) => void;
   onAddProject: (repoPath: string) => Promise<void>;
   onRemoveProject: (repoPath: string) => void;
-  onNewAssistant: () => void;
   onOpenInEditor: (repoPath: string) => void;
-  onSelectTab: (tabId: string) => void;
-  onCloseTab: (tabId: string) => void;
-  onNewShell: () => void;
+  onProjectAction: (repoPath: string, action: ProjectActionKind) => void;
   onRenameGroup: (groupId: string, newName: string) => void;
   onDeleteGroup: (groupId: string) => void;
   onMoveToGroup: (repoPath: string, groupId: string | null) => Promise<void>;
@@ -40,17 +28,11 @@ export default function ProjectList({
   repos,
   groups,
   activeRepoPath,
-  activeTabId,
-  commands,
-  projectActivity,
   onSelectRepo,
   onAddProject,
   onRemoveProject,
-  onNewAssistant,
   onOpenInEditor,
-  onSelectTab,
-  onCloseTab,
-  onNewShell,
+  onProjectAction,
   onRenameGroup,
   onDeleteGroup,
   onMoveToGroup,
@@ -149,22 +131,6 @@ export default function ProjectList({
     setNewGroupName("");
   }, [newGroupName, onMoveToGroup]);
 
-  // Get tabs for the active project (stable ref from store)
-  const projectTabs = useTerminalStore(
-    (s) => activeRepoPath ? s.projectState[activeRepoPath]?.tabs ?? null : null,
-  );
-
-  const assistantTabs = useMemo(() => {
-    if (!projectTabs) return [];
-    return projectTabs.filter((t): t is TerminalTabData => t.kind === "assistant");
-  }, [projectTabs]);
-
-  const shellTabs = useMemo(() => {
-    if (!projectTabs) return [];
-    return projectTabs.filter((t): t is TerminalTabData => t.kind === "terminal");
-  }, [projectTabs]);
-
-  const commandsBadge = commands.length > 0 ? String(commands.length) : null;
   const gitStatuses = useGitStore((s) => s.projectGitStatus);
 
   // Build grouped layout
@@ -206,28 +172,6 @@ export default function ProjectList({
     return { sortedGroups: allSorted, groupedRepos: grouped, ungroupedRepos: ungrouped };
   }, [repos, groups, gitStatuses]);
 
-  const groupActivity = useMemo(() => {
-    const result: Record<string, { hasAttention: boolean; hasCrash: boolean; hasActivity: boolean; hasActive: boolean }> = {};
-    for (const group of sortedGroups) {
-      const groupRepos = groupedRepos.get(group.id) ?? [];
-      let hasAttention = false;
-      let hasCrash = false;
-      let hasActivity = false;
-      let hasActive = false;
-      for (const repo of groupRepos) {
-        const a = projectActivity[repo.path];
-        if (a) {
-          if (a.terminalCount > 0 || a.runningCount > 0) hasActivity = true;
-          if (a.hasAttention) hasAttention = true;
-          if (a.hasCrash) hasCrash = true;
-          if (a.hasActive) hasActive = true;
-        }
-      }
-      result[group.id] = { hasAttention, hasCrash, hasActivity, hasActive };
-    }
-    return result;
-  }, [sortedGroups, groupedRepos, projectActivity]);
-
   const renderRepoItem = (repo: RepoInfo) => {
     const isActive = repo.path === activeRepoPath;
     const isExpanded = isActive && expandedPaths.has(repo.path);
@@ -238,7 +182,6 @@ export default function ProjectList({
           repo={repo}
           isActive={isActive}
           isExpanded={isExpanded}
-          activity={projectActivity[repo.path]}
           worktreeParent={worktreeParent}
           groups={groups}
           onOpenInEditor={() => onOpenInEditor(repo.path)}
@@ -254,39 +197,11 @@ export default function ProjectList({
         />
         {isExpanded && (
           <div className="mt-1 mb-2 flex flex-col gap-0.5 pl-2">
-            <CollapsibleSection
-              label={tabKindMeta.assistant.label + "s"}
-              icon={tabKindMeta.assistant.icon(14)}
-              badge={assistantTabs.length || null}
-              hasItems={assistantTabs.length > 0}
-              onAdd={onNewAssistant}
-            >
-              <AssistantList
-                assistantTabs={assistantTabs}
-                activeTabId={activeTabId}
-                onSelectTab={onSelectTab}
-                onCloseTab={onCloseTab}
-                repositoryName={repo.name}
-              />
-            </CollapsibleSection>
-
-            <CollapsibleSection
-              label={tabKindMeta.terminal.label + "s"}
-              icon={tabKindMeta.terminal.icon(14)}
-              badge={shellTabs.length || null}
-              hasItems={shellTabs.length > 0}
-              onAdd={onNewShell}
-            >
-              <TerminalList
-                tabs={shellTabs}
-                activeTabId={activeTabId}
-                onSelectTab={onSelectTab}
-                onCloseTab={onCloseTab}
-              />
-            </CollapsibleSection>
-
-            <CommandsRow badge={commandsBadge} />
-            <TodoRow repoPath={repo.path} />
+            <ProjectActionMenu
+              variant="project"
+              projectName={repo.name}
+              onAction={(action) => onProjectAction(repo.path, action)}
+            />
             <GitStatusRow repoPath={repo.path} />
           </div>
         )}
@@ -304,7 +219,6 @@ export default function ProjectList({
             <GroupHeader
               group={group}
               isExpanded={isGroupExpanded}
-              activity={groupActivity[group.id]}
               onToggle={() => handleToggleGroup(group.id)}
               onRename={onRenameGroup}
               onDelete={onDeleteGroup}

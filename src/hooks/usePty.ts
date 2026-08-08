@@ -4,13 +4,21 @@ import {
   spawnPty,
   killPty,
   getDefaultShell,
+  getAgentRuntimeStatus,
   resolveSessionTitle,
   upsertSessionHistory,
   recordSessionHistoryActivity,
 } from "../lib/tauri";
 import { useThemeStore } from "../stores/useThemeStore";
 import { hexLuminance } from "../lib/themes";
-import type { PtyOutput, CommandConfig, SessionHistoryEntry, SessionMode } from "../lib/types";
+import type { AgentSemanticState, AgentStatusObservation, PtyOutput, CommandConfig, SessionHistoryEntry, SessionMode } from "../lib/types";
+import {
+  detectAgentScreenStatus,
+  readTerminalBottomScreen,
+  resolveAgentStatusAuthority,
+  type AgentScreenDetection,
+  type ProviderAgentObservation,
+} from "../lib/agentScreenStatus";
 import { toPtyColorTheme } from "../lib/ptyColorTheme";
 import { useCommandStore } from "../stores/useCommandStore";
 import { useTerminalStore, nextTabId } from "../stores/useTerminalStore";
@@ -31,6 +39,7 @@ import {
 interface TerminalRegistration {
   term: Terminal;
   afterWrite: (() => void) | null;
+  title: string;
 }
 
 interface BufferedOutput {
@@ -61,6 +70,7 @@ const OUTPUT_TRUNCATED_MARKER = "\r\n[output truncated while terminal was unavai
 const outputEncoder = new TextEncoder();
 
 const terminalInstances = new Map<number, TerminalRegistration>();
+const terminalTitles = new Map<number, string>();
 const pendingOutput = new Map<number, BufferedOutput>();
 const writeQueues = new Map<number, WriteQueue>();
 const outputAckStates = new Map<number, OutputAckState>();
@@ -82,6 +92,232 @@ interface SessionTitleResolverState {
 }
 
 const sessionTitleResolvers = new Map<number, SessionTitleResolverState>();
+
+interface AgentStatusObserverState {
+  cancelled: boolean;
+  misses: number;
+  timer: ReturnType<typeof setTimeout> | null;
+  startedAt: number;
+  lastProviderPollAt: number;
+  provider: ProviderAgentObservation | null;
+  screen: AgentScreenDetection | null;
+  screenKey: string | null;
+  screenChangedAt: number;
+  effectiveKey: string | null;
+  effectiveChangedAt: number;
+}
+
+export interface AgentStatusExplain {
+  assistantId: string;
+  provider: ProviderAgentObservation | null;
+  screen: AgentScreenDetection | null;
+  effective: AgentStatusObservation | null;
+}
+
+const agentStatusObservers = new Map<number, AgentStatusObserverState>();
+const agentStatusExplanations = new Map<number, AgentStatusExplain>();
+const AGENT_SCREEN_POLL_MS = 750;
+const PROVIDER_STATUS_POLL_MS = 2_500;
+const AGENT_STATUS_MISSES_BEFORE_CLEAR = 3;
+const AGENT_STARTUP_GRACE_MS = 3_000;
+const AGENT_STUCK_AFTER_MS = 120_000;
+
+export function explainAgentStatus(ptyId: number): AgentStatusExplain | null {
+  return agentStatusExplanations.get(ptyId) ?? null;
+}
+
+if (import.meta.env.DEV) {
+  const debugGlobal = globalThis as typeof globalThis & {
+    __shepAgentDetection?: { explain: typeof explainAgentStatus };
+  };
+  debugGlobal.__shepAgentDetection = { explain: explainAgentStatus };
+}
+
+function stopAgentStatusObserver(ptyId: number) {
+  const observer = agentStatusObservers.get(ptyId);
+  if (!observer) return;
+  observer.cancelled = true;
+  if (observer.timer) clearTimeout(observer.timer);
+  agentStatusObservers.delete(ptyId);
+  agentStatusExplanations.delete(ptyId);
+}
+
+function reportedAgentState(status: string): AgentSemanticState | null {
+  switch (status.trim().toLocaleLowerCase()) {
+    case "working":
+    case "active":
+    case "running":
+    case "busy":
+    case "processing":
+      return "working";
+    case "idle":
+      return "idle";
+    case "blocked":
+    case "waiting":
+    case "needs_input":
+    case "needs-input":
+    case "requires_action":
+      return "blocked";
+    default:
+      return null;
+  }
+}
+
+function screenDetectionKey(detection: AgentScreenDetection): string {
+  return `${detection.confidence}:${detection.state ?? "preserve"}:${detection.ruleId}`;
+}
+
+function updateScreenObservation(
+  observer: AgentStatusObserverState,
+  detection: AgentScreenDetection,
+  now: number,
+) {
+  const key = screenDetectionKey(detection);
+  if (key !== observer.screenKey) {
+    observer.screenKey = key;
+    observer.screenChangedAt = now;
+  }
+  observer.screen = detection;
+}
+
+function effectiveAgentObservation(
+  observer: AgentStatusObserverState,
+  activity: ReturnType<typeof useTerminalStore.getState>["tabActivity"][number] | undefined,
+  now: number,
+): AgentStatusObservation | null {
+  const screen = observer.screen;
+  const observation = resolveAgentStatusAuthority(
+    screen,
+    observer.screenChangedAt,
+    observer.provider,
+    now - observer.startedAt >= AGENT_STARTUP_GRACE_MS,
+  );
+
+  if (!observation) return null;
+
+  const effectiveKey = `${observation.source}:${observation.state}:${observation.ruleId ?? ""}`;
+  if (effectiveKey !== observer.effectiveKey) {
+    observer.effectiveKey = effectiveKey;
+    observer.effectiveChangedAt = now;
+  }
+
+  if (observation.state === "working" && !activity?.active) {
+    const lastSignalAt = Math.max(
+      activity?.lastOutputAt ?? 0,
+      observer.provider?.state === "working" ? observer.provider.updatedAt : 0,
+      observer.effectiveChangedAt,
+    );
+    if (now - lastSignalAt >= AGENT_STUCK_AFTER_MS) {
+      return {
+        state: "possibly_stuck",
+        updatedAt: lastSignalAt,
+        source: "heuristic",
+        reason: "Working state has not changed and no terminal output has arrived for two minutes",
+        ruleId: "stale-working-state",
+      };
+    }
+  }
+
+  return observation;
+}
+
+function startAgentStatusObserver(
+  ptyId: number,
+  assistantId: string,
+  repoPath: string,
+) {
+  stopAgentStatusObserver(ptyId);
+
+  const now = Date.now();
+  const observer: AgentStatusObserverState = {
+    cancelled: false,
+    misses: 0,
+    timer: null,
+    startedAt: now,
+    lastProviderPollAt: 0,
+    provider: null,
+    screen: null,
+    screenKey: null,
+    screenChangedAt: now,
+    effectiveKey: null,
+    effectiveChangedAt: now,
+  };
+  agentStatusObservers.set(ptyId, observer);
+
+  const poll = async () => {
+    if (observer.cancelled || agentStatusObservers.get(ptyId) !== observer) return;
+    const store = useTerminalStore.getState();
+    const tab = store.findTabByPtyId(ptyId);
+    const activity = store.tabActivity[ptyId];
+    if (!tab || activity?.alive === false) {
+      stopAgentStatusObserver(ptyId);
+      return;
+    }
+
+    const polledAt = Date.now();
+    const registration = terminalInstances.get(ptyId);
+    if (registration) {
+      const screen = readTerminalBottomScreen(registration.term);
+      const detection = detectAgentScreenStatus(
+        assistantId,
+        screen,
+        registration.title,
+      );
+      updateScreenObservation(observer, detection, polledAt);
+    }
+
+    if (
+      assistantId === "claude" &&
+      polledAt - observer.lastProviderPollAt >= PROVIDER_STATUS_POLL_MS
+    ) {
+      observer.lastProviderPollAt = polledAt;
+      try {
+        const runtime = await getAgentRuntimeStatus(
+          ptyId,
+          assistantId,
+          repoPath,
+          tab.providerSessionId,
+        );
+        if (observer.cancelled || agentStatusObservers.get(ptyId) !== observer) return;
+        const state = runtime ? reportedAgentState(runtime.status) : null;
+        if (runtime && state) {
+          observer.misses = 0;
+          observer.provider = { state, updatedAt: runtime.statusUpdatedAt };
+        } else {
+          observer.misses += 1;
+          if (observer.misses >= AGENT_STATUS_MISSES_BEFORE_CLEAR) {
+            observer.provider = null;
+          }
+        }
+      } catch (error) {
+        observer.misses += 1;
+        if (observer.misses >= AGENT_STATUS_MISSES_BEFORE_CLEAR) {
+          observer.provider = null;
+        }
+        if (import.meta.env.DEV) {
+          console.warn("Failed to read Claude runtime status:", error);
+        }
+      }
+    }
+
+    const latestActivity = useTerminalStore.getState().tabActivity[ptyId];
+    const effective = effectiveAgentObservation(observer, latestActivity, Date.now());
+    if (effective) {
+      useTerminalStore.getState().setTabAgentState(ptyId, effective);
+    }
+    agentStatusExplanations.set(ptyId, {
+      assistantId,
+      provider: observer.provider,
+      screen: observer.screen,
+      effective,
+    });
+
+    if (observer.cancelled || agentStatusObservers.get(ptyId) !== observer) return;
+    observer.timer = setTimeout(poll, AGENT_SCREEN_POLL_MS);
+  };
+
+  void poll();
+}
 
 function stopSessionTitleResolver(ptyId: number) {
   const resolver = sessionTitleResolvers.get(ptyId);
@@ -209,6 +445,7 @@ function cleanupActivityState(ptyId: number) {
   if (timer) { clearTimeout(timer); activityTimers.delete(ptyId); }
   activityActive.delete(ptyId);
   historyActivityWrites.delete(ptyId);
+  stopAgentStatusObserver(ptyId);
 }
 
 export function registerTerminal(
@@ -216,7 +453,17 @@ export function registerTerminal(
   term: Terminal,
   afterWrite: (() => void) | null = null,
 ) {
-  terminalInstances.set(ptyId, { term, afterWrite });
+  terminalInstances.set(ptyId, {
+    term,
+    afterWrite,
+    title: terminalTitles.get(ptyId) ?? "",
+  });
+}
+
+export function recordTerminalTitle(ptyId: number, title: string) {
+  terminalTitles.set(ptyId, title);
+  const registration = terminalInstances.get(ptyId);
+  if (registration) registration.title = title;
 }
 
 export function flushPendingOutput(ptyId: number) {
@@ -235,6 +482,7 @@ export function flushPendingOutput(ptyId: number) {
 
 export function unregisterTerminal(ptyId: number) {
   terminalInstances.delete(ptyId);
+  terminalTitles.delete(ptyId);
   pendingOutput.delete(ptyId);
   writeQueues.delete(ptyId);
   const ackState = outputAckStates.get(ptyId);
@@ -599,8 +847,9 @@ export function usePty() {
   );
 
   const spawnBlankShell = useCallback(
-    async (cols: number, rows: number) => {
-      if (!activeRepoPath) return;
+    async (cols: number, rows: number, requestedRepoPath?: string) => {
+      const repoPath = requestedRepoPath ?? activeRepoPath;
+      if (!repoPath) return;
 
       try {
         const shell = await getDefaultShell();
@@ -611,7 +860,7 @@ export function usePty() {
           cols,
           rows,
           null,
-          activeRepoPath,
+          repoPath,
         );
         if (!ptyId) return;
 
@@ -621,7 +870,7 @@ export function usePty() {
           kind: "terminal",
           label: "Terminal",
           ptyId,
-          repoPath: activeRepoPath,
+          repoPath,
           commandName: null,
           assistantId: null,
           providerSessionId: null,
@@ -692,6 +941,7 @@ export function usePty() {
           labelSource: "default",
         });
         startSessionTitleResolver(ptyId, assistantId, activeRepoPath, startedAfterMs, model);
+        startAgentStatusObserver(ptyId, assistantId, activeRepoPath);
 
         return ptyId;
       } catch (e) {
@@ -770,6 +1020,7 @@ export function usePty() {
           session.model ?? undefined,
           session.sessionId,
         );
+        startAgentStatusObserver(ptyId, session.provider, session.projectPath);
 
         return ptyId;
       } catch (error) {

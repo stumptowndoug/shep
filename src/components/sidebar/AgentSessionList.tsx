@@ -5,7 +5,7 @@ import { handleActionKey } from "../../lib/a11y";
 import { useTerminalStore } from "../../stores/useTerminalStore";
 import tabKindMeta from "../../lib/tabKindMeta";
 import SidebarSectionToggle from "./SidebarSectionToggle";
-import ActivityIndicator, { getTabActivityStatus } from "./ActivityIndicator";
+import ActivityIndicator from "./ActivityIndicator";
 import { agentDisplayLabel } from "../../lib/agentLabels";
 
 export interface AgentSessionItem {
@@ -21,8 +21,6 @@ interface AgentSessionListProps {
   labelMode: AgentLabelMode;
   onSelectSession: (repoPath: string, tabId: string) => void;
 }
-
-const MAX_VISIBLE_SESSIONS = 4;
 
 function AgentSessionRow({
   item,
@@ -77,11 +75,7 @@ function AgentSessionRow({
           {secondary}
         </span>
       </span>
-      <ActivityIndicator
-        status={getTabActivityStatus(activity)}
-        activity={activity}
-        className="agent-session-row__indicator"
-      />
+      <ActivityIndicator activity={activity} className="agent-session-row__indicator" />
     </div>
   );
 }
@@ -95,9 +89,6 @@ export default function AgentSessionList({
 }: AgentSessionListProps) {
   // Always starts expanded on launch; collapsing is per-session only.
   const [collapsed, setCollapsed] = useState(false);
-  const visibleSessions = collapsed ? [] : sessions.slice(0, MAX_VISIBLE_SESSIONS);
-  const overflowCount = Math.max(0, sessions.length - MAX_VISIBLE_SESSIONS);
-
   const handleToggle = useCallback(() => {
     setCollapsed((value) => !value);
   }, []);
@@ -114,8 +105,8 @@ export default function AgentSessionList({
       />
 
       {!collapsed && (
-        <div className="sidebar-section__list">
-          {visibleSessions.map((item) => (
+        <div className="sidebar-section__list agent-session-list">
+          {sessions.map((item) => (
             <AgentSessionRow
               key={`${item.tab.repoPath}:${item.tab.id}`}
               item={item}
@@ -124,9 +115,6 @@ export default function AgentSessionList({
               onSelect={() => onSelectSession(item.tab.repoPath, item.tab.id)}
             />
           ))}
-          {overflowCount > 0 && (
-            <div className="sidebar-section__overflow">+{overflowCount} more in projects</div>
-          )}
         </div>
       )}
     </div>

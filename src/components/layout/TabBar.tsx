@@ -1,5 +1,4 @@
-import { useCallback, useRef, useState, useEffect } from "react";
-import { createPortal } from "react-dom";
+import { useCallback, useRef, useState } from "react";
 import { useTerminalStore } from "../../stores/useTerminalStore";
 import { useUIStore } from "../../stores/useUIStore";
 import { useShallow } from "zustand/shallow";
@@ -7,82 +6,11 @@ import { GitBranch } from "lucide-react";
 import { assistantLogoSrc, getAssistantLogoClass } from "../../lib/assistantLogos";
 import { handleActionKey } from "../../lib/a11y";
 import { useGitStore } from "../../stores/useGitStore";
-import tabKindMeta, { extraActions } from "../../lib/tabKindMeta";
+import tabKindMeta from "../../lib/tabKindMeta";
 import type { UnifiedTab } from "../../lib/types";
 import { useProjectSettingsStore } from "../../stores/useProjectSettingsStore";
 import { agentDisplayLabel } from "../../lib/agentLabels";
-
-
-function NewSessionButton({ onNewAssistant, onNewShell, onNewCommands, onNewGit, onOpenInEditor }: { onNewAssistant: () => void; onNewShell: () => void; onNewCommands: () => void; onNewGit: () => void; onOpenInEditor: () => void }) {
-  const [open, setOpen] = useState(false);
-  const btnRef = useRef<HTMLButtonElement>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
-  const [pos, setPos] = useState({ top: 0, left: 0 });
-
-  useEffect(() => {
-    if (!open) return;
-    const handle = (e: MouseEvent) => {
-      if (
-        menuRef.current && !menuRef.current.contains(e.target as Node) &&
-        btnRef.current && !btnRef.current.contains(e.target as Node)
-      ) {
-        setOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", handle);
-    return () => document.removeEventListener("mousedown", handle);
-  }, [open]);
-
-  const menuItems = [
-    { key: "assistant", meta: tabKindMeta.assistant, action: onNewAssistant },
-    { key: "terminal", meta: tabKindMeta.terminal, action: onNewShell },
-    { key: "commands", meta: tabKindMeta.commands, action: onNewCommands },
-    { key: "git", meta: tabKindMeta.git, action: onNewGit },
-    { key: "editor", meta: extraActions.openInEditor, action: onOpenInEditor },
-  ];
-
-  const handleToggle = () => {
-    if (!open && btnRef.current) {
-      const rect = btnRef.current.getBoundingClientRect();
-      setPos({ top: rect.bottom + 4, left: rect.left });
-    }
-    setOpen(!open);
-  };
-
-  return (
-    <>
-      <button
-        ref={btnRef}
-        className="tab tab-auto !px-3 font-semibold"
-        onClick={handleToggle}
-        title="New session"
-        aria-label="Open new session"
-      >
-        +
-      </button>
-      {open && createPortal(
-        <div
-          ref={menuRef}
-          className="context-menu"
-          style={{ top: pos.top, left: pos.left }}
-        >
-          {menuItems.map(({ key, meta, action }) => (
-            <button
-              key={key}
-              className="context-menu__item"
-              onClick={() => { action(); setOpen(false); }}
-            >
-              <span className="context-menu__icon">{meta.icon(14)}</span>
-              <span>{meta.label}</span>
-              {meta.shortcut && <span className="context-menu__shortcut">{meta.shortcut}</span>}
-            </button>
-          ))}
-        </div>,
-        document.body,
-      )}
-    </>
-  );
-}
+import ProjectActionMenu, { type ProjectActionKind } from "../shared/ProjectActionMenu";
 
 /** Render the icon for a tab based on its kind */
 function TabIcon({ tab }: { tab: UnifiedTab }) {
@@ -98,20 +26,12 @@ function TabIcon({ tab }: { tab: UnifiedTab }) {
 
 interface TabBarProps {
   onClose: (tabId: string) => void;
-  onNewShell: () => void;
-  onNewAssistant: () => void;
-  onNewCommands: () => void;
-  onNewGit: () => void;
-  onOpenInEditor: () => void;
+  onProjectAction: (action: ProjectActionKind) => void;
 }
 
 export default function TabBar({
   onClose,
-  onNewShell,
-  onNewAssistant,
-  onNewCommands,
-  onNewGit,
-  onOpenInEditor,
+  onProjectAction,
 }: TabBarProps) {
   const { activeProjectPath, projectState } = useTerminalStore(
     useShallow((s) => ({ activeProjectPath: s.activeProjectPath, projectState: s.activeProjectPath ? s.projectState[s.activeProjectPath] : null })),
@@ -295,7 +215,7 @@ export default function TabBar({
           );
         })}
 
-        <NewSessionButton onNewAssistant={onNewAssistant} onNewShell={onNewShell} onNewCommands={onNewCommands} onNewGit={onNewGit} onOpenInEditor={onOpenInEditor} />
+        <ProjectActionMenu variant="tab" onAction={onProjectAction} />
       </div>
       {projectName && (
         <span className="tab-bar__breadcrumb">

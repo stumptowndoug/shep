@@ -190,19 +190,19 @@ export default function HistoryPanel({
         <div className="history-scope" role="group" aria-label="History scope">
           <button
             type="button"
+            className={`history-scope__button ${scope === "all" ? "history-scope__button--active" : ""}`}
+            onClick={() => setScope("all")}
+          >
+            All sessions
+          </button>
+          <button
+            type="button"
             className={`history-scope__button ${scope === "project" ? "history-scope__button--active" : ""}`}
             onClick={() => setScope("project")}
             disabled={!activeRepoPath}
             title={activeRepoPath ? `Show sessions for ${selectedProjectName}` : "Select a project first"}
           >
             Project
-          </button>
-          <button
-            type="button"
-            className={`history-scope__button ${scope === "all" ? "history-scope__button--active" : ""}`}
-            onClick={() => setScope("all")}
-          >
-            All sessions
           </button>
         </div>
 

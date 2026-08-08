@@ -1,6 +1,7 @@
 import { create } from "zustand";
-import type { TerminalTabData, TabActivity, UnifiedTab, PanelTabKind, PanelTabData } from "../lib/types";
+import type { AgentStatusObservation, TerminalTabData, TabActivity, UnifiedTab, PanelTabKind, PanelTabData } from "../lib/types";
 import { panelTabId, panelTabDefaults } from "../lib/types";
+import { nextAgentDoneState } from "../lib/agentActivity";
 import { useUIStore } from "./useUIStore";
 
 interface ProjectTerminalState {
@@ -28,6 +29,7 @@ interface TerminalStore {
   findTabByPtyId: (ptyId: number) => TerminalTabData | undefined;
   initActivity: (ptyId: number) => void;
   setTabActive: (ptyId: number, active: boolean) => void;
+  setTabAgentState: (ptyId: number, observation: AgentStatusObservation | null) => void;
   setTabExited: (ptyId: number, exitCode: number) => void;
   setTabBell: (ptyId: number, message?: string) => void;
   clearTabBell: (ptyId: number) => void;
@@ -98,6 +100,24 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
   switchProject: (repoPath: string) => {
     set((state) => {
       if (state.projectState[repoPath]) {
+        const project = state.projectState[repoPath];
+        const activeTab = project.tabs.find((tab) => tab.id === project.activeTabId);
+        if (
+          activeTab &&
+          (activeTab.kind === "terminal" || activeTab.kind === "assistant") &&
+          state.tabActivity[activeTab.ptyId]?.agentDone
+        ) {
+          return {
+            activeProjectPath: repoPath,
+            tabActivity: {
+              ...state.tabActivity,
+              [activeTab.ptyId]: {
+                ...state.tabActivity[activeTab.ptyId],
+                agentDone: false,
+              },
+            },
+          };
+        }
         return { activeProjectPath: repoPath };
       }
       return {
@@ -181,11 +201,26 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
       if (!path) return state;
       const ps = state.projectState[path];
       if (!ps || !ps.tabs.some((t) => t.id === id)) return state;
+      const tab = ps.tabs.find((candidate) => candidate.id === id);
+      const clearDone = tab &&
+        (tab.kind === "terminal" || tab.kind === "assistant") &&
+        state.tabActivity[tab.ptyId]?.agentDone;
       return {
         projectState: {
           ...state.projectState,
           [path]: { ...ps, activeTabId: id },
         },
+        ...(clearDone
+          ? {
+              tabActivity: {
+                ...state.tabActivity,
+                [tab.ptyId]: {
+                  ...state.tabActivity[tab.ptyId],
+                  agentDone: false,
+                },
+              },
+            }
+          : {}),
       };
     });
   },
@@ -406,6 +441,12 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
           lastOutputAt: Date.now(),
           lastAttentionAt: null,
           lastNotificationMessage: null,
+          agentState: null,
+          agentStatusUpdatedAt: null,
+          agentStatusSource: null,
+          agentStatusReason: null,
+          agentStatusRuleId: null,
+          agentDone: false,
         },
       },
     }));
@@ -421,7 +462,61 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
           [ptyId]: {
             ...prev,
             active,
-            lastOutputAt: active ? Date.now() : prev.lastOutputAt,
+            lastOutputAt: active || prev.active ? Date.now() : prev.lastOutputAt,
+          },
+        },
+      };
+    });
+  },
+
+  setTabAgentState: (ptyId: number, observation: AgentStatusObservation | null) => {
+    set((state) => {
+      const prev = state.tabActivity[ptyId];
+      if (!prev) return state;
+      const agentState = observation?.state ?? null;
+      const statusUpdatedAt = observation?.updatedAt ?? null;
+      const statusSource = observation?.source ?? null;
+      const statusReason = observation?.reason ?? null;
+      const statusRuleId = observation?.ruleId ?? null;
+      let isViewed = false;
+      for (const [path, project] of Object.entries(state.projectState)) {
+        const tab = project.tabs.find(
+          (candidate) =>
+            (candidate.kind === "terminal" || candidate.kind === "assistant") &&
+            candidate.ptyId === ptyId,
+        );
+        if (tab) {
+          isViewed = path === state.activeProjectPath && tab.id === project.activeTabId;
+          break;
+        }
+      }
+      const agentDone = nextAgentDoneState(
+        prev.agentState,
+        prev.agentDone,
+        agentState,
+        isViewed,
+      );
+      if (
+        prev.agentState === agentState &&
+          prev.agentStatusUpdatedAt === statusUpdatedAt &&
+          prev.agentStatusSource === statusSource &&
+          prev.agentStatusReason === statusReason &&
+          prev.agentStatusRuleId === statusRuleId &&
+          prev.agentDone === agentDone
+      ) {
+        return state;
+      }
+      return {
+        tabActivity: {
+          ...state.tabActivity,
+          [ptyId]: {
+            ...prev,
+            agentState,
+            agentStatusUpdatedAt: statusUpdatedAt,
+            agentStatusSource: statusSource,
+            agentStatusReason: statusReason,
+            agentStatusRuleId: statusRuleId,
+            agentDone,
           },
         },
       };
@@ -432,7 +527,22 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
     set((state) => {
       const prev = state.tabActivity[ptyId];
       if (!prev) return state;
-      return { tabActivity: { ...state.tabActivity, [ptyId]: { ...prev, alive: false, exitCode } } };
+      return {
+        tabActivity: {
+          ...state.tabActivity,
+          [ptyId]: {
+            ...prev,
+            alive: false,
+            exitCode,
+            agentState: null,
+            agentStatusUpdatedAt: null,
+            agentStatusSource: null,
+            agentStatusReason: null,
+            agentStatusRuleId: null,
+            agentDone: false,
+          },
+        },
+      };
     });
   },
 

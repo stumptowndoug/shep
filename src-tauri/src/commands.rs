@@ -8,6 +8,7 @@ use tauri::ipc::Channel;
 use tauri::{Emitter, State};
 use url::Url;
 
+use crate::agent_status::{self, AgentRuntimeStatus};
 use crate::fonts::{self, FontFaceData, FontFamily};
 use crate::git;
 use crate::git::{ChangedFile, CreatedWorktree, DiffFileStat, GitStatus, WorktreeEntry};
@@ -328,6 +329,27 @@ pub async fn resolve_session_title(
     })
     .await
     .map_err(|error| format!("Session title resolver failed: {error}"))
+}
+
+#[tauri::command]
+pub async fn get_agent_runtime_status(
+    pty_id: u32,
+    assistant_id: String,
+    repo_path: String,
+    session_id: Option<String>,
+    pty_manager: State<'_, PtyManager>,
+) -> Result<Option<AgentRuntimeStatus>, String> {
+    let process_id = pty_manager.child_pid(pty_id);
+    tauri::async_runtime::spawn_blocking(move || {
+        agent_status::resolve(
+            &assistant_id,
+            &repo_path,
+            session_id.as_deref(),
+            process_id,
+        )
+    })
+    .await
+    .map_err(|error| format!("Agent status resolver failed: {error}"))
 }
 
 #[tauri::command]

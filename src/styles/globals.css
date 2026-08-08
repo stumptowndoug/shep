@@ -389,79 +389,6 @@ select {
   background: var(--status-attention);
 }
 
-.activity-indicator {
-  position: relative;
-  width: 7px;
-  height: 7px;
-  flex-shrink: 0;
-  margin-left: auto;
-  border-radius: 50%;
-  background: color-mix(in srgb, var(--overlay) 25%, transparent);
-}
-
-.activity-indicator--idle {
-  background: color-mix(in srgb, var(--overlay) 22%, transparent);
-}
-
-.activity-indicator--running {
-  background: color-mix(in srgb, var(--status-running) 62%, transparent);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--status-running) 16%, transparent);
-}
-
-.activity-indicator--active {
-  background: var(--status-added);
-  box-shadow: 0 0 8px color-mix(in srgb, var(--status-added) 38%, transparent);
-  animation: activity-indicator-pulse 1.25s ease-in-out infinite;
-}
-
-.activity-indicator--active::after {
-  content: "";
-  position: absolute;
-  inset: -4px;
-  border: 1px solid color-mix(in srgb, var(--status-added) 48%, transparent);
-  border-radius: 50%;
-  animation: activity-indicator-ring 1.25s ease-out infinite;
-}
-
-.activity-indicator--attention {
-  background: var(--status-attention);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--status-attention) 18%, transparent);
-}
-
-.activity-indicator--failed {
-  background: var(--status-crashed);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--status-crashed) 16%, transparent);
-}
-
-@keyframes activity-indicator-pulse {
-  0%, 100% {
-    opacity: 0.72;
-    transform: scale(0.9);
-  }
-  50% {
-    opacity: 1;
-    transform: scale(1.08);
-  }
-}
-
-@keyframes activity-indicator-ring {
-  0% {
-    opacity: 0.8;
-    transform: scale(0.7);
-  }
-  100% {
-    opacity: 0;
-    transform: scale(1.35);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .activity-indicator--active,
-  .activity-indicator--active::after {
-    animation: none;
-  }
-}
-
 /* Option card (form pickers, selectable cards) */
 .option-card {
   display: flex;
@@ -1067,6 +994,11 @@ select {
   outline-offset: 2px;
 }
 
+.project-new-tab[aria-expanded="true"] {
+  background: color-mix(in srgb, var(--overlay) 6%, transparent);
+  color: var(--text-primary);
+}
+
 .sidebar-section {
   padding-top: 6px;
 }
@@ -1114,13 +1046,6 @@ select {
   gap: 2px;
 }
 
-.sidebar-section__overflow {
-  padding: 3px 10px;
-  font-size: 11px;
-  color: var(--text-muted);
-  opacity: 0.65;
-}
-
 .agent-session-row {
   align-items: center;
   gap: 7px;
@@ -1159,8 +1084,104 @@ select {
   text-transform: lowercase;
 }
 
+.agent-session-list {
+  max-height: clamp(152px, 35vh, 304px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 3px;
+  scrollbar-color: color-mix(in srgb, var(--overlay) 24%, transparent) transparent;
+  scrollbar-width: thin;
+}
+
 .agent-session-row__indicator {
-  margin-left: 2px;
+  margin-left: auto;
+}
+
+.activity-indicator {
+  position: relative;
+  width: 7px;
+  height: 7px;
+  flex-shrink: 0;
+  margin-left: auto;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--overlay) 25%, transparent);
+}
+
+.activity-indicator--idle {
+  background: color-mix(in srgb, var(--overlay) 22%, transparent);
+}
+
+.activity-indicator--running {
+  background: color-mix(in srgb, var(--status-running) 62%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--status-running) 16%, transparent);
+}
+
+.activity-indicator--working {
+  background: var(--status-added);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--status-added) 38%, transparent);
+}
+
+.activity-indicator--active {
+  background: var(--status-running);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--status-running) 28%, transparent);
+  animation: activity-indicator-pulse 1.25s ease-in-out infinite;
+}
+
+.activity-indicator--active::after {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  border: 1px solid color-mix(in srgb, var(--status-running) 48%, transparent);
+  border-radius: 50%;
+  animation: activity-indicator-ring 1.25s ease-out infinite;
+}
+
+.activity-indicator--done {
+  background: var(--status-running);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--status-running) 14%, transparent);
+}
+
+.activity-indicator--attention,
+.activity-indicator--stuck {
+  background: var(--status-attention);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--status-attention) 18%, transparent);
+}
+
+.activity-indicator--failed {
+  background: var(--status-crashed);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--status-crashed) 16%, transparent);
+}
+
+@keyframes activity-indicator-pulse {
+  0%,
+  100% {
+    opacity: 0.72;
+    transform: scale(0.9);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scale(1.08);
+  }
+}
+
+@keyframes activity-indicator-ring {
+  0% {
+    opacity: 0.8;
+    transform: scale(0.7);
+  }
+
+  100% {
+    opacity: 0;
+    transform: scale(1.35);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .activity-indicator--active,
+  .activity-indicator--active::after {
+    animation: none;
+  }
 }
 
 /* Sidebar footer buttons (Settings, Usage, Ports) — visually distinct from tabs */

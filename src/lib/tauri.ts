@@ -30,6 +30,7 @@ import type {
   SkillInfo,
   SessionHistoryEntry,
   SessionHistoryUpsert,
+  AgentRuntimeStatus,
 } from "./types";
 
 // ── Workspace commands ──────────────────────────────────────────────
@@ -204,6 +205,20 @@ export function resolveSessionTitle(
     assistantId,
     repoPath,
     startedAfterMs,
+    sessionId,
+  });
+}
+
+export function getAgentRuntimeStatus(
+  ptyId: number,
+  assistantId: string,
+  repoPath: string,
+  sessionId: string | null,
+): Promise<AgentRuntimeStatus | null> {
+  return invoke("get_agent_runtime_status", {
+    ptyId,
+    assistantId,
+    repoPath,
     sessionId,
   });
 }

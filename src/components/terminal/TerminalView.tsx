@@ -9,6 +9,7 @@ import { writePty, resizePty, openUrl } from "../../lib/tauri";
 import {
   flushPendingOutput,
   registerTerminal,
+  recordTerminalTitle,
   unregisterTerminal,
 } from "../../hooks/usePty";
 import { TERMINAL_LINE_HEIGHT, buildCSSFontFamily } from "../../lib/terminalConfig";
@@ -92,6 +93,7 @@ export default function TerminalView({
     // OSC 0/2 title changes are the provider-neutral baseline for naming
     // terminal and agent tabs. Explicit user renames remain authoritative.
     term.onTitleChange((title) => {
+      recordTerminalTitle(ptyId, title);
       useTerminalStore.getState().setTabTitleFromPty(ptyId, title);
     });
 

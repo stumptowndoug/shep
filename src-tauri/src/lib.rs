@@ -1,3 +1,4 @@
+mod agent_status;
 mod commands;
 mod fonts;
 mod git;
@@ -110,6 +111,7 @@ pub fn run() {
             commands::resize_pty,
             commands::kill_pty,
             commands::resolve_session_title,
+            commands::get_agent_runtime_status,
             commands::upsert_session_history,
             commands::record_session_history_activity,
             commands::list_session_history,
