@@ -399,6 +399,27 @@ export default function SettingsPanel() {
           </button>
         </div>
 
+        <div className="settings-row">
+          <span className="settings-row__label flex items-center gap-2">
+            <span>Agent Label</span>
+            <InfoTip text="Choose what identifies live agents in tabs and the sidebar. Session titles are still retained for history when Repository is selected. Manual tab renames always take priority." />
+          </span>
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={() => void updateProjectSettings({ agentLabelMode: "repository" })}
+              className={`option-card option-card--compact ${projectSettings.agentLabelMode === "repository" ? "selected" : ""}`}
+            >
+              Repository
+            </button>
+            <button
+              onClick={() => void updateProjectSettings({ agentLabelMode: "title" })}
+              className={`option-card option-card--compact ${projectSettings.agentLabelMode === "title" ? "selected" : ""}`}
+            >
+              Session title
+            </button>
+          </div>
+        </div>
+
         {projectIsSaving && <div className="mt-2 text-xs text-[var(--text-muted)]">Saving project settings...</div>}
         {projectError && <div className="mt-2 text-sm text-red-300">{projectError}</div>}
       </section>

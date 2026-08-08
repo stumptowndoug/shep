@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "test:agent-status": "node --test tests/agentScreenStatus.test.ts",
     "icons": "tauri icon assets/shep.png",
     "preview": "vite preview",
     "tauri": "tauri"

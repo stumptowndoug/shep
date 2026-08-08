@@ -1,6 +1,7 @@
 import { create } from "zustand";
-import type { TerminalTabData, TabActivity, UnifiedTab, PanelTabKind, PanelTabData } from "../lib/types";
+import type { AgentStatusObservation, TerminalTabData, TabActivity, UnifiedTab, PanelTabKind, PanelTabData } from "../lib/types";
 import { panelTabId, panelTabDefaults } from "../lib/types";
+import { nextAgentDoneState } from "../lib/agentActivity";
 import { useUIStore } from "./useUIStore";
 
 interface ProjectTerminalState {
@@ -18,6 +19,8 @@ interface TerminalStore {
   removeTab: (id: string) => void;
   setActiveTab: (id: string) => void;
   updateTab: (id: string, patch: Partial<Pick<UnifiedTab, "label">>) => void;
+  setTabTitleFromPty: (ptyId: number, title: string) => void;
+  setTabSessionInfo: (ptyId: number, sessionId: string, title: string | null) => void;
   reorderTab: (tabId: string, toIndex: number) => void;
   addPanelTab: (kind: PanelTabKind) => void;
   removePanelTab: (kind: PanelTabKind) => void;
@@ -26,6 +29,7 @@ interface TerminalStore {
   findTabByPtyId: (ptyId: number) => TerminalTabData | undefined;
   initActivity: (ptyId: number) => void;
   setTabActive: (ptyId: number, active: boolean) => void;
+  setTabAgentState: (ptyId: number, observation: AgentStatusObservation | null) => void;
   setTabExited: (ptyId: number, exitCode: number) => void;
   setTabBell: (ptyId: number, message?: string) => void;
   clearTabBell: (ptyId: number) => void;
@@ -42,6 +46,52 @@ export function nextTabId(): string {
   return `tab-${++tabCounter}`;
 }
 
+function normalizeTerminalTitle(title: string): string | null {
+  const normalized = title
+    .replace(/[\u0000-\u001f\u007f]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!normalized) return null;
+  return [...normalized].slice(0, 160).join("");
+}
+
+function projectName(repoPath: string): string {
+  return repoPath.split("/").filter(Boolean).pop() ?? repoPath;
+}
+
+function isUuid(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+function usefulPtyTitle(tab: TerminalTabData, title: string): string | null {
+  const project = projectName(tab.repoPath);
+
+  if (tab.assistantId === "claude") {
+    // Claude prefixes its OSC title with `*` while it is actively working.
+    // Keep that transient status marker out of the persistent tab label.
+    return normalizeTerminalTitle(title.replace(/^\*+\s*/, ""));
+  }
+
+  if (tab.assistantId === "pi") {
+    const prefix = "π - ";
+    if (title === `${prefix}${project}`) return null;
+    if (title.startsWith(prefix) && title.endsWith(` - ${project}`)) {
+      return normalizeTerminalTitle(title.slice(prefix.length, -(project.length + 3)));
+    }
+  }
+
+  if (tab.assistantId === "codex") {
+    const withoutSpinner = title.replace(/^[\u2800-\u28ff]+\s*/, "");
+    if (withoutSpinner === project) return null;
+    if (withoutSpinner.endsWith(` | ${project}`)) {
+      const thread = withoutSpinner.slice(0, -(project.length + 3)).trim();
+      return thread && !isUuid(thread) ? thread : null;
+    }
+  }
+
+  return title;
+}
+
 export const useTerminalStore = create<TerminalStore>((set, get) => ({
   projectState: {},
   activeProjectPath: null,
@@ -50,6 +100,24 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
   switchProject: (repoPath: string) => {
     set((state) => {
       if (state.projectState[repoPath]) {
+        const project = state.projectState[repoPath];
+        const activeTab = project.tabs.find((tab) => tab.id === project.activeTabId);
+        if (
+          activeTab &&
+          (activeTab.kind === "terminal" || activeTab.kind === "assistant") &&
+          state.tabActivity[activeTab.ptyId]?.agentDone
+        ) {
+          return {
+            activeProjectPath: repoPath,
+            tabActivity: {
+              ...state.tabActivity,
+              [activeTab.ptyId]: {
+                ...state.tabActivity[activeTab.ptyId],
+                agentDone: false,
+              },
+            },
+          };
+        }
         return { activeProjectPath: repoPath };
       }
       return {
@@ -133,11 +201,26 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
       if (!path) return state;
       const ps = state.projectState[path];
       if (!ps || !ps.tabs.some((t) => t.id === id)) return state;
+      const tab = ps.tabs.find((candidate) => candidate.id === id);
+      const clearDone = tab &&
+        (tab.kind === "terminal" || tab.kind === "assistant") &&
+        state.tabActivity[tab.ptyId]?.agentDone;
       return {
         projectState: {
           ...state.projectState,
           [path]: { ...ps, activeTabId: id },
         },
+        ...(clearDone
+          ? {
+              tabActivity: {
+                ...state.tabActivity,
+                [tab.ptyId]: {
+                  ...state.tabActivity[tab.ptyId],
+                  agentDone: false,
+                },
+              },
+            }
+          : {}),
       };
     });
   },
@@ -153,10 +236,96 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
           ...state.projectState,
           [path]: {
             ...ps,
-            tabs: ps.tabs.map((t) => (t.id === id ? { ...t, ...patch } : t)),
+            tabs: ps.tabs.map((t) => {
+              if (t.id !== id) return t;
+              if (t.kind === "terminal" || t.kind === "assistant") {
+                return { ...t, ...patch, labelSource: "user" as const };
+              }
+              return { ...t, ...patch };
+            }),
           },
         },
       };
+    });
+  },
+
+  setTabTitleFromPty: (ptyId: number, title: string) => {
+    const normalized = normalizeTerminalTitle(title);
+    if (!normalized) return;
+
+    set((state) => {
+      for (const [path, project] of Object.entries(state.projectState)) {
+        const index = project.tabs.findIndex(
+          (tab) =>
+            (tab.kind === "terminal" || tab.kind === "assistant") &&
+            tab.ptyId === ptyId,
+        );
+        if (index === -1) continue;
+
+        const tab = project.tabs[index];
+        if (
+          (tab.kind !== "terminal" && tab.kind !== "assistant") ||
+          tab.labelSource === "user"
+        ) {
+          return state;
+        }
+
+        const usefulTitle = usefulPtyTitle(tab, normalized);
+        if (!usefulTitle || tab.label === usefulTitle) return state;
+        // Resolved metadata is more stable than transient OSC titles. Pi's
+        // named OSC form is the exception because it represents an explicit
+        // `/name`, while Pi's generic project title was filtered above.
+        if (tab.labelSource === "session" && tab.assistantId !== "pi") {
+          return state;
+        }
+
+        const tabs = [...project.tabs];
+        tabs[index] = { ...tab, label: usefulTitle, labelSource: "terminal" };
+        return {
+          projectState: {
+            ...state.projectState,
+            [path]: { ...project, tabs },
+          },
+        };
+      }
+      return state;
+    });
+  },
+
+  setTabSessionInfo: (ptyId: number, sessionId: string, title: string | null) => {
+    const normalized = title ? normalizeTerminalTitle(title) : null;
+    set((state) => {
+      for (const [path, project] of Object.entries(state.projectState)) {
+        const index = project.tabs.findIndex(
+          (tab) =>
+            (tab.kind === "terminal" || tab.kind === "assistant") &&
+            tab.ptyId === ptyId,
+        );
+        if (index === -1) continue;
+
+        const tab = project.tabs[index];
+        if (
+          tab.kind !== "terminal" && tab.kind !== "assistant"
+        ) {
+          return state;
+        }
+
+        const tabs = [...project.tabs];
+        tabs[index] = {
+          ...tab,
+          providerSessionId: sessionId,
+          ...(normalized && tab.labelSource !== "user" && tab.label !== normalized
+            ? { label: normalized, labelSource: "session" as const }
+            : {}),
+        };
+        return {
+          projectState: {
+            ...state.projectState,
+            [path]: { ...project, tabs },
+          },
+        };
+      }
+      return state;
     });
   },
 
@@ -249,11 +418,15 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
 
   findTabByPtyId: (ptyId: number) => {
     const state = get();
-    if (!state.activeProjectPath) return undefined;
-    const ps = state.projectState[state.activeProjectPath];
-    return ps?.tabs.find(
-      (t): t is TerminalTabData => (t.kind === "terminal" || t.kind === "assistant") && t.ptyId === ptyId,
-    );
+    for (const project of Object.values(state.projectState)) {
+      const tab = project.tabs.find(
+        (candidate): candidate is TerminalTabData =>
+          (candidate.kind === "terminal" || candidate.kind === "assistant") &&
+          candidate.ptyId === ptyId,
+      );
+      if (tab) return tab;
+    }
+    return undefined;
   },
 
   initActivity: (ptyId: number) => {
@@ -268,6 +441,12 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
           lastOutputAt: Date.now(),
           lastAttentionAt: null,
           lastNotificationMessage: null,
+          agentState: null,
+          agentStatusUpdatedAt: null,
+          agentStatusSource: null,
+          agentStatusReason: null,
+          agentStatusRuleId: null,
+          agentDone: false,
         },
       },
     }));
@@ -283,7 +462,61 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
           [ptyId]: {
             ...prev,
             active,
-            lastOutputAt: active ? Date.now() : prev.lastOutputAt,
+            lastOutputAt: active || prev.active ? Date.now() : prev.lastOutputAt,
+          },
+        },
+      };
+    });
+  },
+
+  setTabAgentState: (ptyId: number, observation: AgentStatusObservation | null) => {
+    set((state) => {
+      const prev = state.tabActivity[ptyId];
+      if (!prev) return state;
+      const agentState = observation?.state ?? null;
+      const statusUpdatedAt = observation?.updatedAt ?? null;
+      const statusSource = observation?.source ?? null;
+      const statusReason = observation?.reason ?? null;
+      const statusRuleId = observation?.ruleId ?? null;
+      let isViewed = false;
+      for (const [path, project] of Object.entries(state.projectState)) {
+        const tab = project.tabs.find(
+          (candidate) =>
+            (candidate.kind === "terminal" || candidate.kind === "assistant") &&
+            candidate.ptyId === ptyId,
+        );
+        if (tab) {
+          isViewed = path === state.activeProjectPath && tab.id === project.activeTabId;
+          break;
+        }
+      }
+      const agentDone = nextAgentDoneState(
+        prev.agentState,
+        prev.agentDone,
+        agentState,
+        isViewed,
+      );
+      if (
+        prev.agentState === agentState &&
+          prev.agentStatusUpdatedAt === statusUpdatedAt &&
+          prev.agentStatusSource === statusSource &&
+          prev.agentStatusReason === statusReason &&
+          prev.agentStatusRuleId === statusRuleId &&
+          prev.agentDone === agentDone
+      ) {
+        return state;
+      }
+      return {
+        tabActivity: {
+          ...state.tabActivity,
+          [ptyId]: {
+            ...prev,
+            agentState,
+            agentStatusUpdatedAt: statusUpdatedAt,
+            agentStatusSource: statusSource,
+            agentStatusReason: statusReason,
+            agentStatusRuleId: statusRuleId,
+            agentDone,
           },
         },
       };
@@ -294,7 +527,22 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
     set((state) => {
       const prev = state.tabActivity[ptyId];
       if (!prev) return state;
-      return { tabActivity: { ...state.tabActivity, [ptyId]: { ...prev, alive: false, exitCode } } };
+      return {
+        tabActivity: {
+          ...state.tabActivity,
+          [ptyId]: {
+            ...prev,
+            alive: false,
+            exitCode,
+            agentState: null,
+            agentStatusUpdatedAt: null,
+            agentStatusSource: null,
+            agentStatusReason: null,
+            agentStatusRuleId: null,
+            agentDone: false,
+          },
+        },
+      };
     });
   },
 

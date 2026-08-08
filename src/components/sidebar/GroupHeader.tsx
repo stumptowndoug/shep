@@ -4,12 +4,10 @@ import { createPortal } from "react-dom";
 import ContextMenu from "../shared/ContextMenu";
 import type { ContextMenuItem } from "../shared/ContextMenu";
 import type { RepoGroup } from "../../lib/types";
-import ActivityIndicator, { getAggregateActivityStatus } from "./ActivityIndicator";
 
 interface GroupHeaderProps {
   group: RepoGroup;
   isExpanded: boolean;
-  activity?: { hasAttention: boolean; hasCrash: boolean; hasActivity: boolean; hasActive: boolean };
   onToggle: () => void;
   onRename: (groupId: string, newName: string) => void;
   onDelete: (groupId: string) => void;
@@ -18,17 +16,10 @@ interface GroupHeaderProps {
 export default function GroupHeader({
   group,
   isExpanded,
-  activity,
   onToggle,
   onRename,
   onDelete,
 }: GroupHeaderProps) {
-  const activityStatus = getAggregateActivityStatus({
-    hasCrash: activity?.hasCrash,
-    hasAttention: activity?.hasAttention,
-    hasActive: activity?.hasActive,
-    hasRunning: activity?.hasActivity,
-  });
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const [renaming, setRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState(group.name);
@@ -121,9 +112,6 @@ export default function GroupHeader({
           <span className="group-header__name truncate">{group.name}</span>
         )}
         <span className="flex-1" />
-        {!isExpanded && activityStatus && (
-          <ActivityIndicator status={activityStatus} />
-        )}
       </div>
       {menu &&
         createPortal(

@@ -5,6 +5,7 @@ import { getProjectSettings, saveProjectSettings } from "../lib/tauri";
 const DEFAULT_SETTINGS: ProjectSettings = {
   autoImportWorktrees: true,
   showAgentSessionsInSidebar: true,
+  agentLabelMode: "repository",
   showTodos: true,
   todoFileStyle: "kanban",
 };

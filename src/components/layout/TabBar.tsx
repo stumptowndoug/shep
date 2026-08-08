@@ -1,5 +1,4 @@
-import { useCallback, useRef, useState, useEffect } from "react";
-import { createPortal } from "react-dom";
+import { useCallback, useRef, useState } from "react";
 import { useTerminalStore } from "../../stores/useTerminalStore";
 import { useUIStore } from "../../stores/useUIStore";
 import { useShallow } from "zustand/shallow";
@@ -7,80 +6,11 @@ import { GitBranch } from "lucide-react";
 import { assistantLogoSrc, getAssistantLogoClass } from "../../lib/assistantLogos";
 import { handleActionKey } from "../../lib/a11y";
 import { useGitStore } from "../../stores/useGitStore";
-import tabKindMeta, { extraActions } from "../../lib/tabKindMeta";
+import tabKindMeta from "../../lib/tabKindMeta";
 import type { UnifiedTab } from "../../lib/types";
-
-
-function NewSessionButton({ onNewAssistant, onNewShell, onNewCommands, onNewGit, onOpenInEditor }: { onNewAssistant: () => void; onNewShell: () => void; onNewCommands: () => void; onNewGit: () => void; onOpenInEditor: () => void }) {
-  const [open, setOpen] = useState(false);
-  const btnRef = useRef<HTMLButtonElement>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
-  const [pos, setPos] = useState({ top: 0, left: 0 });
-
-  useEffect(() => {
-    if (!open) return;
-    const handle = (e: MouseEvent) => {
-      if (
-        menuRef.current && !menuRef.current.contains(e.target as Node) &&
-        btnRef.current && !btnRef.current.contains(e.target as Node)
-      ) {
-        setOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", handle);
-    return () => document.removeEventListener("mousedown", handle);
-  }, [open]);
-
-  const menuItems = [
-    { key: "assistant", meta: tabKindMeta.assistant, action: onNewAssistant },
-    { key: "terminal", meta: tabKindMeta.terminal, action: onNewShell },
-    { key: "commands", meta: tabKindMeta.commands, action: onNewCommands },
-    { key: "git", meta: tabKindMeta.git, action: onNewGit },
-    { key: "editor", meta: extraActions.openInEditor, action: onOpenInEditor },
-  ];
-
-  const handleToggle = () => {
-    if (!open && btnRef.current) {
-      const rect = btnRef.current.getBoundingClientRect();
-      setPos({ top: rect.bottom + 4, left: rect.left });
-    }
-    setOpen(!open);
-  };
-
-  return (
-    <>
-      <button
-        ref={btnRef}
-        className="tab tab-auto !px-3 font-semibold"
-        onClick={handleToggle}
-        title="New session"
-        aria-label="Open new session"
-      >
-        +
-      </button>
-      {open && createPortal(
-        <div
-          ref={menuRef}
-          className="context-menu"
-          style={{ top: pos.top, left: pos.left }}
-        >
-          {menuItems.map(({ key, meta, action }) => (
-            <button
-              key={key}
-              className="context-menu__item"
-              onClick={() => { action(); setOpen(false); }}
-            >
-              <span className="context-menu__icon">{meta.icon(14)}</span>
-              <span>{meta.label}</span>
-              {meta.shortcut && <span className="context-menu__shortcut">{meta.shortcut}</span>}
-            </button>
-          ))}
-        </div>,
-        document.body,
-      )}
-    </>
-  );
-}
+import { useProjectSettingsStore } from "../../stores/useProjectSettingsStore";
+import { agentDisplayLabel } from "../../lib/agentLabels";
+import ProjectActionMenu, { type ProjectActionKind } from "../shared/ProjectActionMenu";
 
 /** Render the icon for a tab based on its kind */
 function TabIcon({ tab }: { tab: UnifiedTab }) {
@@ -96,26 +26,19 @@ function TabIcon({ tab }: { tab: UnifiedTab }) {
 
 interface TabBarProps {
   onClose: (tabId: string) => void;
-  onNewShell: () => void;
-  onNewAssistant: () => void;
-  onNewCommands: () => void;
-  onNewGit: () => void;
-  onOpenInEditor: () => void;
+  onProjectAction: (action: ProjectActionKind) => void;
 }
 
 export default function TabBar({
   onClose,
-  onNewShell,
-  onNewAssistant,
-  onNewCommands,
-  onNewGit,
-  onOpenInEditor,
+  onProjectAction,
 }: TabBarProps) {
   const { activeProjectPath, projectState } = useTerminalStore(
     useShallow((s) => ({ activeProjectPath: s.activeProjectPath, projectState: s.activeProjectPath ? s.projectState[s.activeProjectPath] : null })),
   );
   const projectTerminals = projectState;
   const projectName = activeProjectPath ? activeProjectPath.split("/").pop() : null;
+  const agentLabelMode = useProjectSettingsStore((s) => s.settings.agentLabelMode);
   const gitStatus = useGitStore((s) => activeProjectPath ? s.projectGitStatus[activeProjectPath] : null);
   const branch = gitStatus?.branch ?? null;
   const branchIconColor = !gitStatus || !gitStatus.is_git_repo
@@ -186,14 +109,15 @@ export default function TabBar({
     window.addEventListener("pointercancel", onCancel);
   }, [computeDropIndex, reorderTab]);
 
-  // Only subscribe to global overlay state (Settings, Usage, Ports)
-  const { settingsActive, usagePanelActive, portsPanelActive } = useUIStore(useShallow((s) => ({
+  // Only subscribe to global overlay state.
+  const { settingsActive, usagePanelActive, portsPanelActive, historyPanelActive } = useUIStore(useShallow((s) => ({
     settingsActive: s.settingsActive,
     usagePanelActive: s.usagePanelActive,
     portsPanelActive: s.portsPanelActive,
+    historyPanelActive: s.historyPanelActive,
   })));
 
-  const anyOverlay = settingsActive || usagePanelActive || portsPanelActive;
+  const anyOverlay = settingsActive || usagePanelActive || portsPanelActive || historyPanelActive;
 
   const handleSelectTab = (tabId: string) => {
     useUIStore.getState().deactivateAllOverlays();
@@ -217,6 +141,9 @@ export default function TabBar({
         {tabs.map((tab, i) => {
           const isActive = tab.id === activeTabId && !anyOverlay;
           const isDragging = tab.id === dragTabId;
+          const displayLabel = tab.kind === "assistant"
+            ? agentDisplayLabel(tab, agentLabelMode, projectName ?? undefined)
+            : { text: tab.label, isTitle: false };
 
           const showDropBefore = dropIndex !== null && dragTabId && tab.id !== dragTabId && dropIndex === i;
           const showDropAfter = dropIndex !== null && dragTabId && tab.id !== dragTabId && dropIndex === i + 1 && i === tabs.length - 1;
@@ -234,13 +161,13 @@ export default function TabBar({
               role="tab"
               tabIndex={0}
               aria-selected={isActive}
-              aria-label={`Open tab ${tab.label}`}
+              aria-label={`Open tab ${displayLabel.text}`}
             >
               <TabIcon tab={tab} />
               {editingTabId === tab.id ? (
                 <input
                   className="tab-rename-input"
-                  defaultValue={tab.label}
+                  defaultValue={displayLabel.text}
                   autoFocus
                   autoCapitalize="off"
                   autoCorrect="off"
@@ -248,13 +175,13 @@ export default function TabBar({
                   onFocus={(e) => e.target.select()}
                   onBlur={(e) => {
                     const val = e.target.value.trim();
-                    if (val && val !== tab.label) updateTab(tab.id, { label: val });
+                    if (val && val !== displayLabel.text) updateTab(tab.id, { label: val });
                     setEditingTabId(null);
                   }}
                   onKeyDown={(e) => {
                     if (e.key === "Enter") e.currentTarget.blur();
                     if (e.key === "Escape") {
-                      e.currentTarget.value = tab.label;
+                      e.currentTarget.value = displayLabel.text;
                       e.currentTarget.blur();
                     }
                   }}
@@ -264,19 +191,19 @@ export default function TabBar({
               ) : (
                 <>
                   <span
-                    className="truncate max-w-32"
+                    className={`truncate max-w-32${displayLabel.isTitle ? " session-title-output" : ""}`}
                     onDoubleClick={isRenameable(tab) ? (e) => {
                       e.stopPropagation();
                       setEditingTabId(tab.id);
                     } : undefined}
                   >
-                    {tab.label}
+                    {displayLabel.text}
                   </span>
                 </>
               )}
               <button
                 className="tab-close"
-                aria-label={`Close tab ${tab.label}`}
+                aria-label={`Close tab ${displayLabel.text}`}
                 onClick={(e) => {
                   e.stopPropagation();
                   onClose(tab.id);
@@ -288,7 +215,7 @@ export default function TabBar({
           );
         })}
 
-        <NewSessionButton onNewAssistant={onNewAssistant} onNewShell={onNewShell} onNewCommands={onNewCommands} onNewGit={onNewGit} onOpenInEditor={onOpenInEditor} />
+        <ProjectActionMenu variant="tab" onAction={onProjectAction} />
       </div>
       {projectName && (
         <span className="tab-bar__breadcrumb">

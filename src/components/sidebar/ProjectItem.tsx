@@ -22,7 +22,6 @@ import { useSkillStore } from "../../stores/useSkillStore";
 import { getErrorMessage } from "../../lib/errors";
 import { handleActionKey } from "../../lib/a11y";
 import { gitCreateWorktree, revealInFinder } from "../../lib/tauri";
-import ActivityIndicator, { getAggregateActivityStatus } from "./ActivityIndicator";
 
 const EMPTY_SKILLS: never[] = [];
 
@@ -30,7 +29,6 @@ interface ProjectItemProps {
   repo: RepoInfo;
   isActive: boolean;
   isExpanded: boolean;
-  activity?: { terminalCount: number; runningCount: number; hasAttention: boolean; hasCrash: boolean; hasActive: boolean };
   worktreeParent?: string | null;
   groups: RepoGroup[];
   onClick: () => void;
@@ -45,7 +43,6 @@ export default function ProjectItem({
   repo,
   isActive,
   isExpanded,
-  activity,
   worktreeParent,
   groups,
   onClick,
@@ -55,12 +52,6 @@ export default function ProjectItem({
   onMoveToGroup,
   onNewGroupForRepo,
 }: ProjectItemProps) {
-  const activityStatus = getAggregateActivityStatus({
-    hasCrash: activity?.hasCrash,
-    hasAttention: activity?.hasAttention,
-    hasActive: activity?.hasActive,
-    hasRunning: Boolean(activity && (activity.terminalCount > 0 || activity.runningCount > 0)),
-  });
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const skills = useSkillStore((s) => s.skillsByRepo[repo.path] ?? EMPTY_SKILLS);
   const preferredEditor = useEditorStore((s) => s.settings.preferredEditor);
@@ -279,9 +270,6 @@ export default function ProjectItem({
           {worktreeParent ? `${worktreeParent} > ${repo.name}` : repo.name}
         </span>
         <span className="flex-1" />
-        {!isExpanded && activityStatus && (
-          <ActivityIndicator status={activityStatus} />
-        )}
       </div>
       {menu && createPortal(
         <ContextMenu

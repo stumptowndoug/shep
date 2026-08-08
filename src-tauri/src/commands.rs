@@ -8,11 +8,14 @@ use tauri::ipc::Channel;
 use tauri::{Emitter, State};
 use url::Url;
 
+use crate::agent_status::{self, AgentRuntimeStatus};
 use crate::fonts::{self, FontFaceData, FontFamily};
 use crate::git;
 use crate::git::{ChangedFile, CreatedWorktree, DiffFileStat, GitStatus, WorktreeEntry};
 use crate::pty::manager::PtyManager;
 use crate::pty::session::{PtyColorTheme, PtyOutput};
+use crate::session_history::{self, SessionHistoryEntry, SessionHistoryUpsert};
+use crate::session_titles::{self, SessionTitleMatch};
 use crate::skills;
 use crate::todos::{self, TodoFile};
 use crate::usage::{
@@ -303,6 +306,78 @@ pub fn resize_pty(
 #[tauri::command]
 pub fn kill_pty(pty_id: u32, pty_manager: State<'_, PtyManager>) -> Result<(), String> {
     pty_manager.kill(pty_id)
+}
+
+#[tauri::command]
+pub async fn resolve_session_title(
+    pty_id: u32,
+    assistant_id: String,
+    repo_path: String,
+    started_after_ms: i64,
+    session_id: Option<String>,
+    pty_manager: State<'_, PtyManager>,
+) -> Result<Option<SessionTitleMatch>, String> {
+    let process_id = pty_manager.child_pid(pty_id);
+    tauri::async_runtime::spawn_blocking(move || {
+        session_titles::resolve_session_title(
+            &assistant_id,
+            &repo_path,
+            started_after_ms,
+            session_id.as_deref(),
+            process_id,
+        )
+    })
+    .await
+    .map_err(|error| format!("Session title resolver failed: {error}"))
+}
+
+#[tauri::command]
+pub async fn get_agent_runtime_status(
+    pty_id: u32,
+    assistant_id: String,
+    repo_path: String,
+    session_id: Option<String>,
+    pty_manager: State<'_, PtyManager>,
+) -> Result<Option<AgentRuntimeStatus>, String> {
+    let process_id = pty_manager.child_pid(pty_id);
+    tauri::async_runtime::spawn_blocking(move || {
+        agent_status::resolve(
+            &assistant_id,
+            &repo_path,
+            session_id.as_deref(),
+            process_id,
+        )
+    })
+    .await
+    .map_err(|error| format!("Agent status resolver failed: {error}"))
+}
+
+#[tauri::command]
+pub fn upsert_session_history(
+    record: SessionHistoryUpsert,
+    db: State<'_, UsageDb>,
+) -> Result<(), String> {
+    session_history::upsert(db.inner(), record)
+}
+
+#[tauri::command]
+pub fn record_session_history_activity(
+    provider: String,
+    session_id: String,
+    timestamp: i64,
+    ended: bool,
+    db: State<'_, UsageDb>,
+) -> Result<(), String> {
+    session_history::record_activity(db.inner(), &provider, &session_id, timestamp, ended)
+}
+
+#[tauri::command]
+pub fn list_session_history(
+    project_path: Option<String>,
+    limit: Option<u32>,
+    db: State<'_, UsageDb>,
+) -> Result<Vec<SessionHistoryEntry>, String> {
+    session_history::list(db.inner(), project_path.as_deref(), limit)
 }
 
 // ── App lifecycle commands ────────────────────────────────────────

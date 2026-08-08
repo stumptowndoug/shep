@@ -100,6 +100,14 @@ impl PtyManager {
         self.sessions.lock().unwrap().values().filter_map(|s| s.pid()).collect()
     }
 
+    pub fn child_pid(&self, pty_id: u32) -> Option<u32> {
+        self.sessions
+            .lock()
+            .unwrap()
+            .get(&pty_id)
+            .and_then(|session| session.pid())
+    }
+
     pub fn kill_all(&self) {
         let mut sessions = self.sessions.lock().unwrap();
         for (_, mut session) in sessions.drain() {
