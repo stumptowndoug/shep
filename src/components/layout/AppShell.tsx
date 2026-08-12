@@ -830,6 +830,7 @@ export default function AppShell() {
                 <TerminalErrorBoundary>
                   <TerminalView
                     ptyId={tab.ptyId}
+                    assistantId={tab.assistantId}
                     visible={!showOverlay && tab.repoPath === activeProjectPath && tab.id === activeTabId}
                   />
                 </TerminalErrorBoundary>

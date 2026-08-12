@@ -10,7 +10,6 @@ import {
   recordSessionHistoryActivity,
 } from "../lib/tauri";
 import { useThemeStore } from "../stores/useThemeStore";
-import { hexLuminance } from "../lib/themes";
 import type { AgentSemanticState, AgentStatusObservation, PtyOutput, CommandConfig, SessionHistoryEntry, SessionMode } from "../lib/types";
 import {
   detectAgentScreenStatus,
@@ -20,6 +19,7 @@ import {
   type ProviderAgentObservation,
 } from "../lib/agentScreenStatus";
 import { toPtyColorTheme } from "../lib/ptyColorTheme";
+import { terminalColorEnvironment } from "../lib/terminalColorMode";
 import { useCommandStore } from "../stores/useCommandStore";
 import { useTerminalStore, nextTabId } from "../stores/useTerminalStore";
 import { useRepoStore } from "../stores/useRepoStore";
@@ -711,12 +711,10 @@ export function usePty() {
       let resolvedPtyId: number | null = null;
       const bufferedMessages: PtyOutput[] = [];
 
-      // Signal terminal background brightness to CLI tools via COLORFGBG.
-      // Claude Code uses this to resolve "auto" theme when OSC 11 is unavailable.
+      // Give CLIs an immediate background hint while their terminal-query
+      // subscriptions are starting. Caller-provided values remain authoritative.
       const theme = useThemeStore.getState().theme;
-      const lum = hexLuminance(theme.appBg);
-      const colorfgbg = lum > 0.3 ? "0;15" : "15;0";
-      const fullEnv = { COLORFGBG: colorfgbg, ...env };
+      const fullEnv = { ...terminalColorEnvironment(theme), ...env };
 
       const ptyId = await spawnPty(
         command,

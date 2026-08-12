@@ -5,6 +5,7 @@ import type { TerminalRendererState } from "./terminalRenderer";
 export interface TerminalCacheEntry extends TerminalRendererState {
   term: Terminal;
   fitAddon: FitAddon;
+  assistantId: string | null;
 }
 
 // Keep terminal instances alive across tab switches.

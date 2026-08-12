@@ -1,5 +1,4 @@
 import type { ITheme } from "@xterm/xterm";
-import { hexLuminance } from "../../lib/themes";
 import type { ShepTheme } from "../../lib/themes";
 import type { TerminalSettings } from "../../lib/types";
 import { resizePty } from "../../lib/tauri";
@@ -7,6 +6,10 @@ import { buildCSSFontFamily } from "../../lib/terminalConfig";
 import { preserveTerminalViewport } from "../../lib/terminalViewport";
 import { terminalCache } from "./terminalCache";
 import { reconcileTerminalRenderer } from "./terminalRenderer";
+import {
+  isLightTerminalTheme,
+  terminalMinimumContrastRatio,
+} from "../../lib/terminalColorMode";
 
 // Utility to make hex colors partially transparent
 function withAlpha(hex: string, alpha: number): string {
@@ -20,7 +23,7 @@ function withAlpha(hex: string, alpha: number): string {
 }
 
 function isLightTheme(theme: ShepTheme): boolean {
-  return hexLuminance(theme.appBg) > 0.3;
+  return isLightTerminalTheme(theme);
 }
 
 // Preserve the perceived color of Shep's former translucent dark ANSI entries
@@ -92,6 +95,10 @@ export function applyThemeToTerminals(theme: ShepTheme): void {
         reconcileTerminalRenderer(entry.term, entry, theme);
       }
       entry.term.options.theme = xtermTheme;
+      entry.term.options.minimumContrastRatio = terminalMinimumContrastRatio(
+        theme,
+        entry.assistantId,
+      );
       if (!theme.isTransparent) {
         reconcileTerminalRenderer(entry.term, entry, theme);
       }
