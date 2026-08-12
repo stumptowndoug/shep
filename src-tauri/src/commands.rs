@@ -609,19 +609,21 @@ pub fn check_command_exists(command: &str) -> bool {
 pub async fn get_all_usage_snapshots(
     db: State<'_, UsageDb>,
     workspace: State<'_, WorkspaceManager>,
+    app: tauri::AppHandle,
 ) -> Result<Vec<ProviderUsageSnapshot>, String> {
     let enabled = enabled_providers(&workspace);
-    Ok(crate::usage::get_all_usage_snapshots(&db, &enabled))
+    Ok(crate::usage::get_all_usage_snapshots(&db, &enabled, Some(app)))
 }
 
 #[tauri::command]
 pub async fn get_usage_snapshot(
     db: State<'_, UsageDb>,
     workspace: State<'_, WorkspaceManager>,
+    app: tauri::AppHandle,
     provider: String,
 ) -> Result<ProviderUsageSnapshot, String> {
     let enabled = enabled_providers(&workspace);
-    crate::usage::get_usage_snapshot(&db, &provider, &enabled)
+    crate::usage::get_usage_snapshot(&db, &provider, &enabled, Some(app))
 }
 
 fn enabled_providers(workspace: &State<'_, WorkspaceManager>) -> crate::usage::EnabledProviders {
@@ -630,7 +632,7 @@ fn enabled_providers(workspace: &State<'_, WorkspaceManager>) -> crate::usage::E
         claude: settings.claude.show,
         codex: settings.codex.show,
         cursor: settings.cursor.show,
-        gemini: settings.gemini.show,
+        gemini: false,
         antigravity: settings.antigravity.show,
         grok: settings.grok.show,
     }

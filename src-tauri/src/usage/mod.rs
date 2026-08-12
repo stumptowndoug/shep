@@ -10,6 +10,7 @@ pub use types::{LocalUsageDetails, ProviderUsageSnapshot, UsageOverview, UsagePr
 
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
+use tauri::Emitter;
 use types::UsageWindowSnapshot;
 use helpers::now_epoch_seconds;
 
@@ -123,8 +124,12 @@ pub struct EnabledProviders {
 /// Does NOT trigger ingestion — that runs in the background.
 /// Provider API refresh happens in a background thread so this never blocks
 /// on network I/O.
-pub fn get_all_usage_snapshots(db: &UsageDb, enabled: &EnabledProviders) -> Vec<ProviderUsageSnapshot> {
-    spawn_provider_refresh(enabled);
+pub fn get_all_usage_snapshots(
+    db: &UsageDb,
+    enabled: &EnabledProviders,
+    app: Option<tauri::AppHandle>,
+) -> Vec<ProviderUsageSnapshot> {
+    spawn_provider_refresh(enabled, app);
 
     let conn = db.conn.lock().unwrap();
     vec![
@@ -140,8 +145,13 @@ pub fn get_all_usage_snapshots(db: &UsageDb, enabled: &EnabledProviders) -> Vec<
 }
 
 /// Fetch snapshot for a single provider.
-pub fn get_usage_snapshot(db: &UsageDb, provider: &str, enabled: &EnabledProviders) -> Result<ProviderUsageSnapshot, String> {
-    spawn_provider_refresh(enabled);
+pub fn get_usage_snapshot(
+    db: &UsageDb,
+    provider: &str,
+    enabled: &EnabledProviders,
+    app: Option<tauri::AppHandle>,
+) -> Result<ProviderUsageSnapshot, String> {
+    spawn_provider_refresh(enabled, app);
 
     let conn = db.conn.lock().unwrap();
     match provider {
@@ -202,9 +212,16 @@ static PROVIDER_REFRESH_RUNNING: AtomicBool = AtomicBool::new(false);
 
 /// Spawn a background thread to refresh provider API data if cooldown has
 /// elapsed. Returns immediately — never blocks the calling thread on network I/O.
-fn spawn_provider_refresh(enabled: &EnabledProviders) {
+fn spawn_provider_refresh(enabled: &EnabledProviders, app: Option<tauri::AppHandle>) {
     let now = now_epoch_seconds();
-    let (refresh_claude, refresh_codex, refresh_cursor, refresh_gemini, refresh_antigravity, refresh_grok) = {
+    let (
+        refresh_claude,
+        refresh_codex,
+        refresh_cursor,
+        refresh_gemini,
+        refresh_antigravity,
+        refresh_grok,
+    ) = {
         let cache = PROVIDER_CACHE.lock().unwrap();
         (
             enabled.claude && cache.claude.is_stale(now),
@@ -216,7 +233,13 @@ fn spawn_provider_refresh(enabled: &EnabledProviders) {
         )
     };
 
-    if !refresh_claude && !refresh_codex && !refresh_cursor && !refresh_gemini && !refresh_antigravity && !refresh_grok {
+    if !refresh_claude
+        && !refresh_codex
+        && !refresh_cursor
+        && !refresh_gemini
+        && !refresh_antigravity
+        && !refresh_grok
+    {
         return;
     }
 
@@ -232,13 +255,35 @@ fn spawn_provider_refresh(enabled: &EnabledProviders) {
     let do_antigravity = refresh_antigravity;
     let do_grok = refresh_grok;
     std::thread::spawn(move || {
-        refresh_provider_cache_sync(do_claude, do_codex, do_cursor, do_gemini, do_antigravity, do_grok);
+        refresh_provider_cache_sync(
+            do_claude,
+            do_codex,
+            do_cursor,
+            do_gemini,
+            do_antigravity,
+            do_grok,
+            app,
+        );
         PROVIDER_REFRESH_RUNNING.store(false, Ordering::SeqCst);
     });
 }
 
+fn emit_provider_refresh(app: &Option<tauri::AppHandle>) {
+    if let Some(app) = app {
+        let _ = app.emit("usage-provider-refresh-complete", ());
+    }
+}
+
 /// Actual (blocking) provider refresh — only called from background thread.
-fn refresh_provider_cache_sync(do_claude: bool, do_codex: bool, do_cursor: bool, do_gemini: bool, do_antigravity: bool, do_grok: bool) {
+fn refresh_provider_cache_sync(
+    do_claude: bool,
+    do_codex: bool,
+    do_cursor: bool,
+    do_gemini: bool,
+    do_antigravity: bool,
+    do_grok: bool,
+    app: Option<tauri::AppHandle>,
+) {
     let now = now_epoch_seconds();
 
     if do_claude {
@@ -257,6 +302,7 @@ fn refresh_provider_cache_sync(do_claude: bool, do_codex: bool, do_cursor: bool,
                 }
             }
         }
+        emit_provider_refresh(&app);
     }
 
     if do_codex {
@@ -275,6 +321,7 @@ fn refresh_provider_cache_sync(do_claude: bool, do_codex: bool, do_cursor: bool,
                 }
             }
         }
+        emit_provider_refresh(&app);
     }
 
     if do_cursor {
@@ -293,6 +340,7 @@ fn refresh_provider_cache_sync(do_claude: bool, do_codex: bool, do_cursor: bool,
                 }
             }
         }
+        emit_provider_refresh(&app);
     }
 
     if do_gemini {
@@ -311,6 +359,7 @@ fn refresh_provider_cache_sync(do_claude: bool, do_codex: bool, do_cursor: bool,
                 }
             }
         }
+        emit_provider_refresh(&app);
     }
 
     if do_grok {
@@ -329,6 +378,7 @@ fn refresh_provider_cache_sync(do_claude: bool, do_codex: bool, do_cursor: bool,
                 }
             }
         }
+        emit_provider_refresh(&app);
     }
 
     if do_antigravity {
@@ -347,6 +397,7 @@ fn refresh_provider_cache_sync(do_claude: bool, do_codex: bool, do_cursor: bool,
                 }
             }
         }
+        emit_provider_refresh(&app);
     }
 }
 

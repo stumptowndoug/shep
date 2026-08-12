@@ -93,6 +93,7 @@ export default function SettingsPanel() {
   const usageError = useUsageSettingsStore((s) => s.error);
   const loadUsageSettings = useUsageSettingsStore((s) => s.loadSettings);
   const updateProvider = useUsageSettingsStore((s) => s.updateProvider);
+  const setShowClaudeFiveHourLimit = useUsageSettingsStore((s) => s.setShowClaudeFiveHourLimit);
   const [budgetInputs, setBudgetInputs] = useState<Record<string, string>>({});
 
   const updateStatus = useUpdateStore((s) => s.status);
@@ -682,6 +683,16 @@ export default function SettingsPanel() {
               </div>
             );
           })}
+
+          <div className="usage-provider-row">
+            <span className="usage-provider-row__name">Claude 5h</span>
+            <button
+              onClick={() => void setShowClaudeFiveHourLimit(!usageSettings.showClaudeFiveHourLimit)}
+              className={`option-card option-card--compact ${usageSettings.showClaudeFiveHourLimit ? "selected" : ""}`}
+            >
+              {usageSettings.showClaudeFiveHourLimit ? "On" : "Off"}
+            </button>
+          </div>
         </div>
 
         {usageIsSaving && <div className="mt-2 text-xs text-[var(--text-muted)]">Saving...</div>}

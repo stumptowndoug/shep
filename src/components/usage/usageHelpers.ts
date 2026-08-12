@@ -1,7 +1,7 @@
-import type { ProviderUsageSnapshot, UsageProvider, UsageWindowSnapshot } from "../../lib/types";
+import type { ConfigurableUsageProvider, ProviderUsageSnapshot, UsageProvider, UsageWindowSnapshot } from "../../lib/types";
 
 const WINDOW_PRIORITY = ["5h", "7d", "billing", "30d"];
-export const ALL_USAGE_PROVIDERS: UsageProvider[] = ["claude", "codex", "cursor", "antigravity", "gemini", "opencode", "pi", "grok"];
+export const ALL_USAGE_PROVIDERS: ConfigurableUsageProvider[] = ["claude", "codex", "cursor", "antigravity", "opencode", "pi", "grok"];
 export const TONE_COLORS: Record<string, string> = {
   low: "color-mix(in srgb, var(--status-added) var(--color-opacity-utilization), transparent)",
   medium: "color-mix(in srgb, var(--status-attention) var(--color-opacity-utilization), transparent)",
@@ -48,9 +48,17 @@ export function getProviderLabel(provider: UsageProvider): string {
   }
 }
 
+export function shouldShowUsageWindow(
+  provider: UsageProvider,
+  window: string,
+  showClaudeFiveHourLimit: boolean,
+): boolean {
+  return provider !== "claude" || window !== "5h" || showClaudeFiveHourLimit;
+}
+
 export function formatPercent(value: number | null): string {
   if (value == null) return "n/a";
-  return `${Math.round(value)}%`;
+  return `${value > 0 && value < 1 ? 1 : Math.round(value)}%`;
 }
 
 export function formatTokenCount(value: number | null): string {
@@ -103,6 +111,7 @@ export function usageTone(window: UsageWindowSnapshot | null): "low" | "medium" 
 const WINDOW_DURATIONS_MS: Record<string, number> = {
   "5h": 5 * 60 * 60 * 1000,
   "7d": 7 * 24 * 60 * 60 * 1000,
+  "24h": 24 * 60 * 60 * 1000,
 };
 
 export type PaceStatus = "under" | "on" | "over";
@@ -111,25 +120,49 @@ export type PaceStatus = "under" | "on" | "over";
  * Compare usage % against elapsed % of the window to determine pace.
  * Returns null if we can't compute (no reset time, no percent, or unknown window).
  */
-export function computePace(w: UsageWindowSnapshot | null): { status: PaceStatus; elapsedPct: number } | null {
+export function computePace(
+  w: UsageWindowSnapshot | null,
+  now = Date.now(),
+): { status: PaceStatus; elapsedPct: number } | null {
   if (!w || w.usedPercent == null || !w.resetAt) return null;
-  const durationMs = WINDOW_DURATIONS_MS[w.window];
-  if (!durationMs) return null;
 
   const millis = Number(w.resetAt);
   const resetTime = Number.isFinite(millis) ? millis * 1000 : new Date(w.resetAt).getTime();
   if (Number.isNaN(resetTime)) return null;
 
-  const now = Date.now();
-  const windowStart = resetTime - durationMs;
+  const normalizedWindow = w.window.startsWith("24h_") ? "24h" : w.window;
+  const durationMs = WINDOW_DURATIONS_MS[normalizedWindow];
+  const windowStart = durationMs
+    ? resetTime - durationMs
+    : normalizedWindow === "billing" || normalizedWindow === "month"
+      ? previousCalendarMonth(resetTime)
+      : null;
+  if (windowStart == null) return null;
+  const actualDurationMs = resetTime - windowStart;
+  if (actualDurationMs <= 0) return null;
   const elapsed = now - windowStart;
-  const elapsedPct = Math.min(Math.max((elapsed / durationMs) * 100, 0), 100);
+  const elapsedPct = Math.min(Math.max((elapsed / actualDurationMs) * 100, 0), 100);
 
   const used = w.usedPercent;
   // Give a 10% buffer around the elapsed line for "on pace"
   if (used <= elapsedPct * 0.8) return { status: "under", elapsedPct };
   if (used >= elapsedPct * 1.2) return { status: "over", elapsedPct };
   return { status: "on", elapsedPct };
+}
+
+function previousCalendarMonth(resetTime: number): number {
+  const reset = new Date(resetTime);
+  const resetDay = reset.getUTCDate();
+  const start = new Date(resetTime);
+  start.setUTCDate(1);
+  start.setUTCMonth(start.getUTCMonth() - 1);
+  const daysInStartMonth = new Date(Date.UTC(
+    start.getUTCFullYear(),
+    start.getUTCMonth() + 1,
+    0,
+  )).getUTCDate();
+  start.setUTCDate(Math.min(resetDay, daysInStartMonth));
+  return start.getTime();
 }
 
 export function paceLabel(status: PaceStatus): string {
@@ -155,27 +188,8 @@ function currentMonthRange(now: Date) {
   return { start, end };
 }
 
-function currentFiveHourBlock(now: Date) {
-  const start = new Date(now);
-  const hour = start.getHours();
-  start.setHours(hour - (hour % 5), 0, 0, 0);
-  const end = new Date(start);
-  end.setHours(start.getHours() + 5);
-  return { start, end };
-}
-
-function currentSevenDayBlock(now: Date) {
-  const start = new Date(now);
-  start.setHours(0, 0, 0, 0);
-  start.setDate(start.getDate() - start.getDay());
-  const end = new Date(start);
-  end.setDate(start.getDate() + 7);
-  return { start, end };
-}
-
-export function syntheticBudgetWindow(
+export function syntheticMonthlyBudgetWindow(
   provider: UsageProvider,
-  window: "5h" | "7d",
   cost: number | null,
   monthlyBudget: number | null,
 ): UsageWindowSnapshot | null {
@@ -185,31 +199,22 @@ export function syntheticBudgetWindow(
 
   const now = new Date();
   const month = currentMonthRange(now);
-  const budgetRange = window === "5h" ? currentFiveHourBlock(now) : currentSevenDayBlock(now);
-  const monthDurationMs = month.end.getTime() - month.start.getTime();
-  const rangeDurationMs = window === "5h"
-    ? 5 * 60 * 60 * 1000
-    : 7 * 24 * 60 * 60 * 1000;
-
-  if (monthDurationMs <= 0 || rangeDurationMs <= 0) return null;
-
-  const windowBudget = monthlyBudget * (rangeDurationMs / monthDurationMs);
-  if (windowBudget <= 0) return null;
+  const usedPercent = (cost / monthlyBudget) * 100;
 
   return {
     provider,
-    windowId: `${provider}-budget-${window}`,
-    window,
-    label: window,
+    windowId: `${provider}-budget-month`,
+    window: "month",
+    label: "Monthly budget",
     scope: "reporting",
-    limit: windowBudget,
+    limit: monthlyBudget,
     used: cost,
     sourceType: "local",
     confidence: "estimated",
     costKind: "estimated",
-    usedPercent: (cost / windowBudget) * 100,
-    remainingPercent: Math.max(100 - (cost / windowBudget) * 100, 0),
-    resetAt: new Date(budgetRange.end).toISOString(),
+    usedPercent,
+    remainingPercent: Math.max(100 - usedPercent, 0),
+    resetAt: month.end.toISOString(),
     tokenTotal: null,
     paceStatus: null,
   };

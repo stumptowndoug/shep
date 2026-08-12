@@ -171,7 +171,7 @@ fn cursor_parse_period_usage(body: &str) -> Result<(Vec<UsageWindowSnapshot>, Ve
     let reset_at = cursor_number(json.get("billingCycleEnd").or_else(|| json.get("billing_cycle_end")))
         .map(|millis| (millis / 1000.0).round().to_string());
 
-    let summary = vec![cursor_usage_window("billing", "Monthly plan", total, reset_at.clone())];
+    let summary = vec![cursor_usage_window("billing", "30d", total, reset_at.clone())];
     let mut extra = Vec::new();
     if let Some(used) = cursor_percent(plan, "autoPercentUsed", "autoSpend", "autoLimit") {
         extra.push(cursor_usage_window("billing-auto", "Auto usage", used, reset_at.clone()));
@@ -196,6 +196,7 @@ mod cursor_tests {
         }"#).expect("usage windows");
         assert_eq!(summary[0].provider, "cursor");
         assert_eq!(summary[0].window, "billing");
+        assert_eq!(summary[0].label, "30d");
         assert_eq!(summary[0].used_percent, Some(42.5));
         assert_eq!(summary[0].reset_at.as_deref(), Some("1788220800"));
         assert_eq!(extra.len(), 2);

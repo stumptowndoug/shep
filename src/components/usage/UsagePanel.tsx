@@ -26,12 +26,13 @@ import {
   getProviderLabel,
   computePace,
   paceLabel,
+  shouldShowUsageWindow,
   type PaceStatus,
 } from "./usageHelpers";
 
 const TIME_WINDOWS: { key: TimeWindow; label: string }[] = [
+  { key: "24h", label: "24 hour" },
   { key: "7d", label: "7 day" },
-  { key: "5h", label: "5 hour" },
   { key: "30d", label: "30 day" },
   { key: "365d", label: "1 year" },
 ];
@@ -125,7 +126,7 @@ function Stat({
 function buildLocalDates(window: TimeWindow, count: number): Date[] {
   const now = new Date();
 
-  if (window === "5h") {
+  if (window === "24h") {
     const base = new Date(now);
     base.setMinutes(0, 0, 0);
     return Array.from({ length: count }, (_, index) => {
@@ -182,7 +183,7 @@ function ActivityBarChart({
           const date = dates[index];
           const intensity = bucket.tokens === 0 ? 0 : Math.max(bucket.tokens / maxTokens, 0.12);
           const height = bucket.tokens === 0 ? 8 : Math.max((bucket.tokens / maxTokens) * 100, 10);
-          const dateLabel = window === "5h"
+          const dateLabel = window === "24h"
             ? date.toLocaleString([], { month: "short", day: "numeric", hour: "numeric" })
             : date.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
           return (
@@ -205,7 +206,7 @@ function ActivityBarChart({
                 />
               </div>
               <span className="usage-chart__label">
-                {window === "5h"
+                {window === "24h"
                   ? formatHourLabel(date)
                   : date.toLocaleDateString([], { weekday: "short", day: "numeric" })}
               </span>
@@ -480,11 +481,9 @@ const PACE_LABEL_COLORS: Record<string, string> = {
 function UtilizationSection({
   snapshots,
   settings,
-  window,
 }: {
   snapshots: Record<string, ProviderUsageSnapshot>;
   settings: UsageSettings;
-  window: TimeWindow;
 }) {
   const now = new Date();
   const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -496,7 +495,7 @@ function UtilizationSection({
     id: string;
     provider: UsageProvider;
     label: string;
-    pct: number;
+    pct: number | null;
     sublabel: string;
     pace: { status: PaceStatus; elapsedPct: number } | null;
     meta?: string;
@@ -506,10 +505,10 @@ function UtilizationSection({
   ALL_USAGE_PROVIDERS.forEach((p) => {
     const config = settings[p];
     const snap = snapshots[p];
-    if (!config.show || config.budgetMode !== "custom" || config.monthlyBudget == null || config.monthlyBudget <= 0 || !snap?.localDetails?.costMonth) return;
+    if (!config.show || config.budgetMode !== "custom" || config.monthlyBudget == null || config.monthlyBudget <= 0) return;
 
     const budget = config.monthlyBudget;
-    const currentMonthCost = snap.localDetails.costMonth;
+    const currentMonthCost = snap?.localDetails?.costMonth ?? 0;
     const usedPct = (currentMonthCost / budget) * 100;
     const delta = usedPct - elapsedMonthPct;
     const paceStatus: PaceStatus = delta <= -10 ? "under" : delta >= 10 ? "over" : "on";
@@ -524,36 +523,49 @@ function UtilizationSection({
     });
   });
 
-  // Add Subscription Windows
-  if (window === "5h" || window === "7d") {
-    ALL_USAGE_PROVIDERS.forEach((provider) => {
-      const snap = snapshots[provider];
-      if (!snap) return;
-      snap.summaryWindows
-        .filter((sw) => sw.usedPercent != null && sw.sourceType === "provider")
-        .filter((sw) => {
-          if (window === "5h") return provider === "claude" && sw.window === "5h";
-          return sw.window === window || sw.window.startsWith("24h_") || sw.window === "billing";
-        })
-        .forEach((w) => {
-          const pace = computePace(w);
-          items.push({
-            id: w.windowId,
-            provider,
-            label: w.window.startsWith("24h_") || w.window === "billing" ? w.label : `${w.label} limit`,
-            pct: w.usedPercent!,
-            sublabel: w.remainingPercent != null ? `${formatPercent(w.remainingPercent)} remaining` : "",
-            pace,
-            meta: w.resetAt ? `resets in ${formatReset(w.resetAt)}` : undefined,
-          });
-        });
+  // Subscription limits are provider-defined and independent of the local
+  // analytics window selected above.
+  ALL_USAGE_PROVIDERS.forEach((provider) => {
+    const config = settings[provider];
+    const snap = snapshots[provider];
+    if (!config.show || config.budgetMode !== "subscription") return;
+    const windows = (snap?.summaryWindows ?? [])
+      .filter((sw) =>
+        sw.usedPercent != null
+        && sw.sourceType === "provider"
+        && shouldShowUsageWindow(provider, sw.window, settings.showClaudeFiveHourLimit)
+      );
+
+    if (windows.length === 0) {
+      items.push({
+        id: `pending-${provider}`,
+        provider,
+        label: "",
+        pct: null,
+        sublabel: snap?.error ?? "Loading usage…",
+        pace: null,
+      });
+      return;
+    }
+
+    windows.forEach((w) => {
+      const pace = computePace(w);
+      items.push({
+        id: w.windowId,
+        provider,
+        label: w.label,
+        pct: w.usedPercent!,
+        sublabel: w.remainingPercent != null ? `${formatPercent(w.remainingPercent)} remaining` : "",
+        pace,
+        meta: w.resetAt ? `resets in ${formatReset(w.resetAt)}` : undefined,
+      });
     });
-  }
+  });
 
   if (items.length === 0) return null;
 
   // 2. Sort by utilization percentage descending
-  const sortedItems = [...items].sort((a, b) => b.pct - a.pct);
+  const sortedItems = [...items].sort((a, b) => (b.pct ?? -1) - (a.pct ?? -1));
 
   return (
     <div className="usage-limits">
@@ -569,7 +581,7 @@ function UtilizationSection({
             <div className="usage-limit__header">
               <span className="usage-limit__provider">
                 {logoSrc && <img src={logoSrc} alt="" className={`usage-list__icon ${getAssistantLogoClass(item.provider) ?? ""}`} />}
-                {getProviderLabel(item.provider)} · {item.label}
+                {getProviderLabel(item.provider)}{item.label ? ` · ${item.label}` : ""}
               </span>
               <span className="usage-limit__pct">{formatPercent(item.pct)}</span>
             </div>
@@ -578,7 +590,7 @@ function UtilizationSection({
               <div
                 className="usage-limit__bar-fill"
                 style={{
-                  width: `${Math.min(item.pct, 100)}%`,
+                  width: `${Math.min(item.pct ?? 0, 100)}%`,
                   background: TONE_COLORS[tone],
                 }}
               />
@@ -676,7 +688,6 @@ function OverviewPanel({ overview, snapshots }: { overview: UsageOverview; snaps
         <UtilizationSection
           snapshots={snapshots}
           settings={usageSettings}
-          window={overview.window as TimeWindow}
         />
       </section>
 

@@ -1748,35 +1748,6 @@ select {
 }
 
 
-.sidebar-usage__window-toggle {
-  display: flex;
-  gap: 2px;
-  padding: 3px;
-  background: color-mix(in srgb, var(--overlay) 3%, transparent);
-  border-radius: 8px;
-}
-
-.sidebar-usage__window-btn {
-  padding: 3px 12px;
-  border: none;
-  background: transparent;
-  color: var(--text-muted);
-  font-size: 11px;
-  font-weight: 500;
-  cursor: pointer;
-  border-radius: 6px;
-  transition: all 140ms ease;
-}
-
-.sidebar-usage__window-btn:hover {
-  color: var(--text-secondary);
-}
-
-.sidebar-usage__window-btn--active {
-  color: var(--text-primary);
-  background: color-mix(in srgb, var(--overlay) 8%, transparent);
-}
-
 .sidebar-usage__providers {
   display: flex;
   flex-direction: column;
