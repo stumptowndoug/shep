@@ -631,6 +631,7 @@ fn enabled_providers(workspace: &State<'_, WorkspaceManager>) -> crate::usage::E
         codex: settings.codex.show,
         gemini: settings.gemini.show,
         antigravity: settings.antigravity.show,
+        grok: settings.grok.show,
     }
 }
 

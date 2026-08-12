@@ -24,8 +24,8 @@ import type { UsageWindowSnapshot } from "../../lib/types";
 type SidebarWindow = Extract<TimeWindow, "5h" | "7d">;
 
 const WINDOWS: { key: SidebarWindow; label: string }[] = [
-  { key: "5h", label: "5h" },
   { key: "7d", label: "7d" },
+  { key: "5h", label: "5h" },
 ];
 
 const PACE_LABEL_COLORS: Record<PaceStatus, string> = {
@@ -53,7 +53,12 @@ interface TooltipState {
 function sidebarProviderWindows(provider: UsageProvider, snap: ProviderUsageSnapshot, window: SidebarWindow): UsageWindowSnapshot[] {
   const windows = snap.summaryWindows
     .filter((sw) => sw.usedPercent != null && sw.sourceType === "provider")
-    .filter((sw) => sw.window === window || sw.window.startsWith("24h_"));
+    .filter((sw) => {
+      if (window === "5h") {
+        return provider === "claude" && sw.window === "5h";
+      }
+      return sw.window === window || sw.window.startsWith("24h_");
+    });
 
   if (provider === "antigravity") {
     const mostUsed = [...windows].sort((a, b) => (b.usedPercent ?? 0) - (a.usedPercent ?? 0))[0];
@@ -84,6 +89,7 @@ function buildUtilizationItems(
   const items: SidebarUtilizationItem[] = [];
 
   ALL_USAGE_PROVIDERS.forEach((provider) => {
+    if (window === "5h" && provider !== "claude") return;
     const config = settings[provider];
     const snap = snapshots[provider];
     if (!config.show || config.budgetMode !== "custom" || config.monthlyBudget == null || config.monthlyBudget <= 0 || !snap?.localDetails) return;
@@ -108,6 +114,7 @@ function buildUtilizationItems(
   });
 
   ALL_USAGE_PROVIDERS.forEach((provider) => {
+    if (window === "5h" && provider !== "claude") return;
     const config = settings[provider];
     const snap = snapshots[provider];
     if (!config.show || !snap) return;
@@ -132,6 +139,7 @@ function buildUtilizationItems(
   // Show providers with show=true even if $0/no activity
   const seenProviders = new Set(items.map((i) => i.provider));
   ALL_USAGE_PROVIDERS.forEach((provider) => {
+    if (window === "5h" && provider !== "claude") return;
     const config = settings[provider];
     if (!config.show || seenProviders.has(provider)) return;
     const snap = snapshots[provider];

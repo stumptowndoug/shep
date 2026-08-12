@@ -30,8 +30,8 @@ import {
 } from "./usageHelpers";
 
 const TIME_WINDOWS: { key: TimeWindow; label: string }[] = [
-  { key: "5h", label: "5 hour" },
   { key: "7d", label: "7 day" },
+  { key: "5h", label: "5 hour" },
   { key: "30d", label: "30 day" },
   { key: "365d", label: "1 year" },
 ];
@@ -531,7 +531,10 @@ function UtilizationSection({
       if (!snap) return;
       snap.summaryWindows
         .filter((sw) => sw.usedPercent != null && sw.sourceType === "provider")
-        .filter((sw) => sw.window === window || sw.window.startsWith("24h_"))
+        .filter((sw) => {
+          if (window === "5h") return provider === "claude" && sw.window === "5h";
+          return sw.window === window || sw.window.startsWith("24h_");
+        })
         .forEach((w) => {
           const pace = computePace(w);
           items.push({

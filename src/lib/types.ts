@@ -325,7 +325,7 @@ export interface PtyColorTheme {
 
 // ── Usage ──────────────────────────────────────────────────────────
 
-export type UsageProvider = "codex" | "claude" | "antigravity" | "gemini" | "opencode" | "pi";
+export type UsageProvider = "codex" | "claude" | "antigravity" | "gemini" | "opencode" | "pi" | "grok";
 
 export type BudgetMode = "subscription" | "custom";
 
@@ -342,6 +342,7 @@ export interface UsageSettings {
   gemini: ProviderBudgetConfig;
   opencode: ProviderBudgetConfig;
   pi: ProviderBudgetConfig;
+  grok: ProviderBudgetConfig;
 }
 export type UsageSourceType = "provider" | "local";
 export type UsageConfidence = "official" | "observed" | "estimated";

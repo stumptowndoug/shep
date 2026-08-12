@@ -9,6 +9,7 @@ const DEFAULT_SETTINGS: UsageSettings = {
   gemini: { show: false, budgetMode: "subscription", monthlyBudget: null },
   opencode: { show: true, budgetMode: "custom", monthlyBudget: 100 },
   pi: { show: false, budgetMode: "custom", monthlyBudget: null },
+  grok: { show: true, budgetMode: "subscription", monthlyBudget: null },
 };
 
 interface UsageSettingsStore {

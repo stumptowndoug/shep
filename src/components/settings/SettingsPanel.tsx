@@ -633,7 +633,9 @@ export default function SettingsPanel() {
                     ? "Gemini"
                     : provider === "opencode"
                       ? "opencode"
-                      : "pi";
+                      : provider === "grok"
+                        ? "Grok"
+                        : "pi";
             const budgetInput = budgetInputs[provider] ?? (config.monthlyBudget != null ? String(config.monthlyBudget) : "");
             return (
               <div key={provider} className="usage-provider-row">

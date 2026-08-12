@@ -87,6 +87,7 @@ enum ProviderCacheData {
     Codex(Vec<UsageWindowSnapshot>),
     Gemini(Vec<UsageWindowSnapshot>),
     Antigravity(Vec<UsageWindowSnapshot>, Vec<UsageWindowSnapshot>),
+    Grok(Vec<UsageWindowSnapshot>),
 }
 
 struct ProviderCache {
@@ -94,6 +95,7 @@ struct ProviderCache {
     codex: ProviderState,
     gemini: ProviderState,
     antigravity: ProviderState,
+    grok: ProviderState,
 }
 
 static PROVIDER_CACHE: Mutex<ProviderCache> = Mutex::new(ProviderCache {
@@ -101,6 +103,7 @@ static PROVIDER_CACHE: Mutex<ProviderCache> = Mutex::new(ProviderCache {
     codex: ProviderState::new(),
     gemini: ProviderState::new(),
     antigravity: ProviderState::new(),
+    grok: ProviderState::new(),
 });
 
 /// Which providers are enabled (passed from frontend settings).
@@ -109,6 +112,7 @@ pub struct EnabledProviders {
     pub codex: bool,
     pub gemini: bool,
     pub antigravity: bool,
+    pub grok: bool,
 }
 
 /// Fetch snapshots for all providers from whatever is currently in the DB.
@@ -124,6 +128,7 @@ pub fn get_all_usage_snapshots(db: &UsageDb, enabled: &EnabledProviders) -> Vec<
         codex_snapshot(&conn),
         gemini_snapshot(&conn),
         antigravity_snapshot(&conn),
+        grok_snapshot(&conn),
         opencode_snapshot(&conn),
         pi_snapshot(&conn),
     ]
@@ -139,6 +144,7 @@ pub fn get_usage_snapshot(db: &UsageDb, provider: &str, enabled: &EnabledProvide
         "claude" => Ok(claude_snapshot(&conn)),
         "gemini" => Ok(gemini_snapshot(&conn)),
         "antigravity" => Ok(antigravity_snapshot(&conn)),
+        "grok" => Ok(grok_snapshot(&conn)),
         "opencode" => Ok(opencode_snapshot(&conn)),
         "pi" => Ok(pi_snapshot(&conn)),
         other => Err(format!("Unsupported usage provider: {other}")),
@@ -192,17 +198,18 @@ static PROVIDER_REFRESH_RUNNING: AtomicBool = AtomicBool::new(false);
 /// elapsed. Returns immediately — never blocks the calling thread on network I/O.
 fn spawn_provider_refresh(enabled: &EnabledProviders) {
     let now = now_epoch_seconds();
-    let (refresh_claude, refresh_codex, refresh_gemini, refresh_antigravity) = {
+    let (refresh_claude, refresh_codex, refresh_gemini, refresh_antigravity, refresh_grok) = {
         let cache = PROVIDER_CACHE.lock().unwrap();
         (
             enabled.claude && cache.claude.is_stale(now),
             enabled.codex && cache.codex.is_stale(now),
             enabled.gemini && cache.gemini.is_stale(now),
             enabled.antigravity && cache.antigravity.is_stale(now),
+            enabled.grok && cache.grok.is_stale(now),
         )
     };
 
-    if !refresh_claude && !refresh_codex && !refresh_gemini && !refresh_antigravity {
+    if !refresh_claude && !refresh_codex && !refresh_gemini && !refresh_antigravity && !refresh_grok {
         return;
     }
 
@@ -215,14 +222,15 @@ fn spawn_provider_refresh(enabled: &EnabledProviders) {
     let do_codex = refresh_codex;
     let do_gemini = refresh_gemini;
     let do_antigravity = refresh_antigravity;
+    let do_grok = refresh_grok;
     std::thread::spawn(move || {
-        refresh_provider_cache_sync(do_claude, do_codex, do_gemini, do_antigravity);
+        refresh_provider_cache_sync(do_claude, do_codex, do_gemini, do_antigravity, do_grok);
         PROVIDER_REFRESH_RUNNING.store(false, Ordering::SeqCst);
     });
 }
 
 /// Actual (blocking) provider refresh — only called from background thread.
-fn refresh_provider_cache_sync(do_claude: bool, do_codex: bool, do_gemini: bool, do_antigravity: bool) {
+fn refresh_provider_cache_sync(do_claude: bool, do_codex: bool, do_gemini: bool, do_antigravity: bool, do_grok: bool) {
     let now = now_epoch_seconds();
 
     if do_claude {
@@ -274,6 +282,24 @@ fn refresh_provider_cache_sync(do_claude: bool, do_codex: bool, do_gemini: bool,
                 cache.gemini.record_error(now, &e);
                 if should_log {
                     eprintln!("Gemini provider API error (using cache): {e}");
+                }
+            }
+        }
+    }
+
+    if do_grok {
+        match providers::grok_provider_windows() {
+            Ok(data) => {
+                let mut cache = PROVIDER_CACHE.lock().unwrap();
+                cache.grok.cache = Some(ProviderCacheData::Grok(data));
+                cache.grok.record_success(now);
+            }
+            Err(e) => {
+                let mut cache = PROVIDER_CACHE.lock().unwrap();
+                let should_log = cache.grok.should_log_error() || cache.grok.last_error != e;
+                cache.grok.record_error(now, &e);
+                if should_log {
+                    eprintln!("Grok provider API error (using cache): {e}");
                 }
             }
         }
@@ -496,6 +522,32 @@ fn antigravity_snapshot(conn: &rusqlite::Connection) -> ProviderUsageSnapshot {
         summary_windows,
         extra_windows,
         local_details: local,
+        error,
+    }
+}
+
+fn grok_snapshot(conn: &rusqlite::Connection) -> ProviderUsageSnapshot {
+    let fetched_at = helpers::now_iso_string();
+    let cache = PROVIDER_CACHE.lock().unwrap();
+    let cached_windows: Option<Vec<UsageWindowSnapshot>> = match &cache.grok.cache {
+        Some(ProviderCacheData::Grok(windows)) => Some(windows.clone()),
+        _ => None,
+    };
+    let error = if cached_windows.is_none() && !cache.grok.last_error.is_empty() {
+        Some(cache.grok.last_error.clone())
+    } else {
+        None
+    };
+    drop(cache);
+    let _ = conn;
+
+    ProviderUsageSnapshot {
+        provider: "grok".to_string(),
+        status: if cached_windows.is_some() { "ready".to_string() } else { "unavailable".to_string() },
+        fetched_at,
+        summary_windows: cached_windows.unwrap_or_default(),
+        extra_windows: Vec::new(),
+        local_details: None,
         error,
     }
 }

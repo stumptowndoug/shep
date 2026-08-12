@@ -1,7 +1,7 @@
 import type { ProviderUsageSnapshot, UsageProvider, UsageWindowSnapshot } from "../../lib/types";
 
 const WINDOW_PRIORITY = ["5h", "7d", "30d"];
-export const ALL_USAGE_PROVIDERS: UsageProvider[] = ["claude", "codex", "antigravity", "gemini", "opencode", "pi"];
+export const ALL_USAGE_PROVIDERS: UsageProvider[] = ["claude", "codex", "antigravity", "gemini", "opencode", "pi", "grok"];
 export const TONE_COLORS: Record<string, string> = {
   low: "color-mix(in srgb, var(--status-added) var(--color-opacity-utilization), transparent)",
   medium: "color-mix(in srgb, var(--status-attention) var(--color-opacity-utilization), transparent)",
@@ -41,6 +41,8 @@ export function getProviderLabel(provider: UsageProvider): string {
       return "opencode";
     case "pi":
       return "pi";
+    case "grok":
+      return "Grok";
   }
 }
 

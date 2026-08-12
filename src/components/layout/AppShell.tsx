@@ -186,7 +186,7 @@ export default function AppShell() {
     void fetchUsageSnapshots();
     const usageRefreshTimer = window.setTimeout(() => {
       void fetchUsageSnapshots();
-    }, 3000);
+    }, 8000);
     void refreshUsageData();
     void initNotifications();
     getUsername().then((name) => useUIStore.getState().setUsername(name));

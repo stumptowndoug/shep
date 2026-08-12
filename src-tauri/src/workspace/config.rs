@@ -263,6 +263,8 @@ pub struct UsageSettings {
     pub opencode: ProviderBudgetConfig,
     #[serde(default = "default_provider_custom_hidden")]
     pub pi: ProviderBudgetConfig,
+    #[serde(default = "default_provider_subscription")]
+    pub grok: ProviderBudgetConfig,
 }
 
 impl Default for UsageSettings {
@@ -277,6 +279,7 @@ impl Default for UsageSettings {
                 ..ProviderBudgetConfig::default_custom()
             },
             pi: ProviderBudgetConfig::default_custom(),
+            grok: ProviderBudgetConfig::default_subscription(),
         }
     }
 }

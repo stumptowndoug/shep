@@ -20,9 +20,9 @@ export const useUsageStore = create<UsageStore>((set, get) => ({
   snapshots: {},
   loading: false,
   error: null,
-  window: "5h",
+  window: "7d",
   setWindow: (window) => set({ window }),
-  sidebarWindow: "5h",
+  sidebarWindow: "7d",
   setSidebarWindow: (sidebarWindow) => set({ sidebarWindow }),
   fetchSnapshots: async () => {
     set({ loading: true, error: null });
