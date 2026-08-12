@@ -5,6 +5,7 @@ import type { UsageSettings, UsageProvider, ProviderBudgetConfig } from "../lib/
 const DEFAULT_SETTINGS: UsageSettings = {
   claude: { show: true, budgetMode: "subscription", monthlyBudget: null },
   codex: { show: true, budgetMode: "subscription", monthlyBudget: null },
+  cursor: { show: true, budgetMode: "subscription", monthlyBudget: null },
   antigravity: { show: true, budgetMode: "subscription", monthlyBudget: null },
   gemini: { show: false, budgetMode: "subscription", monthlyBudget: null },
   opencode: { show: true, budgetMode: "custom", monthlyBudget: 100 },

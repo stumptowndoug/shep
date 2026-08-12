@@ -533,14 +533,14 @@ function UtilizationSection({
         .filter((sw) => sw.usedPercent != null && sw.sourceType === "provider")
         .filter((sw) => {
           if (window === "5h") return provider === "claude" && sw.window === "5h";
-          return sw.window === window || sw.window.startsWith("24h_");
+          return sw.window === window || sw.window.startsWith("24h_") || sw.window === "billing";
         })
         .forEach((w) => {
           const pace = computePace(w);
           items.push({
             id: w.windowId,
             provider,
-            label: w.window.startsWith("24h_") ? w.label : `${w.label} limit`,
+            label: w.window.startsWith("24h_") || w.window === "billing" ? w.label : `${w.label} limit`,
             pct: w.usedPercent!,
             sublabel: w.remainingPercent != null ? `${formatPercent(w.remainingPercent)} remaining` : "",
             pace,

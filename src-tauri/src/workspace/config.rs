@@ -256,6 +256,8 @@ pub struct UsageSettings {
     #[serde(default = "default_provider_subscription")]
     pub codex: ProviderBudgetConfig,
     #[serde(default = "default_provider_subscription")]
+    pub cursor: ProviderBudgetConfig,
+    #[serde(default = "default_provider_subscription")]
     pub antigravity: ProviderBudgetConfig,
     #[serde(default = "default_provider_subscription")]
     pub gemini: ProviderBudgetConfig,
@@ -272,6 +274,7 @@ impl Default for UsageSettings {
         UsageSettings {
             claude: ProviderBudgetConfig::default_subscription(),
             codex: ProviderBudgetConfig::default_subscription(),
+            cursor: ProviderBudgetConfig::default_subscription(),
             antigravity: ProviderBudgetConfig::default_subscription(),
             gemini: ProviderBudgetConfig { show: false, ..ProviderBudgetConfig::default_subscription() },
             opencode: ProviderBudgetConfig {

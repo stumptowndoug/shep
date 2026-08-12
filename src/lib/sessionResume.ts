@@ -1,6 +1,7 @@
 const SESSION_RESUME_ARGS: Record<string, (sessionId: string) => string[]> = {
   claude: (sessionId) => ["--resume", sessionId],
   codex: (sessionId) => ["resume", sessionId],
+  cursor: (sessionId) => ["--resume", sessionId],
   antigravity: (sessionId) => ["--conversation", sessionId],
   opencode: (sessionId) => ["--session", sessionId],
   pi: (sessionId) => ["--session", sessionId],

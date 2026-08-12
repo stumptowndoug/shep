@@ -386,6 +386,7 @@ function startSessionTitleResolver(
         if (
           match.title &&
           assistantId !== "codex" &&
+          assistantId !== "cursor" &&
           assistantId !== "antigravity" &&
           assistantId !== "opencode"
         ) {

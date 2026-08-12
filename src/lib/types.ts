@@ -325,7 +325,7 @@ export interface PtyColorTheme {
 
 // ── Usage ──────────────────────────────────────────────────────────
 
-export type UsageProvider = "codex" | "claude" | "antigravity" | "gemini" | "opencode" | "pi" | "grok";
+export type UsageProvider = "codex" | "cursor" | "claude" | "antigravity" | "gemini" | "opencode" | "pi" | "grok";
 
 export type BudgetMode = "subscription" | "custom";
 
@@ -338,6 +338,7 @@ export interface ProviderBudgetConfig {
 export interface UsageSettings {
   claude: ProviderBudgetConfig;
   codex: ProviderBudgetConfig;
+  cursor: ProviderBudgetConfig;
   antigravity: ProviderBudgetConfig;
   gemini: ProviderBudgetConfig;
   opencode: ProviderBudgetConfig;

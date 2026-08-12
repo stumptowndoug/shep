@@ -57,7 +57,7 @@ function sidebarProviderWindows(provider: UsageProvider, snap: ProviderUsageSnap
       if (window === "5h") {
         return provider === "claude" && sw.window === "5h";
       }
-      return sw.window === window || sw.window.startsWith("24h_");
+      return sw.window === window || sw.window.startsWith("24h_") || sw.window === "billing";
     });
 
   if (provider === "antigravity") {
@@ -126,7 +126,7 @@ function buildUtilizationItems(
         items.push({
           id: w.windowId,
           provider,
-          label: w.window.startsWith("24h_") ? w.label : `${w.label} limit`,
+          label: w.window.startsWith("24h_") || w.window === "billing" ? w.label : `${w.label} limit`,
           pct: w.usedPercent!,
           tokens,
           sublabel: w.remainingPercent != null ? `${formatPercent(w.remainingPercent)} remaining` : "",
@@ -142,6 +142,8 @@ function buildUtilizationItems(
     if (window === "5h" && provider !== "claude") return;
     const config = settings[provider];
     if (!config.show || seenProviders.has(provider)) return;
+    // Cursor has no local cost feed, so a missing login must not look like $0 usage.
+    if (provider === "cursor" && config.budgetMode === "subscription") return;
     const snap = snapshots[provider];
     const cost = snap?.localDetails ? ((window === "5h" ? snap.localDetails.cost5h : snap.localDetails.cost7d) ?? 0) : 0;
     const tokens = snap?.localDetails ? (window === "5h" ? snap.localDetails.tokens5h : snap.localDetails.tokens7d) : 0;

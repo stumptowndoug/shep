@@ -61,6 +61,154 @@ fn codex_rate_window(value: &Value) -> Option<UsageWindowSnapshot> {
     Some(percent_window("codex", label, value))
 }
 
+/// Fetch the same billing-period utilization displayed by Cursor CLI's `/usage`.
+pub fn cursor_provider_windows() -> Result<(Vec<UsageWindowSnapshot>, Vec<UsageWindowSnapshot>), String> {
+    let token = cursor_access_token()?;
+    let authorization = format!("Authorization: Bearer {token}");
+    let body = run_command(
+        "curl",
+        &[
+            "-sS", "--max-time", "10", "-X", "POST",
+            "-H", &authorization,
+            "-H", "Content-Type: application/json",
+            "-H", "Connect-Protocol-Version: 1",
+            "-H", "x-cursor-client-type: cli",
+            "-H", "x-cursor-client-version: cli-shep",
+            "-d", "{}",
+            "https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage",
+        ],
+    )?;
+    cursor_parse_period_usage(&body)
+}
+
+fn cursor_access_token() -> Result<String, String> {
+    for key in ["CURSOR_AUTH_TOKEN", "CURSOR_API_KEY"] {
+        if let Ok(value) = std::env::var(key) {
+            if !value.trim().is_empty() {
+                return Ok(value);
+            }
+        }
+    }
+
+    if cfg!(target_os = "macos") {
+        for service in ["cursor-access-token", "cursor-api-key"] {
+            if let Ok(value) = run_command(
+                "security",
+                &["find-generic-password", "-s", service, "-a", "cursor-user", "-w"],
+            ) {
+                if !value.trim().is_empty() {
+                    return Ok(value);
+                }
+            }
+        }
+    }
+
+    for path in [".config/cursor/auth.json", ".cursor/auth.json"] {
+        let Ok(auth_text) = fs::read_to_string(home_join(path)?) else {
+            continue;
+        };
+        let Ok(auth) = serde_json::from_str::<Value>(&auth_text) else {
+            continue;
+        };
+        for key in ["accessToken", "access_token", "apiKey", "api_key", "token"] {
+            if let Some(token) = auth.get(key).and_then(Value::as_str).filter(|value| !value.is_empty()) {
+                return Ok(token.to_string());
+            }
+        }
+    }
+
+    Err("Missing Cursor login. Run `cursor-agent login` to enable subscription utilization.".to_string())
+}
+
+fn cursor_number(value: Option<&Value>) -> Option<f64> {
+    value.and_then(|value| value.as_f64().or_else(|| value.as_str()?.parse::<f64>().ok()))
+}
+
+fn cursor_percent(plan: &Value, field: &str, spend_field: &str, limit_field: &str) -> Option<f64> {
+    cursor_number(plan.get(field)).or_else(|| {
+        let spend = cursor_number(plan.get(spend_field))?;
+        let limit = cursor_number(plan.get(limit_field))?;
+        (limit > 0.0).then_some((spend / limit) * 100.0)
+    })
+}
+
+fn cursor_usage_window(id: &str, label: &str, used: f64, reset_at: Option<String>) -> UsageWindowSnapshot {
+    UsageWindowSnapshot {
+        provider: "cursor".to_string(),
+        window_id: format!("cursor-{id}"),
+        window: "billing".to_string(),
+        label: label.to_string(),
+        scope: "plan".to_string(),
+        limit: Some(100.0),
+        used: Some(used),
+        source_type: "provider".to_string(),
+        confidence: "official".to_string(),
+        cost_kind: "included".to_string(),
+        used_percent: Some(used),
+        remaining_percent: Some((100.0 - used).max(0.0)),
+        reset_at,
+        token_total: None,
+        pace_status: None,
+    }
+}
+
+fn cursor_parse_period_usage(body: &str) -> Result<(Vec<UsageWindowSnapshot>, Vec<UsageWindowSnapshot>), String> {
+    let json: Value = serde_json::from_str(body)
+        .map_err(|e| format!("Failed to parse Cursor usage response: {e}"))?;
+    if let Some(code) = json.get("code") {
+        let message = json.get("message").and_then(Value::as_str).unwrap_or("request failed");
+        return Err(format!("Cursor usage API returned {code}: {message}. Run `cursor-agent login` and retry."));
+    }
+    if json.get("enabled").and_then(Value::as_bool) == Some(false) {
+        return Err("Cursor subscription utilization is not enabled for this account.".to_string());
+    }
+
+    let plan = json.get("planUsage")
+        .or_else(|| json.get("plan_usage"))
+        .ok_or_else(|| "Cursor usage response missing plan usage".to_string())?;
+    let total = cursor_percent(plan, "totalPercentUsed", "totalSpend", "limit")
+        .ok_or_else(|| "Cursor usage response missing included utilization".to_string())?;
+    let reset_at = cursor_number(json.get("billingCycleEnd").or_else(|| json.get("billing_cycle_end")))
+        .map(|millis| (millis / 1000.0).round().to_string());
+
+    let summary = vec![cursor_usage_window("billing", "Monthly plan", total, reset_at.clone())];
+    let mut extra = Vec::new();
+    if let Some(used) = cursor_percent(plan, "autoPercentUsed", "autoSpend", "autoLimit") {
+        extra.push(cursor_usage_window("billing-auto", "Auto usage", used, reset_at.clone()));
+    }
+    if let Some(used) = cursor_percent(plan, "apiPercentUsed", "apiSpend", "apiLimit") {
+        extra.push(cursor_usage_window("billing-api", "API usage", used, reset_at));
+    }
+    Ok((summary, extra))
+}
+
+#[cfg(test)]
+mod cursor_tests {
+    use super::cursor_parse_period_usage;
+
+    #[test]
+    fn maps_cursor_billing_percentages_and_millisecond_reset() {
+        let (summary, extra) = cursor_parse_period_usage(r#"{
+            "billingCycleStart":"1785542400000",
+            "billingCycleEnd":"1788220800000",
+            "enabled":true,
+            "planUsage":{"totalPercentUsed":42.5,"autoPercentUsed":25,"apiPercentUsed":10}
+        }"#).expect("usage windows");
+        assert_eq!(summary[0].provider, "cursor");
+        assert_eq!(summary[0].window, "billing");
+        assert_eq!(summary[0].used_percent, Some(42.5));
+        assert_eq!(summary[0].reset_at.as_deref(), Some("1788220800"));
+        assert_eq!(extra.len(), 2);
+    }
+
+    #[test]
+    fn reports_connect_auth_errors_cleanly() {
+        let error = cursor_parse_period_usage(r#"{"code":"unauthenticated","message":"not logged in"}"#)
+            .expect_err("auth error");
+        assert!(error.contains("cursor-agent login"));
+    }
+}
+
 #[cfg(test)]
 mod codex_tests {
     use super::codex_rate_window;

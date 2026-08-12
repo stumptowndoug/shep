@@ -85,6 +85,7 @@ impl ProviderState {
 enum ProviderCacheData {
     Claude(Vec<UsageWindowSnapshot>, Vec<UsageWindowSnapshot>),
     Codex(Vec<UsageWindowSnapshot>),
+    Cursor(Vec<UsageWindowSnapshot>, Vec<UsageWindowSnapshot>),
     Gemini(Vec<UsageWindowSnapshot>),
     Antigravity(Vec<UsageWindowSnapshot>, Vec<UsageWindowSnapshot>),
     Grok(Vec<UsageWindowSnapshot>),
@@ -93,6 +94,7 @@ enum ProviderCacheData {
 struct ProviderCache {
     claude: ProviderState,
     codex: ProviderState,
+    cursor: ProviderState,
     gemini: ProviderState,
     antigravity: ProviderState,
     grok: ProviderState,
@@ -101,6 +103,7 @@ struct ProviderCache {
 static PROVIDER_CACHE: Mutex<ProviderCache> = Mutex::new(ProviderCache {
     claude: ProviderState::new(),
     codex: ProviderState::new(),
+    cursor: ProviderState::new(),
     gemini: ProviderState::new(),
     antigravity: ProviderState::new(),
     grok: ProviderState::new(),
@@ -110,6 +113,7 @@ static PROVIDER_CACHE: Mutex<ProviderCache> = Mutex::new(ProviderCache {
 pub struct EnabledProviders {
     pub claude: bool,
     pub codex: bool,
+    pub cursor: bool,
     pub gemini: bool,
     pub antigravity: bool,
     pub grok: bool,
@@ -126,6 +130,7 @@ pub fn get_all_usage_snapshots(db: &UsageDb, enabled: &EnabledProviders) -> Vec<
     vec![
         claude_snapshot(&conn),
         codex_snapshot(&conn),
+        cursor_snapshot(&conn),
         gemini_snapshot(&conn),
         antigravity_snapshot(&conn),
         grok_snapshot(&conn),
@@ -141,6 +146,7 @@ pub fn get_usage_snapshot(db: &UsageDb, provider: &str, enabled: &EnabledProvide
     let conn = db.conn.lock().unwrap();
     match provider {
         "codex" => Ok(codex_snapshot(&conn)),
+        "cursor" => Ok(cursor_snapshot(&conn)),
         "claude" => Ok(claude_snapshot(&conn)),
         "gemini" => Ok(gemini_snapshot(&conn)),
         "antigravity" => Ok(antigravity_snapshot(&conn)),
@@ -198,18 +204,19 @@ static PROVIDER_REFRESH_RUNNING: AtomicBool = AtomicBool::new(false);
 /// elapsed. Returns immediately — never blocks the calling thread on network I/O.
 fn spawn_provider_refresh(enabled: &EnabledProviders) {
     let now = now_epoch_seconds();
-    let (refresh_claude, refresh_codex, refresh_gemini, refresh_antigravity, refresh_grok) = {
+    let (refresh_claude, refresh_codex, refresh_cursor, refresh_gemini, refresh_antigravity, refresh_grok) = {
         let cache = PROVIDER_CACHE.lock().unwrap();
         (
             enabled.claude && cache.claude.is_stale(now),
             enabled.codex && cache.codex.is_stale(now),
+            enabled.cursor && cache.cursor.is_stale(now),
             enabled.gemini && cache.gemini.is_stale(now),
             enabled.antigravity && cache.antigravity.is_stale(now),
             enabled.grok && cache.grok.is_stale(now),
         )
     };
 
-    if !refresh_claude && !refresh_codex && !refresh_gemini && !refresh_antigravity && !refresh_grok {
+    if !refresh_claude && !refresh_codex && !refresh_cursor && !refresh_gemini && !refresh_antigravity && !refresh_grok {
         return;
     }
 
@@ -220,17 +227,18 @@ fn spawn_provider_refresh(enabled: &EnabledProviders) {
 
     let do_claude = refresh_claude;
     let do_codex = refresh_codex;
+    let do_cursor = refresh_cursor;
     let do_gemini = refresh_gemini;
     let do_antigravity = refresh_antigravity;
     let do_grok = refresh_grok;
     std::thread::spawn(move || {
-        refresh_provider_cache_sync(do_claude, do_codex, do_gemini, do_antigravity, do_grok);
+        refresh_provider_cache_sync(do_claude, do_codex, do_cursor, do_gemini, do_antigravity, do_grok);
         PROVIDER_REFRESH_RUNNING.store(false, Ordering::SeqCst);
     });
 }
 
 /// Actual (blocking) provider refresh — only called from background thread.
-fn refresh_provider_cache_sync(do_claude: bool, do_codex: bool, do_gemini: bool, do_antigravity: bool, do_grok: bool) {
+fn refresh_provider_cache_sync(do_claude: bool, do_codex: bool, do_cursor: bool, do_gemini: bool, do_antigravity: bool, do_grok: bool) {
     let now = now_epoch_seconds();
 
     if do_claude {
@@ -264,6 +272,24 @@ fn refresh_provider_cache_sync(do_claude: bool, do_codex: bool, do_gemini: bool,
                 cache.codex.record_error(now, &e);
                 if should_log {
                     eprintln!("Codex provider API error (using cache): {e}");
+                }
+            }
+        }
+    }
+
+    if do_cursor {
+        match providers::cursor_provider_windows() {
+            Ok(data) => {
+                let mut cache = PROVIDER_CACHE.lock().unwrap();
+                cache.cursor.cache = Some(ProviderCacheData::Cursor(data.0, data.1));
+                cache.cursor.record_success(now);
+            }
+            Err(e) => {
+                let mut cache = PROVIDER_CACHE.lock().unwrap();
+                let should_log = cache.cursor.should_log_error() || cache.cursor.last_error != e;
+                cache.cursor.record_error(now, &e);
+                if should_log {
+                    eprintln!("Cursor provider API error (using cache): {e}");
                 }
             }
         }
@@ -369,6 +395,33 @@ fn codex_snapshot(conn: &rusqlite::Connection) -> ProviderUsageSnapshot {
         extra_windows: Vec::new(),
         local_details: local,
         error: None,
+    }
+}
+
+fn cursor_snapshot(conn: &rusqlite::Connection) -> ProviderUsageSnapshot {
+    let fetched_at = helpers::now_iso_string();
+    let cache = PROVIDER_CACHE.lock().unwrap();
+    let cached_data = match &cache.cursor.cache {
+        Some(ProviderCacheData::Cursor(summary, extra)) => Some((summary.clone(), extra.clone())),
+        _ => None,
+    };
+    let error = if cached_data.is_none() && !cache.cursor.last_error.is_empty() {
+        Some(cache.cursor.last_error.clone())
+    } else {
+        None
+    };
+    drop(cache);
+    let _ = conn;
+
+    let (summary_windows, extra_windows) = cached_data.unwrap_or_default();
+    ProviderUsageSnapshot {
+        provider: "cursor".to_string(),
+        status: if summary_windows.is_empty() { "unavailable".to_string() } else { "ready".to_string() },
+        fetched_at,
+        summary_windows,
+        extra_windows,
+        local_details: None,
+        error,
     }
 }
 
