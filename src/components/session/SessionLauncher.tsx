@@ -512,7 +512,7 @@ export default function SessionLauncher({ onStartSession }: SessionLauncherProps
           <label className="section-label !p-0 mb-3 block text-xs opacity-50">Start</label>
           <button
             className="btn-cta"
-            disabled={launching || (mode === "yolo" && !supportsYolo)}
+            disabled={launching}
             aria-busy={launching}
             onClick={handleStart}
           >
