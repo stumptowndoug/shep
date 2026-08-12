@@ -27,15 +27,21 @@ import { useTerminalSettingsStore } from "../../stores/useTerminalSettingsStore"
 import { useTerminalStore } from "../../stores/useTerminalStore";
 import { terminalCache } from "./terminalCache";
 import { reconcileTerminalRenderer } from "./terminalRenderer";
+import {
+  shouldSuppressCursorDim,
+  terminalMinimumContrastRatio,
+} from "../../lib/terminalColorMode";
 
 interface TerminalViewProps {
   ptyId: number;
   visible: boolean;
+  assistantId: string | null;
 }
 
 export default function TerminalView({
   ptyId,
   visible,
+  assistantId,
 }: TerminalViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mountedRef = useRef(false);
@@ -48,13 +54,18 @@ export default function TerminalView({
     if (cached) return cached;
 
     const termSettings = useTerminalSettingsStore.getState().settings;
+    const initialTheme = useThemeStore.getState().theme;
     const term = new Terminal({
       cursorBlink: termSettings.cursorBlink,
       cursorStyle: termSettings.cursorStyle,
       fontSize: termSettings.fontSize,
       fontFamily: buildCSSFontFamily(termSettings.fontFamily),
       lineHeight: TERMINAL_LINE_HEIGHT,
-      theme: createTerminalTheme(useThemeStore.getState().theme),
+      theme: createTerminalTheme(initialTheme),
+      minimumContrastRatio: terminalMinimumContrastRatio(
+        initialTheme,
+        assistantId,
+      ),
       scrollback: termSettings.scrollback,
       allowTransparency: true,
       allowProposedApi: true,
@@ -73,6 +84,14 @@ export default function TerminalView({
     term.loadAddon(new WebLinksAddon((_ev, url) => {
       void openUrl(url);
     }));
+
+    term.parser.registerCsiHandler({ final: "m" }, (params) =>
+      shouldSuppressCursorDim(
+        useThemeStore.getState().theme,
+        assistantId,
+        params,
+      ),
+    );
 
     // Send input to PTY
     term.onData((data) => {
@@ -127,12 +146,13 @@ export default function TerminalView({
     const entry = {
       term,
       fitAddon,
+      assistantId,
       rendererAddon: null as WebglAddon | null,
       webglFailed: false,
     };
     terminalCache.set(ptyId, entry);
     return entry;
-  }, [ptyId]);
+  }, [ptyId, assistantId]);
 
   const applyTerminalSize = useCallback(async (cols: number, rows: number) => {
     const cached = terminalCache.get(ptyId);
@@ -259,6 +279,10 @@ export default function TerminalView({
         reconcileTerminalRenderer(term, cachedEntry, currentTheme);
       }
       term.options.theme = createTerminalTheme(currentTheme);
+      term.options.minimumContrastRatio = terminalMinimumContrastRatio(
+        currentTheme,
+        assistantId,
+      );
       if (!currentTheme.isTransparent && cachedEntry) {
         reconcileTerminalRenderer(term, cachedEntry, currentTheme);
       }
@@ -359,7 +383,7 @@ export default function TerminalView({
         columnResizeTimerRef.current = null;
       }
     };
-  }, [ptyId, visible, getOrCreateTerminal, fitAndResize]);
+  }, [ptyId, visible, assistantId, getOrCreateTerminal, fitAndResize]);
 
 
   useEffect(() => {

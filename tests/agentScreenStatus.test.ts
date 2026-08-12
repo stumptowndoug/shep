@@ -75,6 +75,24 @@ test("Codex stable title is explicit idle", () => {
   assert.equal(result.ruleId, "codex-idle-title");
 });
 
+test("Cursor waiting title is blocked", () => {
+  const result = detectAgentScreenStatus("cursor", "", "Fix tests - ❓ Waiting for you");
+  assert.equal(result.state, "blocked");
+  assert.equal(result.ruleId, "cursor-blocked-title");
+});
+
+test("Cursor working title is working", () => {
+  const result = detectAgentScreenStatus("cursor", "", "Fix tests - ⌨️ Running shell command");
+  assert.equal(result.state, "working");
+  assert.equal(result.ruleId, "cursor-working-title");
+});
+
+test("Cursor ready title is idle", () => {
+  const result = detectAgentScreenStatus("cursor", "", "Fix tests - ✅ Ready");
+  assert.equal(result.state, "idle");
+  assert.equal(result.ruleId, "cursor-ready-title");
+});
+
 test("Antigravity permission UI is blocked", () => {
   const result = detectAgentScreenStatus(
     "antigravity",

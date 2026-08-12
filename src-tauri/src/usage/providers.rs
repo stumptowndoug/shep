@@ -34,19 +34,209 @@ pub fn codex_provider_windows() -> Result<Vec<UsageWindowSnapshot>, String> {
     let json: Value = serde_json::from_str(&body)
         .map_err(|e| format!("Failed to parse Codex usage response: {e}"))?;
 
-    let primary = json
-        .get("rate_limit")
-        .and_then(|v| v.get("primary_window"))
-        .ok_or_else(|| "Codex usage response missing primary window".to_string())?;
-    let secondary = json
-        .get("rate_limit")
-        .and_then(|v| v.get("secondary_window"))
-        .ok_or_else(|| "Codex usage response missing secondary window".to_string())?;
+    let Some(rate_limit) = json.get("rate_limit") else {
+        return Err("Codex usage response missing rate_limit".to_string());
+    };
+    let windows: Vec<UsageWindowSnapshot> = ["primary_window", "secondary_window"]
+        .into_iter()
+        .filter_map(|key| rate_limit.get(key))
+        .filter(|value| !value.is_null())
+        .filter_map(codex_rate_window)
+        .collect();
+    if windows.is_empty() {
+        return Err("Codex usage response did not include any rate windows".to_string());
+    }
+    Ok(windows)
+}
 
-    Ok(vec![
-        percent_window("codex", "5h", primary),
-        percent_window("codex", "7d", secondary),
-    ])
+fn codex_rate_window(value: &Value) -> Option<UsageWindowSnapshot> {
+    let seconds = value.get("limit_window_seconds").and_then(Value::as_u64)?;
+    let label = if seconds <= 6 * 60 * 60 {
+        "5h"
+    } else if seconds <= 8 * 24 * 60 * 60 {
+        "7d"
+    } else {
+        return None;
+    };
+    Some(percent_window("codex", label, value))
+}
+
+/// Fetch the same billing-period utilization displayed by Cursor CLI's `/usage`.
+pub fn cursor_provider_windows() -> Result<(Vec<UsageWindowSnapshot>, Vec<UsageWindowSnapshot>), String> {
+    let token = cursor_access_token()?;
+    let authorization = format!("Authorization: Bearer {token}");
+    let body = run_command(
+        "curl",
+        &[
+            "-sS", "--max-time", "10", "-X", "POST",
+            "-H", &authorization,
+            "-H", "Content-Type: application/json",
+            "-H", "Connect-Protocol-Version: 1",
+            "-H", "x-cursor-client-type: cli",
+            "-H", "x-cursor-client-version: cli-shep",
+            "-d", "{}",
+            "https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage",
+        ],
+    )?;
+    cursor_parse_period_usage(&body)
+}
+
+fn cursor_access_token() -> Result<String, String> {
+    for key in ["CURSOR_AUTH_TOKEN", "CURSOR_API_KEY"] {
+        if let Ok(value) = std::env::var(key) {
+            if !value.trim().is_empty() {
+                return Ok(value);
+            }
+        }
+    }
+
+    if cfg!(target_os = "macos") {
+        for service in ["cursor-access-token", "cursor-api-key"] {
+            if let Ok(value) = run_command(
+                "security",
+                &["find-generic-password", "-s", service, "-a", "cursor-user", "-w"],
+            ) {
+                if !value.trim().is_empty() {
+                    return Ok(value);
+                }
+            }
+        }
+    }
+
+    for path in [".config/cursor/auth.json", ".cursor/auth.json"] {
+        let Ok(auth_text) = fs::read_to_string(home_join(path)?) else {
+            continue;
+        };
+        let Ok(auth) = serde_json::from_str::<Value>(&auth_text) else {
+            continue;
+        };
+        for key in ["accessToken", "access_token", "apiKey", "api_key", "token"] {
+            if let Some(token) = auth.get(key).and_then(Value::as_str).filter(|value| !value.is_empty()) {
+                return Ok(token.to_string());
+            }
+        }
+    }
+
+    Err("Missing Cursor login. Run `cursor-agent login` to enable subscription utilization.".to_string())
+}
+
+fn cursor_number(value: Option<&Value>) -> Option<f64> {
+    value.and_then(|value| value.as_f64().or_else(|| value.as_str()?.parse::<f64>().ok()))
+}
+
+fn cursor_percent(plan: &Value, field: &str, spend_field: &str, limit_field: &str) -> Option<f64> {
+    cursor_number(plan.get(field)).or_else(|| {
+        let spend = cursor_number(plan.get(spend_field))?;
+        let limit = cursor_number(plan.get(limit_field))?;
+        (limit > 0.0).then_some((spend / limit) * 100.0)
+    })
+}
+
+fn cursor_usage_window(id: &str, label: &str, used: f64, reset_at: Option<String>) -> UsageWindowSnapshot {
+    UsageWindowSnapshot {
+        provider: "cursor".to_string(),
+        window_id: format!("cursor-{id}"),
+        window: "billing".to_string(),
+        label: label.to_string(),
+        scope: "plan".to_string(),
+        limit: Some(100.0),
+        used: Some(used),
+        source_type: "provider".to_string(),
+        confidence: "official".to_string(),
+        cost_kind: "included".to_string(),
+        used_percent: Some(used),
+        remaining_percent: Some((100.0 - used).max(0.0)),
+        reset_at,
+        token_total: None,
+        pace_status: None,
+    }
+}
+
+fn cursor_parse_period_usage(body: &str) -> Result<(Vec<UsageWindowSnapshot>, Vec<UsageWindowSnapshot>), String> {
+    let json: Value = serde_json::from_str(body)
+        .map_err(|e| format!("Failed to parse Cursor usage response: {e}"))?;
+    if let Some(code) = json.get("code") {
+        let message = json.get("message").and_then(Value::as_str).unwrap_or("request failed");
+        return Err(format!("Cursor usage API returned {code}: {message}. Run `cursor-agent login` and retry."));
+    }
+    if json.get("enabled").and_then(Value::as_bool) == Some(false) {
+        return Err("Cursor subscription utilization is not enabled for this account.".to_string());
+    }
+
+    let plan = json.get("planUsage")
+        .or_else(|| json.get("plan_usage"))
+        .ok_or_else(|| "Cursor usage response missing plan usage".to_string())?;
+    let total = cursor_percent(plan, "totalPercentUsed", "totalSpend", "limit")
+        .ok_or_else(|| "Cursor usage response missing included utilization".to_string())?;
+    let reset_at = cursor_number(json.get("billingCycleEnd").or_else(|| json.get("billing_cycle_end")))
+        .map(|millis| (millis / 1000.0).round().to_string());
+
+    let summary = vec![cursor_usage_window("billing", "30d", total, reset_at.clone())];
+    let mut extra = Vec::new();
+    if let Some(used) = cursor_percent(plan, "autoPercentUsed", "autoSpend", "autoLimit") {
+        extra.push(cursor_usage_window("billing-auto", "Auto usage", used, reset_at.clone()));
+    }
+    if let Some(used) = cursor_percent(plan, "apiPercentUsed", "apiSpend", "apiLimit") {
+        extra.push(cursor_usage_window("billing-api", "API usage", used, reset_at));
+    }
+    Ok((summary, extra))
+}
+
+#[cfg(test)]
+mod cursor_tests {
+    use super::cursor_parse_period_usage;
+
+    #[test]
+    fn maps_cursor_billing_percentages_and_millisecond_reset() {
+        let (summary, extra) = cursor_parse_period_usage(r#"{
+            "billingCycleStart":"1785542400000",
+            "billingCycleEnd":"1788220800000",
+            "enabled":true,
+            "planUsage":{"totalPercentUsed":42.5,"autoPercentUsed":25,"apiPercentUsed":10}
+        }"#).expect("usage windows");
+        assert_eq!(summary[0].provider, "cursor");
+        assert_eq!(summary[0].window, "billing");
+        assert_eq!(summary[0].label, "30d");
+        assert_eq!(summary[0].used_percent, Some(42.5));
+        assert_eq!(summary[0].reset_at.as_deref(), Some("1788220800"));
+        assert_eq!(extra.len(), 2);
+    }
+
+    #[test]
+    fn reports_connect_auth_errors_cleanly() {
+        let error = cursor_parse_period_usage(r#"{"code":"unauthenticated","message":"not logged in"}"#)
+            .expect_err("auth error");
+        assert!(error.contains("cursor-agent login"));
+    }
+}
+
+#[cfg(test)]
+mod codex_tests {
+    use super::codex_rate_window;
+    use serde_json::json;
+
+    #[test]
+    fn weekly_primary_window_is_7d() {
+        let window = codex_rate_window(&json!({
+            "used_percent": 15,
+            "limit_window_seconds": 604800,
+            "reset_at": 1787019940
+        }))
+        .expect("window");
+        assert_eq!(window.window, "7d");
+        assert_eq!(window.used_percent, Some(15.0));
+    }
+
+    #[test]
+    fn five_hour_window_still_maps_when_present() {
+        let window = codex_rate_window(&json!({
+            "used_percent": 40,
+            "limit_window_seconds": 18000,
+            "reset_at": 1786557812
+        }))
+        .expect("window");
+        assert_eq!(window.window, "5h");
+    }
 }
 
 /// Fetch Claude rate limit windows from Anthropic API.
@@ -877,4 +1067,288 @@ fn gemini_buckets_to_windows(buckets: &[GeminiQuotaBucket]) -> Result<Vec<UsageW
     }
 
     Ok(windows)
+}
+
+// ── SuperGrok ─────────────────────────────────────────────
+
+/// Fetch SuperGrok's unofficial weekly usage pool from grok.com billing.
+/// Uses the OIDC session in ~/.grok/auth.json, not XAI_API_KEY.
+pub fn grok_provider_windows() -> Result<Vec<UsageWindowSnapshot>, String> {
+    let token = grok_access_token()?;
+    let body = grok_billing_request(&token)?;
+    grok_windows_from_grpc_web(&body)
+}
+
+fn grok_access_token() -> Result<String, String> {
+    let auth_path = home_join(".grok/auth.json")?;
+    let auth_text = fs::read_to_string(&auth_path)
+        .map_err(|e| format!("Failed to read Grok auth file: {e}"))?;
+    let auth_json: Value = serde_json::from_str(&auth_text)
+        .map_err(|e| format!("Failed to parse Grok auth file: {e}"))?;
+    let object = auth_json
+        .as_object()
+        .ok_or_else(|| "Grok auth file is not an object".to_string())?;
+
+    let entry = object
+        .iter()
+        .find(|(key, _)| key.starts_with("https://auth.x.ai::"))
+        .or_else(|| object.iter().find(|(key, _)| key.contains("accounts.x.ai")))
+        .map(|(_, value)| value)
+        .or_else(|| object.values().next())
+        .ok_or_else(|| "Missing Grok SuperGrok login. Run `grok login`.".to_string())?;
+
+    entry
+        .get("key")
+        .and_then(Value::as_str)
+        .filter(|token| !token.is_empty())
+        .map(ToString::to_string)
+        .ok_or_else(|| "Grok auth file is missing an access token".to_string())
+}
+
+fn grok_billing_request(token: &str) -> Result<Vec<u8>, String> {
+    let empty_frame = [0u8; 5];
+    let mut child = Command::new("curl")
+        .args([
+            "-sS",
+            "--max-time",
+            "10",
+            "-X",
+            "POST",
+            "https://grok.com/grok_api_v2.GrokBuildBilling/GetGrokCreditsConfig",
+            "-H",
+            &format!("Authorization: Bearer {token}"),
+            "-H",
+            "Origin: https://grok.com",
+            "-H",
+            "Referer: https://grok.com/?_s=usage",
+            "-H",
+            "Accept: */*",
+            "-H",
+            "Content-Type: application/grpc-web+proto",
+            "-H",
+            "x-grpc-web: 1",
+            "-H",
+            "x-user-agent: connect-es/2.1.1",
+            "--data-binary",
+            "@-",
+        ])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("Failed to request SuperGrok usage: {e}"))?;
+    if let Some(mut stdin) = child.stdin.take() {
+        use std::io::Write;
+        stdin
+            .write_all(&empty_frame)
+            .map_err(|e| format!("Failed to write SuperGrok usage request: {e}"))?;
+    }
+    let output = child
+        .wait_with_output()
+        .map_err(|e| format!("Failed to request SuperGrok usage: {e}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "SuperGrok usage request failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    Ok(output.stdout)
+}
+
+fn grok_windows_from_grpc_web(body: &[u8]) -> Result<Vec<UsageWindowSnapshot>, String> {
+    let (used_percent, reset_at) = parse_grok_billing(body)?;
+    Ok(vec![UsageWindowSnapshot {
+        provider: "grok".to_string(),
+        window_id: "grok-7d".to_string(),
+        window: "7d".to_string(),
+        label: "7d".to_string(),
+        scope: "plan".to_string(),
+        limit: Some(100.0),
+        used: Some(used_percent),
+        source_type: "provider".to_string(),
+        confidence: "observed".to_string(),
+        cost_kind: "included".to_string(),
+        used_percent: Some(used_percent),
+        remaining_percent: Some((100.0 - used_percent).max(0.0)),
+        reset_at,
+        token_total: None,
+        pace_status: None,
+    }])
+}
+
+fn parse_grok_billing(body: &[u8]) -> Result<(f64, Option<String>), String> {
+    let payloads = grpc_web_data_frames(body);
+    let mut percents = Vec::new();
+    let mut resets = Vec::new();
+    for payload in payloads {
+        scan_protobuf(&payload, &[], 0, &mut percents, &mut resets);
+    }
+    let used_percent = percents
+        .into_iter()
+        .find(|value| value.is_finite() && (0.0..=100.0).contains(value))
+        .ok_or_else(|| "SuperGrok billing response did not include a weekly usage percent".to_string())?;
+    let reset_at = resets.into_iter().next().map(unix_seconds_to_iso);
+    Ok((used_percent, reset_at))
+}
+
+fn grpc_web_data_frames(body: &[u8]) -> Vec<Vec<u8>> {
+    let mut frames = Vec::new();
+    let mut index = 0;
+    while index + 5 <= body.len() {
+        let flags = body[index];
+        let length = u32::from_be_bytes([
+            body[index + 1],
+            body[index + 2],
+            body[index + 3],
+            body[index + 4],
+        ]) as usize;
+        let start = index + 5;
+        let end = start.saturating_add(length);
+        if end > body.len() {
+            break;
+        }
+        if flags & 0x80 == 0 {
+            frames.push(body[start..end].to_vec());
+        }
+        index = end;
+    }
+    if frames.is_empty() && !body.is_empty() {
+        frames.push(body.to_vec());
+    }
+    frames
+}
+
+fn scan_protobuf(
+    buf: &[u8],
+    path: &[u64],
+    depth: usize,
+    percents: &mut Vec<f64>,
+    resets: &mut Vec<u64>,
+) {
+    let mut index = 0;
+    while index < buf.len() {
+        let Some((key, next)) = read_varint(buf, index) else {
+            break;
+        };
+        index = next;
+        let field = key >> 3;
+        let wire = key & 7;
+        let mut field_path = path.to_vec();
+        field_path.push(field);
+        match wire {
+            0 => {
+                let Some((value, next)) = read_varint(buf, index) else {
+                    break;
+                };
+                index = next;
+                if (1_700_000_000..=2_100_000_000).contains(&value) && field_path.ends_with(&[5, 1]) {
+                    resets.push(value);
+                }
+            }
+            1 => {
+                if index + 8 > buf.len() {
+                    break;
+                }
+                index += 8;
+            }
+            2 => {
+                let Some((length, next)) = read_varint(buf, index) else {
+                    break;
+                };
+                index = next;
+                let end = index.saturating_add(length as usize);
+                if end > buf.len() {
+                    break;
+                }
+                if depth < 4 {
+                    scan_protobuf(&buf[index..end], &field_path, depth + 1, percents, resets);
+                }
+                index = end;
+            }
+            5 => {
+                if index + 4 > buf.len() {
+                    break;
+                }
+                let bits = u32::from_le_bytes([
+                    buf[index],
+                    buf[index + 1],
+                    buf[index + 2],
+                    buf[index + 3],
+                ]);
+                percents.push(f32::from_bits(bits) as f64);
+                index += 4;
+            }
+            _ => break,
+        }
+    }
+}
+
+fn read_varint(buf: &[u8], mut index: usize) -> Option<(u64, usize)> {
+    let mut value = 0u64;
+    let mut shift = 0;
+    while index < buf.len() {
+        let byte = buf[index];
+        index += 1;
+        value |= u64::from(byte & 0x7f) << shift;
+        if byte < 0x80 {
+            return Some((value, index));
+        }
+        shift += 7;
+        if shift > 63 {
+            return None;
+        }
+    }
+    None
+}
+
+fn unix_seconds_to_iso(seconds: u64) -> String {
+    let days = seconds / 86400;
+    let time = seconds % 86400;
+    let h = time / 3600;
+    let m = (time % 3600) / 60;
+    let s = time % 60;
+    let z = days as i64 + 719468;
+    let era = (if z >= 0 { z } else { z - 146096 }) / 146097;
+    let doe = (z - era * 146097) as u32;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let mo = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if mo <= 2 { y + 1 } else { y };
+    format!("{y:04}-{mo:02}-{d:02}T{h:02}:{m:02}:{s:02}Z")
+}
+
+#[cfg(test)]
+mod grok_tests {
+    use super::{grok_windows_from_grpc_web, parse_grok_billing};
+
+    fn sample_body() -> Vec<u8> {
+        vec![
+            0x00, 0x00, 0x00, 0x00, 0x52, 0x0a, 0x50, 0x0d, 0x00, 0x00, 0xd8, 0x41, 0x12, 0x00,
+            0x1a, 0x00, 0x22, 0x0b, 0x08, 0xf7, 0xca, 0xf2, 0xd3, 0x06, 0x10, 0x80, 0xa7, 0x9a,
+            0x70, 0x2a, 0x0b, 0x08, 0xf7, 0xbf, 0x97, 0xd4, 0x06, 0x10, 0x80, 0xa7, 0x9a, 0x70,
+            0x3a, 0x07, 0x08, 0x02, 0x15, 0x00, 0x00, 0xd8, 0x41, 0x42, 0x1c, 0x08, 0x02, 0x12,
+            0x0b, 0x08, 0xf7, 0xca, 0xf2, 0xd3, 0x06, 0x10, 0x80, 0xa7, 0x9a, 0x70, 0x1a, 0x0b,
+            0x08, 0xf7, 0xbf, 0x97, 0xd4, 0x06, 0x10, 0x80, 0xa7, 0x9a, 0x70, 0x58, 0x01, 0x62,
+            0x00, 0x68, 0x01, 0x80, 0x00, 0x00, 0x00, 0x0f, 0x67, 0x72, 0x70, 0x63, 0x2d, 0x73,
+            0x74, 0x61, 0x74, 0x75, 0x73, 0x3a, 0x30, 0x0d, 0x0a,
+        ]
+    }
+
+    #[test]
+    fn parse_grok_billing_reads_weekly_percent_and_reset() {
+        let (used, reset) = parse_grok_billing(&sample_body()).expect("billing");
+        assert!((used - 27.0).abs() < 0.01, "used={used}");
+        assert_eq!(reset.as_deref(), Some("2026-08-19T16:55:19Z"));
+    }
+
+    #[test]
+    fn grok_windows_use_the_weekly_plan_slot() {
+        let windows = grok_windows_from_grpc_web(&sample_body()).expect("windows");
+        assert_eq!(windows[0].provider, "grok");
+        assert_eq!(windows[0].window, "7d");
+        assert_eq!(windows[0].used_percent, Some(27.0));
+    }
 }

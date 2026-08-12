@@ -3,6 +3,8 @@ import codexSrc from "../../assets/openai.svg";
 import geminiSrc from "../../assets/gemini.svg";
 import opencodeSrc from "../../assets/opencode-logo-dark.svg";
 import piSrc from "../../assets/pi.svg";
+import grokSrc from "../../assets/grok.svg";
+import cursorSrc from "../../assets/editor-cursor.svg";
 
 export const assistantLogoSrc: Record<string, string> = {
   claude: claudeSrc,
@@ -12,9 +14,11 @@ export const assistantLogoSrc: Record<string, string> = {
   antigravity: geminiSrc,
   opencode: opencodeSrc,
   pi: piSrc,
+  grok: grokSrc,
+  cursor: cursorSrc,
 };
 
-const MONO_ASSISTANT_LOGOS = new Set(["codex", "opencode", "pi"]);
+const MONO_ASSISTANT_LOGOS = new Set(["codex", "opencode", "pi", "grok", "cursor"]);
 
 export function getAssistantLogoClass(assistantId: string): string | undefined {
   return MONO_ASSISTANT_LOGOS.has(assistantId) ? "themed-mono-logo" : undefined;

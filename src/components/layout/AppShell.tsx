@@ -186,7 +186,7 @@ export default function AppShell() {
     void fetchUsageSnapshots();
     const usageRefreshTimer = window.setTimeout(() => {
       void fetchUsageSnapshots();
-    }, 3000);
+    }, 8000);
     void refreshUsageData();
     void initNotifications();
     getUsername().then((name) => useUIStore.getState().setUsername(name));
@@ -220,6 +220,15 @@ export default function AppShell() {
   // Auto-refresh when background ingest completes
   useEffect(() => {
     const unlisten = listen("usage-ingest-complete", () => {
+      void fetchUsageSnapshots();
+    });
+    return () => { unlisten.then((f) => f()); };
+  }, [fetchUsageSnapshots]);
+
+  // Provider quota APIs refresh independently in the backend. Pull each
+  // completed result immediately instead of waiting for the polling interval.
+  useEffect(() => {
+    const unlisten = listen("usage-provider-refresh-complete", () => {
       void fetchUsageSnapshots();
     });
     return () => { unlisten.then((f) => f()); };
@@ -821,6 +830,7 @@ export default function AppShell() {
                 <TerminalErrorBoundary>
                   <TerminalView
                     ptyId={tab.ptyId}
+                    assistantId={tab.assistantId}
                     visible={!showOverlay && tab.repoPath === activeProjectPath && tab.id === activeTabId}
                   />
                 </TerminalErrorBoundary>

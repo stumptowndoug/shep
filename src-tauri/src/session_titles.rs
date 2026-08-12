@@ -50,6 +50,7 @@ fn resolve_session_title_from_home(
     match assistant_id {
         "claude" => resolve_claude(home, repo_path, started_after_ms, session_id, process_id),
         "codex" => resolve_codex(home, repo_path, started_after_ms, session_id),
+        "cursor" => resolve_cursor(home, repo_path, started_after_ms, session_id),
         "antigravity" => resolve_antigravity(home, repo_path, started_after_ms, session_id),
         "opencode" => resolve_opencode(home, repo_path, started_after_ms, session_id),
         "pi" => resolve_pi(home, repo_path, started_after_ms, session_id),
@@ -746,6 +747,65 @@ fn resolve_pi(
     )
 }
 
+fn resolve_cursor(
+    home: &Path,
+    repo_path: &str,
+    started_after_ms: i64,
+    session_id: Option<&str>,
+) -> Option<SessionTitleMatch> {
+    let chats = home.join(".cursor/chats");
+    let mut candidates = Vec::new();
+
+    for workspace in fs::read_dir(chats).ok()?.flatten() {
+        if !workspace.path().is_dir() {
+            continue;
+        }
+        for session in fs::read_dir(workspace.path()).ok()?.flatten() {
+            let session_path = session.path();
+            if !session_path.is_dir() {
+                continue;
+            }
+            let Some(id) = session_path.file_name().and_then(|value| value.to_str()) else {
+                continue;
+            };
+            if session_id.is_some_and(|expected| expected != id) {
+                continue;
+            }
+            let Ok(text) = fs::read_to_string(session_path.join("meta.json")) else {
+                continue;
+            };
+            let Ok(meta) = serde_json::from_str::<Value>(&text) else {
+                continue;
+            };
+            if meta.get("cwd").and_then(Value::as_str) != Some(repo_path)
+                || meta.get("isSubagent").and_then(Value::as_bool) == Some(true)
+            {
+                continue;
+            }
+            let Some(created_at_ms) = meta.get("createdAtMs")
+                .and_then(|value| value.as_i64().or_else(|| value.as_str()?.parse().ok()))
+            else {
+                continue;
+            };
+            if session_id.is_none()
+                && created_at_ms < started_after_ms.saturating_sub(LAUNCH_TOLERANCE_MS)
+            {
+                continue;
+            }
+            let title = meta.get("title")
+                .and_then(Value::as_str)
+                .and_then(compact_generated_title);
+            candidates.push((created_at_ms.abs_diff(started_after_ms), id.to_string(), title));
+        }
+    }
+
+    candidates.sort_by_key(|candidate| candidate.0);
+    candidates.into_iter().next().map(|(_, session_id, title)| SessionTitleMatch {
+        session_id,
+        title,
+    })
+}
+
 fn resolve_claude(
     home: &Path,
     repo_path: &str,
@@ -1024,6 +1084,30 @@ mod tests {
             compact_prompt_title(&long_identifier).unwrap(),
             format!("{}…", "x".repeat(MAX_PROMPT_TITLE_CHARS))
         );
+    }
+
+    #[test]
+    fn cursor_reads_meta_sidecars_and_anchors_exact_session() {
+        let home = temp_home();
+        let first = home.join(".cursor/chats/workspace-a/chat-1");
+        let second = home.join(".cursor/chats/workspace-b/chat-2");
+        fs::create_dir_all(&first).unwrap();
+        fs::create_dir_all(&second).unwrap();
+        fs::write(first.join("meta.json"), r#"{
+            "schemaVersion":1,"createdAtMs":10000,"cwd":"/repo","title":"Implement Cursor support"
+        }"#).unwrap();
+        fs::write(second.join("meta.json"), r#"{
+            "schemaVersion":1,"createdAtMs":11000,"cwd":"/repo","title":"Second chat"
+        }"#).unwrap();
+
+        let nearest = resolve_session_title_from_home(&home, "cursor", "/repo", 10_100, None, None).unwrap();
+        assert_eq!(nearest.session_id, "chat-1");
+        assert_eq!(nearest.title.as_deref(), Some("Implement Cursor support"));
+
+        let anchored = resolve_session_title_from_home(&home, "cursor", "/repo", 10_100, Some("chat-2"), None).unwrap();
+        assert_eq!(anchored.session_id, "chat-2");
+
+        fs::remove_dir_all(home).unwrap();
     }
 
     #[test]

@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { getAllUsageSnapshots } from "../lib/tauri";
 import type { ProviderUsageSnapshot, UsageProvider } from "../lib/types";
 
-export type TimeWindow = "5h" | "7d" | "30d" | "365d";
+export type TimeWindow = "24h" | "7d" | "30d" | "365d";
 
 interface UsageStore {
   snapshots: Record<string, ProviderUsageSnapshot>;
@@ -10,8 +10,6 @@ interface UsageStore {
   error: string | null;
   window: TimeWindow;
   setWindow: (window: TimeWindow) => void;
-  sidebarWindow: "5h" | "7d";
-  setSidebarWindow: (window: "5h" | "7d") => void;
   fetchSnapshots: () => Promise<void>;
   getSnapshot: (provider: UsageProvider) => ProviderUsageSnapshot | null;
 }
@@ -20,10 +18,8 @@ export const useUsageStore = create<UsageStore>((set, get) => ({
   snapshots: {},
   loading: false,
   error: null,
-  window: "5h",
+  window: "24h",
   setWindow: (window) => set({ window }),
-  sidebarWindow: "5h",
-  setSidebarWindow: (sidebarWindow) => set({ sidebarWindow }),
   fetchSnapshots: async () => {
     set({ loading: true, error: null });
     try {

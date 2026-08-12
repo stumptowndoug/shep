@@ -18,7 +18,7 @@ import {
   FONT_SIZE_OPTIONS,
   TERMINAL_FONT_FAMILY,
 } from "../../lib/terminalConfig";
-import { ALL_USAGE_PROVIDERS } from "../usage/usageHelpers";
+import { ALL_USAGE_PROVIDERS, getProviderLabel } from "../usage/usageHelpers";
 import type { CursorStyle, BudgetMode, FontFamily } from "../../lib/types";
 import { getErrorMessage } from "../../lib/errors";
 import { listMonospaceFamilies } from "../../lib/tauri";
@@ -93,6 +93,7 @@ export default function SettingsPanel() {
   const usageError = useUsageSettingsStore((s) => s.error);
   const loadUsageSettings = useUsageSettingsStore((s) => s.loadSettings);
   const updateProvider = useUsageSettingsStore((s) => s.updateProvider);
+  const setShowClaudeFiveHourLimit = useUsageSettingsStore((s) => s.setShowClaudeFiveHourLimit);
   const [budgetInputs, setBudgetInputs] = useState<Record<string, string>>({});
 
   const updateStatus = useUpdateStore((s) => s.status);
@@ -623,17 +624,7 @@ export default function SettingsPanel() {
           {ALL_USAGE_PROVIDERS.map((provider) => {
             const config = usageSettings[provider];
             const logo = assistantLogoSrc[provider];
-            const label = provider === "claude"
-              ? "Claude"
-              : provider === "codex"
-                ? "Codex"
-                : provider === "antigravity"
-                  ? "Antigravity"
-                  : provider === "gemini"
-                    ? "Gemini"
-                    : provider === "opencode"
-                      ? "opencode"
-                      : "pi";
+            const label = getProviderLabel(provider);
             const budgetInput = budgetInputs[provider] ?? (config.monthlyBudget != null ? String(config.monthlyBudget) : "");
             return (
               <div key={provider} className="usage-provider-row">
@@ -692,6 +683,16 @@ export default function SettingsPanel() {
               </div>
             );
           })}
+
+          <div className="usage-provider-row">
+            <span className="usage-provider-row__name">Claude 5h</span>
+            <button
+              onClick={() => void setShowClaudeFiveHourLimit(!usageSettings.showClaudeFiveHourLimit)}
+              className={`option-card option-card--compact ${usageSettings.showClaudeFiveHourLimit ? "selected" : ""}`}
+            >
+              {usageSettings.showClaudeFiveHourLimit ? "On" : "Off"}
+            </button>
+          </div>
         </div>
 
         {usageIsSaving && <div className="mt-2 text-xs text-[var(--text-muted)]">Saving...</div>}

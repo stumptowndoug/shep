@@ -1,14 +1,16 @@
 import { create } from "zustand";
 import { getUsageSettings, saveUsageSettings } from "../lib/tauri";
-import type { UsageSettings, UsageProvider, ProviderBudgetConfig } from "../lib/types";
+import type { ConfigurableUsageProvider, UsageSettings, ProviderBudgetConfig } from "../lib/types";
 
 const DEFAULT_SETTINGS: UsageSettings = {
+  showClaudeFiveHourLimit: false,
   claude: { show: true, budgetMode: "subscription", monthlyBudget: null },
   codex: { show: true, budgetMode: "subscription", monthlyBudget: null },
+  cursor: { show: true, budgetMode: "subscription", monthlyBudget: null },
   antigravity: { show: true, budgetMode: "subscription", monthlyBudget: null },
-  gemini: { show: false, budgetMode: "subscription", monthlyBudget: null },
   opencode: { show: true, budgetMode: "custom", monthlyBudget: 100 },
   pi: { show: false, budgetMode: "custom", monthlyBudget: null },
+  grok: { show: true, budgetMode: "subscription", monthlyBudget: null },
 };
 
 interface UsageSettingsStore {
@@ -17,9 +19,10 @@ interface UsageSettingsStore {
   isSaving: boolean;
   error: string | null;
   loadSettings: () => Promise<void>;
-  updateProvider: (provider: UsageProvider, patch: Partial<ProviderBudgetConfig>) => Promise<void>;
-  isProviderEnabled: (provider: UsageProvider) => boolean;
-  getProviderConfig: (provider: UsageProvider) => ProviderBudgetConfig;
+  updateProvider: (provider: ConfigurableUsageProvider, patch: Partial<ProviderBudgetConfig>) => Promise<void>;
+  setShowClaudeFiveHourLimit: (show: boolean) => Promise<void>;
+  isProviderEnabled: (provider: ConfigurableUsageProvider) => boolean;
+  getProviderConfig: (provider: ConfigurableUsageProvider) => ProviderBudgetConfig;
 }
 
 export const useUsageSettingsStore = create<UsageSettingsStore>((set, get) => ({
@@ -41,6 +44,21 @@ export const useUsageSettingsStore = create<UsageSettingsStore>((set, get) => ({
   updateProvider: async (provider, patch) => {
     const prev = get().settings;
     const next = { ...prev, [provider]: { ...prev[provider], ...patch } };
+    set({ settings: next, isSaving: true });
+    try {
+      await saveUsageSettings(next);
+      set({ isSaving: false, error: null });
+    } catch (error) {
+      set({
+        settings: prev,
+        isSaving: false,
+        error: error instanceof Error ? error.message : "Failed to save usage settings",
+      });
+    }
+  },
+  setShowClaudeFiveHourLimit: async (show) => {
+    const prev = get().settings;
+    const next = { ...prev, showClaudeFiveHourLimit: show };
     set({ settings: next, isSaving: true });
     try {
       await saveUsageSettings(next);

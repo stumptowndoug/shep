@@ -251,32 +251,38 @@ fn default_provider_custom_hidden() -> ProviderBudgetConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UsageSettings {
+    #[serde(default, rename = "showClaudeFiveHourLimit")]
+    pub show_claude_five_hour_limit: bool,
     #[serde(default = "default_provider_subscription")]
     pub claude: ProviderBudgetConfig,
     #[serde(default = "default_provider_subscription")]
     pub codex: ProviderBudgetConfig,
     #[serde(default = "default_provider_subscription")]
-    pub antigravity: ProviderBudgetConfig,
+    pub cursor: ProviderBudgetConfig,
     #[serde(default = "default_provider_subscription")]
-    pub gemini: ProviderBudgetConfig,
+    pub antigravity: ProviderBudgetConfig,
     #[serde(default = "default_provider_custom")]
     pub opencode: ProviderBudgetConfig,
     #[serde(default = "default_provider_custom_hidden")]
     pub pi: ProviderBudgetConfig,
+    #[serde(default = "default_provider_subscription")]
+    pub grok: ProviderBudgetConfig,
 }
 
 impl Default for UsageSettings {
     fn default() -> Self {
         UsageSettings {
+            show_claude_five_hour_limit: false,
             claude: ProviderBudgetConfig::default_subscription(),
             codex: ProviderBudgetConfig::default_subscription(),
+            cursor: ProviderBudgetConfig::default_subscription(),
             antigravity: ProviderBudgetConfig::default_subscription(),
-            gemini: ProviderBudgetConfig { show: false, ..ProviderBudgetConfig::default_subscription() },
             opencode: ProviderBudgetConfig {
                 monthly_budget: Some(100.0),
                 ..ProviderBudgetConfig::default_custom()
             },
             pi: ProviderBudgetConfig::default_custom(),
+            grok: ProviderBudgetConfig::default_subscription(),
         }
     }
 }
@@ -365,5 +371,13 @@ mod tests {
         .unwrap();
 
         assert_eq!(settings.default_agent_mode, "standard");
+    }
+
+    #[test]
+    fn usage_settings_drop_legacy_gemini_configuration() {
+        let settings: UsageSettings = serde_yaml::from_str("gemini:\n  show: true\n").unwrap();
+        let serialized = serde_yaml::to_string(&settings).unwrap();
+
+        assert!(!serialized.contains("gemini:"));
     }
 }

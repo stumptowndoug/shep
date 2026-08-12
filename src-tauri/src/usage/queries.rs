@@ -920,7 +920,7 @@ fn windowed_cost_for_project_detail(conn: &Connection, provider: &str, since: i6
 pub fn usage_overview(conn: &Connection, window: &str) -> Option<UsageOverview> {
     let now = now_epoch_seconds() as i64;
     let (cutoff, bucket_count, mode) = match window {
-        "5h" => (now - 18_000, 5_i64, BucketMode::Hourly),
+        "24h" => (now - 86_400, 24_i64, BucketMode::Hourly),
         "7d" => (now - 604_800, 7_i64, BucketMode::Daily),
         "30d" => (now - 2_592_000, 30_i64, BucketMode::Daily),
         "365d" => (now - 31_536_000, 365_i64, BucketMode::Daily),

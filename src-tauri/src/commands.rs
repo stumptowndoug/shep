@@ -609,19 +609,21 @@ pub fn check_command_exists(command: &str) -> bool {
 pub async fn get_all_usage_snapshots(
     db: State<'_, UsageDb>,
     workspace: State<'_, WorkspaceManager>,
+    app: tauri::AppHandle,
 ) -> Result<Vec<ProviderUsageSnapshot>, String> {
     let enabled = enabled_providers(&workspace);
-    Ok(crate::usage::get_all_usage_snapshots(&db, &enabled))
+    Ok(crate::usage::get_all_usage_snapshots(&db, &enabled, Some(app)))
 }
 
 #[tauri::command]
 pub async fn get_usage_snapshot(
     db: State<'_, UsageDb>,
     workspace: State<'_, WorkspaceManager>,
+    app: tauri::AppHandle,
     provider: String,
 ) -> Result<ProviderUsageSnapshot, String> {
     let enabled = enabled_providers(&workspace);
-    crate::usage::get_usage_snapshot(&db, &provider, &enabled)
+    crate::usage::get_usage_snapshot(&db, &provider, &enabled, Some(app))
 }
 
 fn enabled_providers(workspace: &State<'_, WorkspaceManager>) -> crate::usage::EnabledProviders {
@@ -629,8 +631,10 @@ fn enabled_providers(workspace: &State<'_, WorkspaceManager>) -> crate::usage::E
     crate::usage::EnabledProviders {
         claude: settings.claude.show,
         codex: settings.codex.show,
-        gemini: settings.gemini.show,
+        cursor: settings.cursor.show,
+        gemini: false,
         antigravity: settings.antigravity.show,
+        grok: settings.grok.show,
     }
 }
 
@@ -674,6 +678,7 @@ pub async fn get_models_for_provider(
     match provider.as_str() {
         "pi" => Ok(sort_cli_models(&db, query_cli_models("pi", &["--list-models"], parse_pi_models))),
         "opencode" => Ok(sort_cli_models(&db, query_cli_models("opencode", &["models"], parse_opencode_models))),
+        "cursor" => Ok(sort_cli_models(&db, query_cli_models("cursor-agent", &["--list-models"], parse_cursor_models))),
         _ => Ok(crate::usage::get_models_for_provider(&db, &provider)),
     }
 }
@@ -771,6 +776,48 @@ fn parse_opencode_models(text: &str) -> Vec<String> {
         .map(|l| l.trim().to_string())
         .filter(|l| !l.is_empty())
         .collect()
+}
+
+/// Parse `cursor-agent --list-models`: "model-id - Display name" per line.
+fn parse_cursor_models(text: &str) -> Vec<String> {
+    text.lines()
+        .map(strip_ansi)
+        .map(|line| line.trim().to_string())
+        .filter(|line| !line.is_empty() && !line.starts_with("Available models") && !line.starts_with("Tip:"))
+        .filter_map(|line| line.split_once(" - ").map(|(id, _)| id.trim().to_string()))
+        .filter(|id| !id.is_empty())
+        .collect()
+}
+
+fn strip_ansi(text: &str) -> String {
+    let mut result = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\u{1b}' && chars.peek() == Some(&'[') {
+            chars.next();
+            for code in chars.by_ref() {
+                if ('@'..='~').contains(&code) {
+                    break;
+                }
+            }
+        } else {
+            result.push(ch);
+        }
+    }
+    result
+}
+
+#[cfg(test)]
+mod cursor_model_tests {
+    use super::parse_cursor_models;
+
+    #[test]
+    fn parses_cursor_model_listing_and_strips_ansi() {
+        let models = parse_cursor_models(
+            "Available models\n\n\u{1b}[32mclaude-4-sonnet\u{1b}[0m - Claude 4 Sonnet (default)\ngpt-5 - GPT-5\n\nTip: use --model <model-id>\n",
+        );
+        assert_eq!(models, vec!["claude-4-sonnet", "gpt-5"]);
+    }
 }
 
 #[tauri::command]

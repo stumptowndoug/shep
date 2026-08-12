@@ -426,6 +426,75 @@ function detectPi(screen: string): AgentScreenDetection {
   return fallback("Pi");
 }
 
+function detectCursor(screen: string, title: string): AgentScreenDetection {
+  const recent = lastNonEmptyLines(screen, 12);
+  const recentLower = recent.toLocaleLowerCase();
+  const titleLower = title.toLocaleLowerCase();
+
+  const blockedTitle = ["waiting for you", "waiting for confirmation"]
+    .find((needle) => titleLower.includes(needle));
+  if (blockedTitle) {
+    return matched(
+      "blocked",
+      "cursor-blocked-title",
+      "Cursor's terminal title says it is waiting for input",
+      title.trim(),
+    );
+  }
+
+  const blocker = [
+    "ready to build?",
+    "do you want to run this command?",
+    "do you want to allow",
+  ].find((needle) => recentLower.includes(needle));
+  if (blocker) {
+    return matched(
+      "blocked",
+      "cursor-live-blocker",
+      "Cursor is waiting for a visible decision or approval",
+      evidenceFor(recent, blocker),
+    );
+  }
+
+  const workingTitle = [
+    "moving to cloud",
+    "loading conversation",
+    "reconnecting",
+    "running shell command",
+    "planning",
+    "working",
+    "reviewing changes",
+  ].find((needle) => titleLower.includes(needle));
+  if (workingTitle) {
+    return matched(
+      "working",
+      "cursor-working-title",
+      "Cursor's terminal title reports active work",
+      title.trim(),
+    );
+  }
+
+  if (recentLower.includes("esc to interrupt") || recentLower.includes("esc to cancel")) {
+    return matched(
+      "working",
+      "cursor-working-row",
+      "Cursor's interrupt hint is visible while it works",
+      evidenceFor(recent, recentLower.includes("esc to interrupt") ? "esc to interrupt" : "esc to cancel"),
+    );
+  }
+
+  if (titleLower.includes("ready")) {
+    return matched(
+      "idle",
+      "cursor-ready-title",
+      "Cursor's terminal title reports that it is ready",
+      title.trim(),
+    );
+  }
+
+  return fallback("Cursor");
+}
+
 export function detectAgentScreenStatus(
   assistantId: string,
   screen: string,
@@ -436,6 +505,8 @@ export function detectAgentScreenStatus(
       return detectClaude(screen, title);
     case "codex":
       return detectCodex(screen, title);
+    case "cursor":
+      return detectCursor(screen, title);
     case "antigravity":
       return detectAntigravity(screen);
     case "opencode":
