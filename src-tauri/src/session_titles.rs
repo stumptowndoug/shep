@@ -755,7 +755,7 @@ fn resolve_claude(
 ) -> Option<SessionTitleMatch> {
     let directory = home
         .join(".claude/projects")
-        .join(repo_path.replace(['/', '\\', ':'], "-"));
+        .join(claude_project_directory(repo_path));
     let pid_session_id = session_id
         .map(ToString::to_string)
         .or_else(|| claude_pid_session_id(home, repo_path, process_id));
@@ -766,6 +766,22 @@ fn resolve_claude(
         pid_session_id.as_deref(),
         JsonlProvider::Claude,
     )
+}
+
+// Claude Code names each project directory by replacing every non-alphanumeric
+// character in the cwd with a dash (e.g. /Users/doug.dement/dev/shep →
+// -Users-doug-dement-dev-shep).
+fn claude_project_directory(repo_path: &str) -> String {
+    repo_path
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() {
+                character
+            } else {
+                '-'
+            }
+        })
+        .collect()
 }
 
 fn claude_pid_session_id(home: &Path, repo_path: &str, process_id: Option<u32>) -> Option<String> {
@@ -1458,6 +1474,40 @@ mod tests {
 
         let found = resolve_session_title_from_home(&home, "claude", repo, started, None, Some(42))
             .unwrap();
+        assert_eq!(found.session_id, "session-1");
+        assert_eq!(found.title.as_deref(), Some("restore sessions"));
+
+        fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn claude_project_directory_replaces_every_non_alphanumeric_character() {
+        assert_eq!(
+            claude_project_directory("/Users/doug.dement/dev/my_repo v2"),
+            "-Users-doug-dement-dev-my-repo-v2"
+        );
+    }
+
+    #[test]
+    fn claude_finds_transcripts_when_the_repo_path_contains_dots() {
+        let home = temp_home();
+        let repo = "/Users/doug.dement/dev/testing";
+        let dir = home
+            .join(".claude/projects")
+            .join("-Users-doug-dement-dev-testing");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(
+            dir.join("session-1.jsonl"),
+            concat!(
+                "{\"type\":\"mode\",\"sessionId\":\"session-1\"}\n",
+                "{\"type\":\"user\",\"cwd\":\"/Users/doug.dement/dev/testing\",\"timestamp\":\"2026-08-07T12:00:01Z\",\"message\":{\"role\":\"user\",\"content\":\"Is this more about being able to restore sessions?\"}}\n"
+            ),
+        )
+        .unwrap();
+        let started = parse_timestamp_ms("2026-08-07T12:00:00Z").unwrap();
+
+        let found =
+            resolve_session_title_from_home(&home, "claude", repo, started, None, None).unwrap();
         assert_eq!(found.session_id, "session-1");
         assert_eq!(found.title.as_deref(), Some("restore sessions"));
 
