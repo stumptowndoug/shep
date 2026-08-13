@@ -187,7 +187,7 @@ fn resolved_cost_detail(
 }
 
 #[derive(Clone, Default)]
-struct CostAccumulator {
+pub(super) struct CostAccumulator {
     amount: f64,
     has_cost: bool,
     kind: Option<String>,
@@ -197,7 +197,7 @@ struct CostAccumulator {
 }
 
 impl CostAccumulator {
-    fn add(&mut self, cost: UsageCost) {
+    pub(super) fn add(&mut self, cost: UsageCost) {
         let Some(amount) = cost.amount else {
             return;
         };
@@ -216,7 +216,7 @@ impl CostAccumulator {
         self.confidence.get_or_insert(cost.confidence);
     }
 
-    fn finish(self) -> UsageCost {
+    pub(super) fn finish(self) -> UsageCost {
         if !self.has_cost {
             return unknown_cost();
         }

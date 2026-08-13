@@ -711,7 +711,8 @@ function OverviewPanel({ overview, snapshots }: { overview: UsageOverview; snaps
           <h3 className="section-label !p-0">Methodology</h3>
         </div>
         <ul className="usage-methodology">
-          <li>Usage totals and breakdowns on this screen are based on locally observed activity from this machine.</li>
+          <li>Usage totals and breakdowns on this screen are based on locally observed activity from this machine, except Cursor, which uses Cursor's billing aggregates for the selected window.</li>
+          <li>Cursor does not expose per-project or per-session usage, so it will not appear in the project list or activity heatmap.</li>
           <li>Provider percentages shown in the sidebar summary come from provider-reported usage windows when available, so they are not always directly comparable to the local totals shown here.</li>
           <li>In practice, that means the sidebar percentage and this detail view can differ because they are measuring related but not identical sources.</li>
         </ul>
