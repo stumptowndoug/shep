@@ -11,7 +11,9 @@ pub use types::{LocalUsageDetails, ProviderUsageSnapshot, UsageOverview, UsagePr
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::Emitter;
-use types::UsageWindowSnapshot;
+use types::{
+    UsageBreakdownItem, UsageCost, UsageOverviewProvider, UsageWindowSnapshot,
+};
 use helpers::now_epoch_seconds;
 
 /// Cooldown after a successful provider API call.
@@ -86,7 +88,7 @@ impl ProviderState {
 enum ProviderCacheData {
     Claude(Vec<UsageWindowSnapshot>, Vec<UsageWindowSnapshot>),
     Codex(Vec<UsageWindowSnapshot>),
-    Cursor(Vec<UsageWindowSnapshot>, Vec<UsageWindowSnapshot>),
+    Cursor(providers::CursorProviderData),
     Gemini(Vec<UsageWindowSnapshot>),
     Antigravity(Vec<UsageWindowSnapshot>, Vec<UsageWindowSnapshot>),
     Grok(Vec<UsageWindowSnapshot>),
@@ -176,8 +178,10 @@ pub fn get_windowed_details(db: &UsageDb, provider: &str, window: &str) -> Resul
 
 pub fn get_usage_overview(db: &UsageDb, window: &str) -> Result<UsageOverview, String> {
     let conn = db.conn.lock().unwrap();
-    queries::usage_overview(&conn, window)
-        .ok_or_else(|| format!("Unsupported usage overview window: {window}"))
+    let mut overview = queries::usage_overview(&conn, window)
+        .ok_or_else(|| format!("Unsupported usage overview window: {window}"))?;
+    merge_cursor_overview(&mut overview);
+    Ok(overview)
 }
 
 pub fn get_project_alias_review_queue(db: &UsageDb) -> Vec<UsageProjectAliasReviewItem> {
@@ -325,10 +329,10 @@ fn refresh_provider_cache_sync(
     }
 
     if do_cursor {
-        match providers::cursor_provider_windows() {
+        match providers::cursor_provider_data() {
             Ok(data) => {
                 let mut cache = PROVIDER_CACHE.lock().unwrap();
-                cache.cursor.cache = Some(ProviderCacheData::Cursor(data.0, data.1));
+                cache.cursor.cache = Some(ProviderCacheData::Cursor(data));
                 cache.cursor.record_success(now);
             }
             Err(e) => {
@@ -453,7 +457,7 @@ fn cursor_snapshot(conn: &rusqlite::Connection) -> ProviderUsageSnapshot {
     let fetched_at = helpers::now_iso_string();
     let cache = PROVIDER_CACHE.lock().unwrap();
     let cached_data = match &cache.cursor.cache {
-        Some(ProviderCacheData::Cursor(summary, extra)) => Some((summary.clone(), extra.clone())),
+        Some(ProviderCacheData::Cursor(data)) => Some(data.clone()),
         _ => None,
     };
     let error = if cached_data.is_none() && !cache.cursor.last_error.is_empty() {
@@ -464,16 +468,97 @@ fn cursor_snapshot(conn: &rusqlite::Connection) -> ProviderUsageSnapshot {
     drop(cache);
     let _ = conn;
 
-    let (summary_windows, extra_windows) = cached_data.unwrap_or_default();
+    let local_details = cached_data.as_ref().and_then(providers::cursor_local_details);
+    let (summary_windows, extra_windows) = cached_data
+        .map(|data| (data.summary, data.extra))
+        .unwrap_or_default();
     ProviderUsageSnapshot {
         provider: "cursor".to_string(),
         status: if summary_windows.is_empty() { "unavailable".to_string() } else { "ready".to_string() },
         fetched_at,
         summary_windows,
         extra_windows,
-        local_details: None,
+        local_details,
         error,
     }
+}
+
+fn cursor_included_cost(amount: Option<f64>) -> UsageCost {
+    UsageCost {
+        amount,
+        kind: "included".to_string(),
+        basis: "subscription".to_string(),
+        confidence: "official".to_string(),
+    }
+}
+
+fn merge_cursor_overview(overview: &mut UsageOverview) {
+    let cache = PROVIDER_CACHE.lock().unwrap();
+    let Some(ProviderCacheData::Cursor(data)) = &cache.cursor.cache else {
+        return;
+    };
+    let Some(aggregate) = providers::cursor_window_for_overview(data, &overview.window) else {
+        return;
+    };
+    let aggregate = aggregate.clone();
+    drop(cache);
+
+    overview.providers.retain(|provider| provider.provider != "cursor");
+    overview.top_models.retain(|item| item.provider != "cursor");
+
+    let tokens = aggregate.tokens_total();
+    let cost_detail = cursor_included_cost(aggregate.cost);
+    overview.providers.push(UsageOverviewProvider {
+        provider: "cursor".to_string(),
+        tokens,
+        tokens_input: aggregate.tokens_input,
+        tokens_output: aggregate.tokens_output,
+        tokens_cache_read: aggregate.tokens_cache_read,
+        tokens_cache_write: aggregate.tokens_cache_write,
+        tokens_thoughts: 0,
+        cost: aggregate.cost,
+        cost_detail: cost_detail.clone(),
+        share_percent: 0.0,
+        trend: overview.trend.iter().map(|_| 0).collect(),
+    });
+
+    for model in &aggregate.models {
+        overview.top_models.push(UsageBreakdownItem {
+            provider: "cursor".to_string(),
+            label: model.name.clone(),
+            tokens: model.tokens_total(),
+            tokens_input: model.tokens_input,
+            tokens_output: model.tokens_output,
+            tokens_cache_read: model.tokens_cache_read,
+            tokens_cache_write: model.tokens_cache_write,
+            tokens_thoughts: 0,
+            cost: model.cost,
+            cost_detail: cursor_included_cost(model.cost),
+            sessions: None,
+            trend: overview.trend.iter().map(|_| 0).collect(),
+        });
+    }
+
+    overview.providers.sort_by(|a, b| b.tokens.cmp(&a.tokens));
+    overview.top_models.sort_by(|a, b| b.tokens.cmp(&a.tokens));
+    overview.top_models.truncate(25);
+
+    overview.total_tokens = overview.providers.iter().map(|provider| provider.tokens).sum();
+    let total_cost_value: f64 = overview.providers.iter().filter_map(|provider| provider.cost).sum();
+    overview.total_cost = overview.providers.iter().any(|provider| provider.cost.is_some()).then_some(total_cost_value);
+    for provider in &mut overview.providers {
+        provider.share_percent = if overview.total_tokens > 0 {
+            provider.tokens as f64 / overview.total_tokens as f64 * 100.0
+        } else {
+            0.0
+        };
+    }
+
+    let mut total_costs = queries::CostAccumulator::default();
+    for provider in &overview.providers {
+        total_costs.add(provider.cost_detail.clone());
+    }
+    overview.total_cost_detail = total_costs.finish();
 }
 
 fn claude_snapshot(conn: &rusqlite::Connection) -> ProviderUsageSnapshot {
@@ -729,5 +814,84 @@ fn pi_snapshot(conn: &rusqlite::Connection) -> ProviderUsageSnapshot {
         extra_windows: Vec::new(),
         local_details: local,
         error: None,
+    }
+}
+
+#[cfg(test)]
+mod cursor_overview_tests {
+    use super::*;
+
+    #[test]
+    fn merge_adds_cursor_tokens_for_matching_window_only() {
+        let previous = {
+            let mut cache = PROVIDER_CACHE.lock().unwrap();
+            let previous = cache.cursor.cache.take();
+            cache.cursor.cache = Some(ProviderCacheData::Cursor(providers::CursorProviderData {
+                summary: Vec::new(),
+                extra: Vec::new(),
+                window_24h: providers::CursorWindowAggregate::default(),
+                window_7d: providers::CursorWindowAggregate {
+                    tokens_input: 10,
+                    tokens_output: 5,
+                    tokens_cache_read: 20,
+                    tokens_cache_write: 0,
+                    cost: Some(1.5),
+                    models: vec![providers::CursorModelAggregate {
+                        name: "grok".to_string(),
+                        tokens_input: 10,
+                        tokens_output: 5,
+                        tokens_cache_read: 20,
+                        tokens_cache_write: 0,
+                        cost: Some(1.5),
+                    }],
+                },
+                window_30d: providers::CursorWindowAggregate::default(),
+            }));
+            previous
+        };
+
+        let mut overview = UsageOverview {
+            window: "7d".to_string(),
+            total_tokens: 100,
+            total_cost: Some(2.0),
+            total_cost_detail: UsageCost {
+                amount: Some(2.0),
+                kind: "estimated".to_string(),
+                basis: "local-pricing".to_string(),
+                confidence: "estimated".to_string(),
+            },
+            active_projects: 1,
+            active_sessions: 1,
+            providers: vec![UsageOverviewProvider {
+                provider: "claude".to_string(),
+                tokens: 100,
+                tokens_input: 80,
+                tokens_output: 20,
+                tokens_cache_read: 0,
+                tokens_cache_write: 0,
+                tokens_thoughts: 0,
+                cost: Some(2.0),
+                cost_detail: UsageCost {
+                    amount: Some(2.0),
+                    kind: "estimated".to_string(),
+                    basis: "local-pricing".to_string(),
+                    confidence: "estimated".to_string(),
+                },
+                share_percent: 100.0,
+                trend: vec![1, 2],
+            }],
+            trend: Vec::new(),
+            top_models: Vec::new(),
+            top_projects: Vec::new(),
+        };
+        merge_cursor_overview(&mut overview);
+
+        let cursor = overview.providers.iter().find(|provider| provider.provider == "cursor").unwrap();
+        assert_eq!(cursor.tokens, 35);
+        assert_eq!(overview.total_tokens, 135);
+        assert_eq!(overview.top_models[0].label, "grok");
+        assert_eq!(overview.total_cost_detail.kind, "mixed");
+
+        PROVIDER_CACHE.lock().unwrap().cursor.cache = previous;
     }
 }

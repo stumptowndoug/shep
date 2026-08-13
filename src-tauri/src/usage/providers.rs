@@ -4,8 +4,8 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
-use super::helpers::{home_join, run_command};
-use super::types::UsageWindowSnapshot;
+use super::helpers::{home_join, now_epoch_seconds, run_command};
+use super::types::{LocalUsageDetails, UsageCost, UsageNamedTokens, UsageWindowSnapshot};
 
 /// Fetch Codex rate limit windows from ChatGPT API.
 pub fn codex_provider_windows() -> Result<Vec<UsageWindowSnapshot>, String> {
@@ -61,11 +61,74 @@ fn codex_rate_window(value: &Value) -> Option<UsageWindowSnapshot> {
     Some(percent_window("codex", label, value))
 }
 
-/// Fetch the same billing-period utilization displayed by Cursor CLI's `/usage`.
-pub fn cursor_provider_windows() -> Result<(Vec<UsageWindowSnapshot>, Vec<UsageWindowSnapshot>), String> {
+#[derive(Debug, Clone, Default)]
+pub struct CursorModelAggregate {
+    pub name: String,
+    pub tokens_input: u64,
+    pub tokens_output: u64,
+    pub tokens_cache_read: u64,
+    pub tokens_cache_write: u64,
+    pub cost: Option<f64>,
+}
+
+impl CursorModelAggregate {
+    pub(super) fn tokens_total(&self) -> u64 {
+        self.tokens_input
+            .saturating_add(self.tokens_output)
+            .saturating_add(self.tokens_cache_read)
+            .saturating_add(self.tokens_cache_write)
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct CursorWindowAggregate {
+    pub tokens_input: u64,
+    pub tokens_output: u64,
+    pub tokens_cache_read: u64,
+    pub tokens_cache_write: u64,
+    pub cost: Option<f64>,
+    pub models: Vec<CursorModelAggregate>,
+}
+
+impl CursorWindowAggregate {
+    pub(super) fn tokens_total(&self) -> u64 {
+        self.tokens_input
+            .saturating_add(self.tokens_output)
+            .saturating_add(self.tokens_cache_read)
+            .saturating_add(self.tokens_cache_write)
+    }
+
+    fn is_empty(&self) -> bool {
+        self.tokens_total() == 0 && self.models.is_empty() && self.cost.is_none()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct CursorProviderData {
+    pub summary: Vec<UsageWindowSnapshot>,
+    pub extra: Vec<UsageWindowSnapshot>,
+    pub window_24h: CursorWindowAggregate,
+    pub window_7d: CursorWindowAggregate,
+    pub window_30d: CursorWindowAggregate,
+}
+
+/// Fetch billing-period utilization plus token/cost aggregates for 24h / 7d / 30d.
+pub fn cursor_provider_data() -> Result<CursorProviderData, String> {
     let token = cursor_access_token()?;
+    let (summary, extra) = cursor_period_usage(&token)?;
+    Ok(CursorProviderData {
+        summary,
+        extra,
+        window_24h: cursor_window_aggregate(&token, 86_400).unwrap_or_default(),
+        window_7d: cursor_window_aggregate(&token, 604_800).unwrap_or_default(),
+        window_30d: cursor_window_aggregate(&token, 2_592_000).unwrap_or_default(),
+    })
+}
+
+fn cursor_dashboard_post(token: &str, method: &str, body: &str) -> Result<String, String> {
     let authorization = format!("Authorization: Bearer {token}");
-    let body = run_command(
+    let url = format!("https://api2.cursor.sh/aiserver.v1.DashboardService/{method}");
+    run_command(
         "curl",
         &[
             "-sS", "--max-time", "10", "-X", "POST",
@@ -74,11 +137,21 @@ pub fn cursor_provider_windows() -> Result<(Vec<UsageWindowSnapshot>, Vec<UsageW
             "-H", "Connect-Protocol-Version: 1",
             "-H", "x-cursor-client-type: cli",
             "-H", "x-cursor-client-version: cli-shep",
-            "-d", "{}",
-            "https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage",
+            "-d", body,
+            &url,
         ],
-    )?;
-    cursor_parse_period_usage(&body)
+    )
+}
+
+fn cursor_period_usage(token: &str) -> Result<(Vec<UsageWindowSnapshot>, Vec<UsageWindowSnapshot>), String> {
+    cursor_parse_period_usage(&cursor_dashboard_post(token, "GetCurrentPeriodUsage", "{}")?)
+}
+
+fn cursor_window_aggregate(token: &str, window_secs: u64) -> Result<CursorWindowAggregate, String> {
+    let end_ms = now_epoch_seconds().saturating_mul(1000);
+    let start_ms = end_ms.saturating_sub(window_secs.saturating_mul(1000));
+    let body = format!(r#"{{"startDate":"{start_ms}","endDate":"{end_ms}"}}"#);
+    cursor_parse_aggregated_usage(&cursor_dashboard_post(token, "GetAggregatedUsageEvents", &body)?)
 }
 
 fn cursor_access_token() -> Result<String, String> {
@@ -182,9 +255,142 @@ fn cursor_parse_period_usage(body: &str) -> Result<(Vec<UsageWindowSnapshot>, Ve
     Ok((summary, extra))
 }
 
+fn cursor_parse_aggregated_usage(body: &str) -> Result<CursorWindowAggregate, String> {
+    let json: Value = serde_json::from_str(body)
+        .map_err(|e| format!("Failed to parse Cursor aggregate usage: {e}"))?;
+    if let Some(code) = json.get("code") {
+        let message = json.get("message").and_then(Value::as_str).unwrap_or("request failed");
+        return Err(format!("Cursor aggregate usage API returned {code}: {message}"));
+    }
+
+    let mut models: Vec<CursorModelAggregate> = json
+        .get("aggregations")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(cursor_model_aggregate)
+        .collect();
+    models.sort_by(|a, b| b.tokens_total().cmp(&a.tokens_total()));
+
+    let tokens_input = cursor_u64(json.get("totalInputTokens"))
+        .or_else(|| Some(models.iter().map(|model| model.tokens_input).sum()));
+    let tokens_output = cursor_u64(json.get("totalOutputTokens"))
+        .or_else(|| Some(models.iter().map(|model| model.tokens_output).sum()));
+    let tokens_cache_write = cursor_u64(json.get("totalCacheWriteTokens"))
+        .or_else(|| Some(models.iter().map(|model| model.tokens_cache_write).sum()));
+    let tokens_cache_read = cursor_u64(json.get("totalCacheReadTokens"))
+        .or_else(|| Some(models.iter().map(|model| model.tokens_cache_read).sum()));
+    let cost = cursor_cents_to_usd(json.get("totalCostCents")).or_else(|| {
+        let total: f64 = models.iter().filter_map(|model| model.cost).sum();
+        (total > 0.0).then_some(total)
+    });
+
+    Ok(CursorWindowAggregate {
+        tokens_input: tokens_input.unwrap_or(0),
+        tokens_output: tokens_output.unwrap_or(0),
+        tokens_cache_read: tokens_cache_read.unwrap_or(0),
+        tokens_cache_write: tokens_cache_write.unwrap_or(0),
+        cost,
+        models,
+    })
+}
+
+fn cursor_model_aggregate(value: &Value) -> Option<CursorModelAggregate> {
+    let name = value
+        .get("modelIntent")
+        .or_else(|| value.get("model_intent"))
+        .and_then(Value::as_str)
+        .filter(|name| !name.is_empty())?
+        .to_string();
+    Some(CursorModelAggregate {
+        name,
+        tokens_input: cursor_u64(value.get("inputTokens").or_else(|| value.get("input_tokens"))).unwrap_or(0),
+        tokens_output: cursor_u64(value.get("outputTokens").or_else(|| value.get("output_tokens"))).unwrap_or(0),
+        tokens_cache_read: cursor_u64(value.get("cacheReadTokens").or_else(|| value.get("cache_read_tokens"))).unwrap_or(0),
+        tokens_cache_write: cursor_u64(value.get("cacheWriteTokens").or_else(|| value.get("cache_write_tokens"))).unwrap_or(0),
+        cost: cursor_cents_to_usd(value.get("totalCents").or_else(|| value.get("total_cents"))),
+    })
+}
+
+fn cursor_u64(value: Option<&Value>) -> Option<u64> {
+    cursor_number(value).map(|value| value.max(0.0).round() as u64)
+}
+
+fn cursor_cents_to_usd(value: Option<&Value>) -> Option<f64> {
+    cursor_number(value).map(|cents| cents / 100.0)
+}
+
+fn cursor_included_cost(amount: Option<f64>) -> UsageCost {
+    UsageCost {
+        amount,
+        kind: "included".to_string(),
+        basis: "subscription".to_string(),
+        confidence: "official".to_string(),
+    }
+}
+
+pub fn cursor_local_details(data: &CursorProviderData) -> Option<LocalUsageDetails> {
+    if data.window_24h.is_empty() && data.window_7d.is_empty() && data.window_30d.is_empty() {
+        return None;
+    }
+    let primary = &data.window_30d;
+    let has_type_breakdown = primary.tokens_input > 0 || primary.tokens_output > 0;
+    let cost_7d = data.window_7d.cost;
+    let cost_30d = primary.cost;
+    Some(LocalUsageDetails {
+        source_type: "local".to_string(),
+        confidence: "official".to_string(),
+        tokens_total: primary.tokens_total(),
+        tokens_input: has_type_breakdown.then_some(primary.tokens_input),
+        tokens_output: has_type_breakdown.then_some(primary.tokens_output),
+        tokens_cached: has_type_breakdown.then_some(
+            primary.tokens_cache_read.saturating_add(primary.tokens_cache_write),
+        ),
+        tokens_thoughts: None,
+        tokens_5h: 0,
+        tokens_7d: data.window_7d.tokens_total(),
+        tokens_30d: primary.tokens_total(),
+        cost_total: cost_30d,
+        cost_total_detail: cursor_included_cost(cost_30d),
+        cost_month: cost_30d,
+        cost_month_detail: cursor_included_cost(cost_30d),
+        cost_5h: None,
+        cost_5h_detail: cursor_included_cost(None),
+        cost_7d,
+        cost_7d_detail: cursor_included_cost(cost_7d),
+        cost_30d,
+        cost_30d_detail: cursor_included_cost(cost_30d),
+        top_models: primary
+            .models
+            .iter()
+            .map(|model| UsageNamedTokens {
+                name: model.name.clone(),
+                tokens: model.tokens_total(),
+                cost: model.cost,
+                cost_detail: cursor_included_cost(model.cost),
+            })
+            .collect(),
+        top_tasks: Vec::new(),
+        top_projects: Vec::new(),
+    })
+}
+
+pub fn cursor_window_for_overview<'a>(data: &'a CursorProviderData, window: &str) -> Option<&'a CursorWindowAggregate> {
+    let aggregate = match window {
+        "24h" => &data.window_24h,
+        "7d" => &data.window_7d,
+        "30d" => &data.window_30d,
+        _ => return None,
+    };
+    (!aggregate.is_empty()).then_some(aggregate)
+}
+
 #[cfg(test)]
 mod cursor_tests {
-    use super::cursor_parse_period_usage;
+    use super::{
+        cursor_local_details, cursor_parse_aggregated_usage, cursor_parse_period_usage,
+        cursor_window_for_overview, CursorModelAggregate, CursorProviderData, CursorWindowAggregate,
+    };
 
     #[test]
     fn maps_cursor_billing_percentages_and_millisecond_reset() {
@@ -207,6 +413,80 @@ mod cursor_tests {
         let error = cursor_parse_period_usage(r#"{"code":"unauthenticated","message":"not logged in"}"#)
             .expect_err("auth error");
         assert!(error.contains("cursor-agent login"));
+    }
+
+    #[test]
+    fn maps_cursor_aggregate_tokens_cost_and_models() {
+        let aggregate = cursor_parse_aggregated_usage(r#"{
+            "aggregations": [
+                {
+                    "modelIntent": "cursor-grok-4.6-high-fast",
+                    "inputTokens": "833991",
+                    "outputTokens": "130654",
+                    "cacheReadTokens": "10320640",
+                    "totalCents": 760.4595,
+                    "tier": 2
+                },
+                {
+                    "modelIntent": "default",
+                    "inputTokens": "16201",
+                    "outputTokens": "517",
+                    "cacheReadTokens": "16896",
+                    "totalCents": 2.757725,
+                    "tier": 2
+                }
+            ],
+            "totalInputTokens": "850192",
+            "totalOutputTokens": "131171",
+            "totalCacheReadTokens": "10337536",
+            "totalCostCents": 763.217225
+        }"#).expect("aggregate");
+        assert_eq!(aggregate.tokens_input, 850192);
+        assert_eq!(aggregate.tokens_output, 131171);
+        assert_eq!(aggregate.tokens_cache_read, 10337536);
+        assert!((aggregate.cost.unwrap() - 7.63217225).abs() < 0.0001);
+        assert_eq!(aggregate.models[0].name, "cursor-grok-4.6-high-fast");
+        assert_eq!(aggregate.models[1].name, "default");
+        assert_eq!(aggregate.models[0].tokens_total(), 833991 + 130654 + 10320640);
+    }
+
+    #[test]
+    fn local_details_use_30d_totals_and_7d_window() {
+        let data = CursorProviderData {
+            summary: Vec::new(),
+            extra: Vec::new(),
+            window_24h: CursorWindowAggregate::default(),
+            window_7d: CursorWindowAggregate {
+                tokens_input: 10,
+                tokens_output: 5,
+                tokens_cache_read: 20,
+                tokens_cache_write: 0,
+                cost: Some(1.25),
+                models: Vec::new(),
+            },
+            window_30d: CursorWindowAggregate {
+                tokens_input: 100,
+                tokens_output: 50,
+                tokens_cache_read: 200,
+                tokens_cache_write: 0,
+                cost: Some(4.5),
+                models: vec![CursorModelAggregate {
+                    name: "cursor-grok-4.6-high-fast".to_string(),
+                    tokens_input: 100,
+                    tokens_output: 50,
+                    tokens_cache_read: 200,
+                    tokens_cache_write: 0,
+                    cost: Some(4.5),
+                }],
+            },
+        };
+        let details = cursor_local_details(&data).expect("details");
+        assert_eq!(details.tokens_7d, 35);
+        assert_eq!(details.tokens_30d, 350);
+        assert_eq!(details.tokens_input, Some(100));
+        assert_eq!(details.top_models[0].name, "cursor-grok-4.6-high-fast");
+        assert_eq!(cursor_window_for_overview(&data, "7d").unwrap().tokens_total(), 35);
+        assert!(cursor_window_for_overview(&data, "365d").is_none());
     }
 }
 
