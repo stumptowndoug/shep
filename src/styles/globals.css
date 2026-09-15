@@ -459,7 +459,7 @@ select {
   padding: 6px 9px;
 }
 .usage-provider-limits {
-  width: 224px;
+  width: 242px;
   flex-shrink: 0;
   margin-left: auto;
   display: grid;
@@ -467,7 +467,7 @@ select {
 }
 .usage-provider-limits__row {
   display: grid;
-  grid-template-columns: 1fr 64px 40px;
+  grid-template-columns: 1fr 128px;
   align-items: center;
   gap: 6px;
 }
@@ -476,38 +476,71 @@ select {
   color: var(--text-secondary);
 }
 .usage-provider-limits__heading {
-  width: 110px;
-  text-align: center;
+  width: 128px;
+  text-align: right;
   font-size: 11px;
   color: var(--text-muted);
 }
-.usage-limit-toggle {
-  padding: 5px 0;
-  border-radius: 6px;
-  border: 1px solid var(--glass-border);
+.usage-limit-picker {
+  position: relative;
+}
+.usage-limit-picker summary {
+  list-style: none;
+  padding: 7px 0 7px 6px;
+  text-align: right;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  border-radius: 4px;
+}
+.usage-limit-picker summary::-webkit-details-marker { display: none; }
+.usage-limit-picker__chevron { margin-left: 10px; color: var(--text-muted); }
+.usage-limit-picker summary:hover { color: var(--text-primary); }
+.usage-limit-picker__popover {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 30;
+  width: 174px;
+  padding: 5px;
+  border-radius: 8px;
+  border: 1px solid var(--border-active);
+  background: var(--app-bg);
+  box-shadow: 0 8px 24px #0004;
+}
+.usage-limit-picker__option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 9px;
+  border-radius: 4px;
+  border: 0;
   background: transparent;
   color: var(--text-muted);
   font-size: 12px;
   cursor: pointer;
   transition: background 120ms ease, color 120ms ease;
 }
-.usage-limit-toggle[aria-pressed="true"] {
+.usage-limit-picker__option[aria-pressed="true"] {
   background: var(--surface-active);
   border-color: var(--border-active);
   color: var(--text-primary);
 }
-.usage-limit-toggle:hover {
+.usage-limit-picker__option:hover {
   background: var(--surface-hover);
   color: var(--text-primary);
 }
-.usage-limit-toggle:focus-visible {
+.usage-limit-picker summary:focus-visible,
+.usage-limit-picker__option:focus-visible {
   outline: 2px solid var(--text-secondary);
   outline-offset: 2px;
 }
-.usage-limit-toggle:disabled {
+.usage-limit-picker__option:disabled {
   opacity: 0.4;
   cursor: default;
 }
+.usage-limit-picker__state { font-size: 11px; color: var(--text-muted); }
 .usage-provider-row__budget-input {
   width: 100px;
   padding: 5px 10px;
