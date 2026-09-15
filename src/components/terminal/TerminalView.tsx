@@ -27,6 +27,7 @@ import { useTerminalSettingsStore } from "../../stores/useTerminalSettingsStore"
 import { useTerminalStore } from "../../stores/useTerminalStore";
 import { terminalCache } from "./terminalCache";
 import { reconcileTerminalRenderer } from "./terminalRenderer";
+import { TerminalInputGuard } from "./TerminalInputGuard";
 import {
   shouldSuppressCursorDim,
   terminalMinimumContrastRatio,
@@ -217,6 +218,7 @@ export default function TerminalView({
 
     if (!mountedRef.current) {
       term.open(containerRef.current);
+      term.loadAddon(new TerminalInputGuard());
       mountedRef.current = true;
 
       // Load WebGL after open() so it can access the DOM. Initialization or

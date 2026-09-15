@@ -8,3 +8,5 @@ target/
 latest.json
 .claude/settings.local.json
 TODO.md
+test-results/
+playwright-report/
