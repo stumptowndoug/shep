@@ -619,7 +619,10 @@ export default function SettingsPanel() {
 
       {/* ── Usage ──────────────────────────────────────────── */}
       <section className="settings-section">
-        <h2 className="section-label !p-0 settings-section__header">Usage Providers</h2>
+        <div className="flex items-center justify-between settings-section__header">
+          <h2 className="section-label !p-0">Usage Providers</h2>
+          <span className="usage-provider-limits__heading">Show limits</span>
+        </div>
 
         <div className="usage-provider-grid">
           {ALL_USAGE_PROVIDERS.map((provider) => {
@@ -634,7 +637,9 @@ export default function SettingsPanel() {
                   <span>{label}</span>
                 </span>
 
+                <div className="usage-provider-row__controls">
                 <button
+                  disabled={usageIsSaving}
                   onClick={() => void updateProvider(provider, { show: !config.show })}
                   className={`option-card option-card--compact ${config.show ? "selected" : ""}`}
                 >
@@ -646,6 +651,7 @@ export default function SettingsPanel() {
                     {(["subscription", "custom"] as BudgetMode[]).map((mode) => (
                       <button
                         key={mode}
+                        disabled={usageIsSaving}
                         onClick={() => void updateProvider(provider, { budgetMode: mode })}
                         className={`option-card option-card--compact ${config.budgetMode === mode ? "selected" : ""}`}
                       >
@@ -681,14 +687,14 @@ export default function SettingsPanel() {
                     )}
                   </>
                 )}
+                </div>
+                <UsageLimitSettings provider={provider} settings={usageSettings} saving={usageIsSaving}
+                  onChange={(key, show) => void setLimitVisibility(key, show)} />
               </div>
             );
           })}
 
         </div>
-
-        <UsageLimitSettings settings={usageSettings} saving={usageIsSaving}
-          onChange={(key, show) => void setLimitVisibility(key, show)} />
 
         {usageIsSaving && <div className="mt-2 text-xs text-[var(--text-muted)]">Saving...</div>}
         {usageError && <div className="mt-2 text-sm text-red-300">{usageError}</div>}

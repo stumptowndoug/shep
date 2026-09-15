@@ -435,6 +435,7 @@ select {
 }
 .usage-provider-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   min-height: 36px;
@@ -447,6 +448,65 @@ select {
   flex-shrink: 0;
   font-size: 13px;
   color: var(--text-secondary);
+}
+.usage-provider-row__controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.usage-provider-row__controls .option-card--compact {
+  padding: 6px 9px;
+}
+.usage-provider-limits {
+  width: 224px;
+  flex-shrink: 0;
+  margin-left: auto;
+  display: grid;
+  gap: 6px;
+}
+.usage-provider-limits__row {
+  display: grid;
+  grid-template-columns: 1fr 64px 40px;
+  align-items: center;
+  gap: 6px;
+}
+.usage-provider-limits__label {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.usage-provider-limits__heading {
+  width: 110px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.usage-limit-toggle {
+  padding: 5px 0;
+  border-radius: 6px;
+  border: 1px solid var(--glass-border);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+.usage-limit-toggle[aria-pressed="true"] {
+  background: var(--surface-active);
+  border-color: var(--border-active);
+  color: var(--text-primary);
+}
+.usage-limit-toggle:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+.usage-limit-toggle:focus-visible {
+  outline: 2px solid var(--text-secondary);
+  outline-offset: 2px;
+}
+.usage-limit-toggle:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 .usage-provider-row__budget-input {
   width: 100px;
