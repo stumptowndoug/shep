@@ -15,6 +15,7 @@ import {
   getProviderLabel,
   paceLabel,
   shouldShowUsageWindow,
+  hasVisibleUsageLimits,
   syntheticMonthlyBudgetWindow,
   type PaceStatus,
 } from "../usage/usageHelpers";
@@ -73,15 +74,17 @@ function buildUtilizationItems(
     const config = settings[provider];
     const snap = snapshots[provider];
     if (!config.show || config.budgetMode !== "subscription") return;
+    if (!hasVisibleUsageLimits(provider, settings)) return;
 
     const windows = (snap?.summaryWindows ?? [])
       .filter((w) =>
         w.usedPercent != null
         && w.sourceType === "provider"
-        && shouldShowUsageWindow(provider, w.window, settings.showClaudeFiveHourLimit)
+        && shouldShowUsageWindow(provider, w.window, settings, w.windowId)
       );
 
     if (windows.length === 0) {
+      if (snap?.summaryWindows.some((w) => w.sourceType === "provider" && w.usedPercent != null)) return;
       items.push({
         id: `pending-${provider}`,
         provider,

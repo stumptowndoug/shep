@@ -1,7 +1,8 @@
 import { defineConfig } from "@playwright/test";
 
 export default defineConfig({
-  testDir: "./tests/terminal-input",
+  testDir: "./tests",
+  testMatch: "**/*.spec.ts",
   fullyParallel: true,
   use: { baseURL: "http://127.0.0.1:5176" },
   projects: [

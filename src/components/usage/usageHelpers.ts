@@ -1,4 +1,5 @@
 import type { ConfigurableUsageProvider, ProviderUsageSnapshot, UsageProvider, UsageWindowSnapshot } from "../../lib/types";
+import type { UsageLimitVisibility } from "../../lib/usageLimitSettings";
 
 const WINDOW_PRIORITY = ["5h", "7d", "billing", "30d"];
 export const ALL_USAGE_PROVIDERS: ConfigurableUsageProvider[] = ["claude", "codex", "cursor", "antigravity", "opencode", "pi", "grok"];
@@ -51,9 +52,33 @@ export function getProviderLabel(provider: UsageProvider): string {
 export function shouldShowUsageWindow(
   provider: UsageProvider,
   window: string,
-  showClaudeFiveHourLimit: boolean,
+  settings: UsageLimitVisibility,
+  windowId = "",
 ): boolean {
-  return provider !== "claude" || window !== "5h" || showClaudeFiveHourLimit;
+  if (provider === "claude") {
+    return window === "5h" ? settings.showClaudeFiveHourLimit : settings.showClaudeWeeklyLimit;
+  }
+  if (provider === "antigravity") {
+    switch (windowId) {
+      case "antigravity-gemini-weekly": return settings.showAntigravityGeminiWeeklyLimit;
+      case "antigravity-gemini-5h": return settings.showAntigravityGeminiFiveHourLimit;
+      case "antigravity-3p-weekly": return settings.showAntigravityClaudeWeeklyLimit;
+      case "antigravity-3p-5h": return settings.showAntigravityClaudeFiveHourLimit;
+    }
+    // Legacy local-service quotas have model-family IDs but no weekly/5h split.
+    if (window === "24h_claude") return settings.showAntigravityClaudeWeeklyLimit;
+    if (window === "24h_gemini_pro" || window === "24h_gemini_flash") return settings.showAntigravityGeminiWeeklyLimit;
+    return hasVisibleUsageLimits(provider, settings);
+  }
+  return true;
+}
+
+export function hasVisibleUsageLimits(provider: UsageProvider, settings: UsageLimitVisibility): boolean {
+  if (provider === "claude") return settings.showClaudeWeeklyLimit || settings.showClaudeFiveHourLimit;
+  if (provider === "antigravity") return settings.showAntigravityGeminiWeeklyLimit
+    || settings.showAntigravityGeminiFiveHourLimit || settings.showAntigravityClaudeWeeklyLimit
+    || settings.showAntigravityClaudeFiveHourLimit;
+  return true;
 }
 
 export function formatPercent(value: number | null): string {

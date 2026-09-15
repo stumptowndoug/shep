@@ -228,10 +228,16 @@ export default function AppShell() {
   // Provider quota APIs refresh independently in the backend. Pull each
   // completed result immediately instead of waiting for the polling interval.
   useEffect(() => {
+    let disposed = false;
     const unlisten = listen("usage-provider-refresh-complete", () => {
       void fetchUsageSnapshots();
     });
-    return () => { unlisten.then((f) => f()); };
+    // The initial startup request can finish before listen() resolves. Read
+    // the cache once the listener is installed so that result cannot be missed.
+    void unlisten.then(() => {
+      if (!disposed) void fetchUsageSnapshots();
+    });
+    return () => { disposed = true; unlisten.then((f) => f()); };
   }, [fetchUsageSnapshots]);
 
   const handleSelectRepo = useCallback(

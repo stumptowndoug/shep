@@ -251,8 +251,18 @@ fn default_provider_custom_hidden() -> ProviderBudgetConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UsageSettings {
+    #[serde(default = "default_true", rename = "showClaudeWeeklyLimit")]
+    pub show_claude_weekly_limit: bool,
     #[serde(default, rename = "showClaudeFiveHourLimit")]
     pub show_claude_five_hour_limit: bool,
+    #[serde(default = "default_true", rename = "showAntigravityGeminiWeeklyLimit")]
+    pub show_antigravity_gemini_weekly_limit: bool,
+    #[serde(default, rename = "showAntigravityGeminiFiveHourLimit")]
+    pub show_antigravity_gemini_five_hour_limit: bool,
+    #[serde(default, rename = "showAntigravityClaudeWeeklyLimit")]
+    pub show_antigravity_claude_weekly_limit: bool,
+    #[serde(default, rename = "showAntigravityClaudeFiveHourLimit")]
+    pub show_antigravity_claude_five_hour_limit: bool,
     #[serde(default = "default_provider_subscription")]
     pub claude: ProviderBudgetConfig,
     #[serde(default = "default_provider_subscription")]
@@ -272,7 +282,12 @@ pub struct UsageSettings {
 impl Default for UsageSettings {
     fn default() -> Self {
         UsageSettings {
+            show_claude_weekly_limit: true,
             show_claude_five_hour_limit: false,
+            show_antigravity_gemini_weekly_limit: true,
+            show_antigravity_gemini_five_hour_limit: false,
+            show_antigravity_claude_weekly_limit: false,
+            show_antigravity_claude_five_hour_limit: false,
             claude: ProviderBudgetConfig::default_subscription(),
             codex: ProviderBudgetConfig::default_subscription(),
             cursor: ProviderBudgetConfig::default_subscription(),
@@ -379,5 +394,24 @@ mod tests {
         let serialized = serde_yaml::to_string(&settings).unwrap();
 
         assert!(!serialized.contains("gemini:"));
+    }
+
+    #[test]
+    fn usage_limit_settings_migrate_and_round_trip() {
+        let mut settings: UsageSettings = serde_yaml::from_str("showClaudeFiveHourLimit: true\n").unwrap();
+        assert!(settings.show_claude_five_hour_limit);
+        assert!(settings.show_claude_weekly_limit);
+        assert!(settings.show_antigravity_gemini_weekly_limit);
+        assert!(!settings.show_antigravity_gemini_five_hour_limit);
+        assert!(!settings.show_antigravity_claude_weekly_limit);
+        assert!(!settings.show_antigravity_claude_five_hour_limit);
+        settings.show_claude_weekly_limit = false;
+        settings.show_antigravity_gemini_weekly_limit = false;
+        settings.show_antigravity_gemini_five_hour_limit = true;
+        settings.show_antigravity_claude_weekly_limit = true;
+        settings.show_antigravity_claude_five_hour_limit = true;
+        let serialized = serde_yaml::to_string(&settings).unwrap();
+        let restored: UsageSettings = serde_yaml::from_str(&serialized).unwrap();
+        assert_eq!(serde_json::to_value(&settings).unwrap(), serde_json::to_value(&restored).unwrap());
     }
 }

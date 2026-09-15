@@ -539,19 +539,32 @@ pub fn claude_provider_windows() -> Result<(Vec<UsageWindowSnapshot>, Vec<UsageW
             &format!("Authorization: Bearer {token}"),
             "-H",
             "anthropic-beta: oauth-2025-04-20",
+            "--write-out", "\n%{http_code}",
             "https://api.anthropic.com/api/oauth/usage",
         ],
     )?;
-    let json: Value = serde_json::from_str(&body)
+    parse_claude_usage_response(&body)
+}
+
+fn parse_claude_usage_response(body: &str) -> Result<(Vec<UsageWindowSnapshot>, Vec<UsageWindowSnapshot>), String> {
+    let (body, status) = body.rsplit_once('\n')
+        .ok_or_else(|| "Claude usage request returned no HTTP status".to_string())?;
+    match status.trim() {
+        "200" => {},
+        "401" | "403" => return Err("Claude authorization failed. Open Claude Code and sign in again, then refresh usage.".to_string()),
+        "429" => return Err("Claude usage is rate limited. Shep will retry automatically.".to_string()),
+        status => return Err(format!("Claude usage request failed (HTTP {status}). Shep will retry automatically.")),
+    }
+    let json: Value = serde_json::from_str(body)
         .map_err(|e| format!("Failed to parse Claude usage response: {e}"))?;
 
     let mut primary = Vec::new();
     let mut extra = Vec::new();
 
-    if let Some(five_hour) = json.get("five_hour") {
+    if let Some(five_hour) = json.get("five_hour").filter(|v| v.get("utilization").and_then(Value::as_f64).is_some()) {
         primary.push(claude_window("5h", five_hour));
     }
-    if let Some(seven_day) = json.get("seven_day") {
+    if let Some(seven_day) = json.get("seven_day").filter(|v| v.get("utilization").and_then(Value::as_f64).is_some()) {
         primary.push(claude_window("7d", seven_day));
     }
     if let Some(seven_day_sonnet) = json.get("seven_day_sonnet") {
@@ -585,6 +598,32 @@ fn claude_window(window: &str, value: &Value) -> UsageWindowSnapshot {
         reset_at: value.get("resets_at").and_then(Value::as_str).map(ToString::to_string),
         token_total: None,
         pace_status: None,
+    }
+}
+
+#[cfg(test)]
+mod claude_usage_tests {
+    use super::parse_claude_usage_response;
+
+    #[test]
+    fn parses_valid_windows_and_ignores_null_windows() {
+        let (primary, extra) = parse_claude_usage_response("{\"five_hour\":null,\"seven_day\":{\"utilization\":12},\"seven_day_sonnet\":null}\n200").unwrap();
+        assert_eq!(primary.len(), 1);
+        assert_eq!(primary[0].used_percent, Some(12.0));
+        assert!(extra.is_empty());
+        assert!(parse_claude_usage_response("{\"five_hour\":null,\"seven_day\":null}\n200").is_err());
+    }
+
+    #[test]
+    fn reports_actionable_http_errors_without_response_contents() {
+        for code in [401, 403] {
+            let error = parse_claude_usage_response(&format!("private response\n{code}")).unwrap_err();
+            assert!(error.contains("sign in again"));
+            assert!(!error.contains("private response"));
+        }
+        assert!(parse_claude_usage_response("{}\n429").unwrap_err().contains("rate limited"));
+        assert!(parse_claude_usage_response("{}\n503").unwrap_err().contains("HTTP 503"));
+        assert!(parse_claude_usage_response("invalid\n200").is_err());
     }
 }
 

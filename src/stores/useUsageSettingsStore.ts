@@ -1,9 +1,10 @@
 import { create } from "zustand";
 import { getUsageSettings, saveUsageSettings } from "../lib/tauri";
 import type { ConfigurableUsageProvider, UsageSettings, ProviderBudgetConfig } from "../lib/types";
+import { DEFAULT_USAGE_LIMITS, type UsageLimitKey } from "../lib/usageLimitSettings";
 
 const DEFAULT_SETTINGS: UsageSettings = {
-  showClaudeFiveHourLimit: false,
+  ...DEFAULT_USAGE_LIMITS,
   claude: { show: true, budgetMode: "subscription", monthlyBudget: null },
   codex: { show: true, budgetMode: "subscription", monthlyBudget: null },
   cursor: { show: true, budgetMode: "subscription", monthlyBudget: null },
@@ -20,7 +21,7 @@ interface UsageSettingsStore {
   error: string | null;
   loadSettings: () => Promise<void>;
   updateProvider: (provider: ConfigurableUsageProvider, patch: Partial<ProviderBudgetConfig>) => Promise<void>;
-  setShowClaudeFiveHourLimit: (show: boolean) => Promise<void>;
+  setLimitVisibility: (key: UsageLimitKey, show: boolean) => Promise<void>;
   isProviderEnabled: (provider: ConfigurableUsageProvider) => boolean;
   getProviderConfig: (provider: ConfigurableUsageProvider) => ProviderBudgetConfig;
 }
@@ -56,9 +57,9 @@ export const useUsageSettingsStore = create<UsageSettingsStore>((set, get) => ({
       });
     }
   },
-  setShowClaudeFiveHourLimit: async (show) => {
+  setLimitVisibility: async (key, show) => {
     const prev = get().settings;
-    const next = { ...prev, showClaudeFiveHourLimit: show };
+    const next = { ...prev, [key]: show };
     set({ settings: next, isSaving: true });
     try {
       await saveUsageSettings(next);

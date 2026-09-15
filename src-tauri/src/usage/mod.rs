@@ -570,6 +570,11 @@ fn claude_snapshot(conn: &rusqlite::Connection) -> ProviderUsageSnapshot {
         Some(ProviderCacheData::Claude(p, e)) => Some((p.clone(), e.clone())),
         _ => None,
     };
+    let error = if cached_data.is_none() && !cache.claude.last_error.is_empty() {
+        Some(cache.claude.last_error.clone())
+    } else {
+        None
+    };
     drop(cache);
 
     let mut summary_windows = Vec::new();
@@ -608,7 +613,7 @@ fn claude_snapshot(conn: &rusqlite::Connection) -> ProviderUsageSnapshot {
         summary_windows,
         extra_windows,
         local_details: local,
-        error: None,
+        error,
     }
 }
 

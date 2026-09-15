@@ -12,6 +12,7 @@ import { useRepoStore } from "../../stores/useRepoStore";
 import { useTodoStore } from "../../stores/useTodoStore";
 import { useTerminalSettingsStore } from "../../stores/useTerminalSettingsStore";
 import { useUsageSettingsStore } from "../../stores/useUsageSettingsStore";
+import { UsageLimitSettings } from "./UsageLimitSettings";
 import { useUpdateStore } from "../../stores/useUpdateStore";
 import { assistantLogoSrc, getAssistantLogoClass } from "../../lib/assistantLogos";
 import {
@@ -93,7 +94,7 @@ export default function SettingsPanel() {
   const usageError = useUsageSettingsStore((s) => s.error);
   const loadUsageSettings = useUsageSettingsStore((s) => s.loadSettings);
   const updateProvider = useUsageSettingsStore((s) => s.updateProvider);
-  const setShowClaudeFiveHourLimit = useUsageSettingsStore((s) => s.setShowClaudeFiveHourLimit);
+  const setLimitVisibility = useUsageSettingsStore((s) => s.setLimitVisibility);
   const [budgetInputs, setBudgetInputs] = useState<Record<string, string>>({});
 
   const updateStatus = useUpdateStore((s) => s.status);
@@ -684,16 +685,10 @@ export default function SettingsPanel() {
             );
           })}
 
-          <div className="usage-provider-row">
-            <span className="usage-provider-row__name">Claude 5h</span>
-            <button
-              onClick={() => void setShowClaudeFiveHourLimit(!usageSettings.showClaudeFiveHourLimit)}
-              className={`option-card option-card--compact ${usageSettings.showClaudeFiveHourLimit ? "selected" : ""}`}
-            >
-              {usageSettings.showClaudeFiveHourLimit ? "On" : "Off"}
-            </button>
-          </div>
         </div>
+
+        <UsageLimitSettings settings={usageSettings} saving={usageIsSaving}
+          onChange={(key, show) => void setLimitVisibility(key, show)} />
 
         {usageIsSaving && <div className="mt-2 text-xs text-[var(--text-muted)]">Saving...</div>}
         {usageError && <div className="mt-2 text-sm text-red-300">{usageError}</div>}

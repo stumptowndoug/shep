@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { computePace, formatPercent, shouldShowUsageWindow } from "../src/components/usage/usageHelpers.ts";
+import { computePace, formatPercent, shouldShowUsageWindow, hasVisibleUsageLimits } from "../src/components/usage/usageHelpers.ts";
+import { DEFAULT_USAGE_LIMITS } from "../src/lib/usageLimitSettings.ts";
 import type { UsageWindowSnapshot } from "../src/lib/types.ts";
 
 function usageWindow(
@@ -34,10 +35,34 @@ test("positive sub-one utilization matches vendor display conventions", () => {
 });
 
 test("Claude's 5h limit is opt-in while its other limits remain visible", () => {
-  assert.equal(shouldShowUsageWindow("claude", "5h", false), false);
-  assert.equal(shouldShowUsageWindow("claude", "5h", true), true);
-  assert.equal(shouldShowUsageWindow("claude", "7d", false), true);
-  assert.equal(shouldShowUsageWindow("codex", "5h", false), true);
+  assert.equal(shouldShowUsageWindow("claude", "5h", DEFAULT_USAGE_LIMITS), false);
+  assert.equal(shouldShowUsageWindow("claude", "5h", { ...DEFAULT_USAGE_LIMITS, showClaudeFiveHourLimit: true }), true);
+  assert.equal(shouldShowUsageWindow("claude", "7d", DEFAULT_USAGE_LIMITS), true);
+  assert.equal(shouldShowUsageWindow("codex", "5h", DEFAULT_USAGE_LIMITS), true);
+});
+
+test("each Antigravity pool and time window can be selected independently", () => {
+  const entries = [
+    ["antigravity-gemini-weekly", "showAntigravityGeminiWeeklyLimit", true],
+    ["antigravity-gemini-5h", "showAntigravityGeminiFiveHourLimit", false],
+    ["antigravity-3p-weekly", "showAntigravityClaudeWeeklyLimit", false],
+    ["antigravity-3p-5h", "showAntigravityClaudeFiveHourLimit", false],
+  ] as const;
+  for (const [id, key, visible] of entries) {
+    assert.equal(shouldShowUsageWindow("antigravity", "7d", DEFAULT_USAGE_LIMITS, id), visible);
+    const settings = { ...DEFAULT_USAGE_LIMITS, [key]: !visible };
+    for (const [otherId, otherKey, otherVisible] of entries) {
+      assert.equal(shouldShowUsageWindow("antigravity", "7d", settings, otherId), otherKey === key ? !visible : otherVisible);
+    }
+  }
+});
+
+test("disabling every limit hides the provider; legacy pools follow family preferences", () => {
+  assert.equal(hasVisibleUsageLimits("claude", { ...DEFAULT_USAGE_LIMITS, showClaudeWeeklyLimit: false }), false);
+  assert.equal(hasVisibleUsageLimits("antigravity", { ...DEFAULT_USAGE_LIMITS, showAntigravityGeminiWeeklyLimit: false }), false);
+  assert.equal(shouldShowUsageWindow("claude", "7d", { ...DEFAULT_USAGE_LIMITS, showClaudeWeeklyLimit: false }), false);
+  assert.equal(shouldShowUsageWindow("antigravity", "24h_claude", DEFAULT_USAGE_LIMITS), false);
+  assert.equal(shouldShowUsageWindow("antigravity", "24h_gemini_pro", DEFAULT_USAGE_LIMITS), true);
 });
 
 test("24-hour provider windows compute pace from their own reset", () => {

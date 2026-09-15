@@ -338,6 +338,11 @@ export interface ProviderBudgetConfig {
 
 export interface UsageSettings {
   showClaudeFiveHourLimit: boolean;
+  showClaudeWeeklyLimit: boolean;
+  showAntigravityGeminiWeeklyLimit: boolean;
+  showAntigravityGeminiFiveHourLimit: boolean;
+  showAntigravityClaudeWeeklyLimit: boolean;
+  showAntigravityClaudeFiveHourLimit: boolean;
   claude: ProviderBudgetConfig;
   codex: ProviderBudgetConfig;
   cursor: ProviderBudgetConfig;
