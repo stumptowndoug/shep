@@ -34,6 +34,16 @@ export function UsageLimitSettings({ provider, settings, saving, onChange }: {
           <span className="usage-provider-limits__label">{provider === "antigravity" ? row.label : null}</span>
           <details className="usage-limit-picker"
             onKeyDown={(event) => {
+              if (event.key === "Tab") {
+                const details = event.currentTarget;
+                const stops = details.querySelectorAll("summary, button:not(:disabled)");
+                const boundary = event.shiftKey ? stops[0] : stops[stops.length - 1];
+                if (event.target === boundary) {
+                  // Allow the browser to move focus before closing, including
+                  // WebKit's null-relatedTarget transition out of the page.
+                  window.setTimeout(() => { details.open = false; }, 0);
+                }
+              }
               if (event.key === "Escape") {
                 event.stopPropagation();
                 event.currentTarget.open = false;
