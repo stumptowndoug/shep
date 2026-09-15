@@ -1,4 +1,5 @@
 pub mod db;
+mod antigravity_cli;
 mod helpers;
 pub mod ingest;
 mod providers;

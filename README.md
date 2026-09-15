@@ -111,6 +111,19 @@ Supported today:
 
 Gemini CLI was removed from the launcher after Google deprecated it in favor of Antigravity CLI (consumer requests stop June 18, 2026). If you still use it (e.g. on an enterprise license), run `gemini` from any Shep terminal — historical Gemini usage stays visible in the usage panel.
 
+### Antigravity usage
+
+With `agy` 1.1.11 or newer, Shep reads subscription limits using the CLI's
+authenticated `agy -p /usage --output-format json` report. Sign in through `agy`
+once; Shep uses that existing login to show Gemini and Claude/GPT weekly and
+five-hour limits. This read-only command does not start an agent turn or spend
+model tokens, and works without an interactive Antigravity session open.
+
+Older CLIs and desktop-only installations use the existing running-service
+probe. If usage is unavailable, check that `/usage` works in `agy`. Refreshes
+retain the last successful values in memory; they refresh at most every five
+minutes after success and retry with backoff after failures.
+
 ## Build From Source
 
 ### Install dependencies
