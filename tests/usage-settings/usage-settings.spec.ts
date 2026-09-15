@@ -5,11 +5,11 @@ test("summaries reflect independent limits and keep unavailable providers blank"
   const claude = page.getByLabel("Edit Claude limits", { exact: true });
   await expect(claude).toContainText("Weekly");
   await expect(page.getByLabel("Edit Gemini limits", { exact: true })).toContainText("Weekly");
-  await expect(page.getByLabel("Edit Claude + GPT limits", { exact: true })).toContainText("Hidden");
+  await expect(page.getByLabel("Edit Claude + GPT limits", { exact: true })).toHaveCount(0);
   await expect(page.getByTestId("provider-codex").locator("summary")).toHaveCount(0);
   await expect(page.getByRole("checkbox")).toHaveCount(0);
   await page.screenshot({ path: testInfo.outputPath("usage-settings.png") });
-  for (const [label, weekly] of [["Claude", true], ["Gemini", true], ["Claude + GPT", false]] as const) {
+  for (const [label, weekly] of [["Claude", true], ["Gemini", true]] as const) {
     const summary = page.getByLabel(`Edit ${label} limits`, { exact: true });
     await summary.click();
     const fiveHour = page.getByRole("button", { name: `${label} 5-hour limit`, exact: true });

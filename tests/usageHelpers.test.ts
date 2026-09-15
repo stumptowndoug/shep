@@ -41,12 +41,10 @@ test("Claude's 5h limit is opt-in while its other limits remain visible", () => 
   assert.equal(shouldShowUsageWindow("codex", "5h", DEFAULT_USAGE_LIMITS), true);
 });
 
-test("each Antigravity pool and time window can be selected independently", () => {
+test("Gemini time windows can be selected independently", () => {
   const entries = [
     ["antigravity-gemini-weekly", "showAntigravityGeminiWeeklyLimit", true],
     ["antigravity-gemini-5h", "showAntigravityGeminiFiveHourLimit", false],
-    ["antigravity-3p-weekly", "showAntigravityClaudeWeeklyLimit", false],
-    ["antigravity-3p-5h", "showAntigravityClaudeFiveHourLimit", false],
   ] as const;
   for (const [id, key, visible] of entries) {
     assert.equal(shouldShowUsageWindow("antigravity", "7d", DEFAULT_USAGE_LIMITS, id), visible);
@@ -55,6 +53,17 @@ test("each Antigravity pool and time window can be selected independently", () =
       assert.equal(shouldShowUsageWindow("antigravity", "7d", settings, otherId), otherKey === key ? !visible : otherVisible);
     }
   }
+});
+
+test("Antigravity third-party quotas stay hidden even with previously enabled settings", () => {
+  const settings = { ...DEFAULT_USAGE_LIMITS, showAntigravityGeminiWeeklyLimit: false,
+    showAntigravityClaudeWeeklyLimit: true, showAntigravityClaudeFiveHourLimit: true };
+  for (const id of ["antigravity-3p-weekly", "antigravity-3p-5h"]) {
+    assert.equal(shouldShowUsageWindow("antigravity", "7d", settings, id), false);
+  }
+  assert.equal(shouldShowUsageWindow("antigravity", "24h_claude", settings), false);
+  assert.equal(hasVisibleUsageLimits("antigravity", settings), false);
+  assert.equal(shouldShowUsageWindow("claude", "7d", settings), true);
 });
 
 test("disabling every limit hides the provider; legacy pools follow family preferences", () => {

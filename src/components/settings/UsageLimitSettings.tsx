@@ -4,7 +4,6 @@ import type { UsageLimitKey } from "../../lib/usageLimitSettings";
 
 const ROWS: { provider: "antigravity" | "claude"; label: string; weekly: UsageLimitKey; fiveHour: UsageLimitKey }[] = [
   { provider: "antigravity", label: "Gemini", weekly: "showAntigravityGeminiWeeklyLimit", fiveHour: "showAntigravityGeminiFiveHourLimit" },
-  { provider: "antigravity", label: "Claude + GPT", weekly: "showAntigravityClaudeWeeklyLimit", fiveHour: "showAntigravityClaudeFiveHourLimit" },
   { provider: "claude", label: "Claude", weekly: "showClaudeWeeklyLimit", fiveHour: "showClaudeFiveHourLimit" },
 ];
 

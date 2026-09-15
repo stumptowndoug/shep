@@ -62,11 +62,11 @@ export function shouldShowUsageWindow(
     switch (windowId) {
       case "antigravity-gemini-weekly": return settings.showAntigravityGeminiWeeklyLimit;
       case "antigravity-gemini-5h": return settings.showAntigravityGeminiFiveHourLimit;
-      case "antigravity-3p-weekly": return settings.showAntigravityClaudeWeeklyLimit;
-      case "antigravity-3p-5h": return settings.showAntigravityClaudeFiveHourLimit;
+      case "antigravity-3p-weekly":
+      case "antigravity-3p-5h": return false;
     }
     // Legacy local-service quotas have model-family IDs but no weekly/5h split.
-    if (window === "24h_claude") return settings.showAntigravityClaudeWeeklyLimit;
+    if (window === "24h_claude") return false;
     if (window === "24h_gemini_pro" || window === "24h_gemini_flash") return settings.showAntigravityGeminiWeeklyLimit;
     return hasVisibleUsageLimits(provider, settings);
   }
@@ -76,8 +76,7 @@ export function shouldShowUsageWindow(
 export function hasVisibleUsageLimits(provider: UsageProvider, settings: UsageLimitVisibility): boolean {
   if (provider === "claude") return settings.showClaudeWeeklyLimit || settings.showClaudeFiveHourLimit;
   if (provider === "antigravity") return settings.showAntigravityGeminiWeeklyLimit
-    || settings.showAntigravityGeminiFiveHourLimit || settings.showAntigravityClaudeWeeklyLimit
-    || settings.showAntigravityClaudeFiveHourLimit;
+    || settings.showAntigravityGeminiFiveHourLimit;
   return true;
 }
 
