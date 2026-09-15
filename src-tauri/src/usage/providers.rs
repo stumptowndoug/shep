@@ -632,6 +632,11 @@ struct AntigravityQuota {
 }
 
 pub fn antigravity_provider_windows() -> Result<(Vec<UsageWindowSnapshot>, Vec<UsageWindowSnapshot>), String> {
+    // Current CLI releases own their authentication and expose a read-only report.
+    // Keep the local service integration for older CLIs and desktop-only installs.
+    if let Some(windows) = super::antigravity_cli::fetch_windows()? {
+        return Ok((windows, Vec::new()));
+    }
     let process = antigravity_detect_process()?;
     let ports = antigravity_listening_ports(process.pid)?;
     let endpoints = antigravity_endpoints(&process, &ports);
