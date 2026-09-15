@@ -8,6 +8,7 @@
     "build": "tsc && vite build",
     "test:agent-status": "node --test tests/agentScreenStatus.test.ts",
     "test:terminal-theme": "node --test tests/terminalColorMode.test.ts",
+    "test:terminal-input": "playwright test",
     "test:usage": "node --test tests/usageHelpers.test.ts",
     "icons": "tauri icon assets/shep.png",
     "preview": "vite preview",
@@ -36,6 +37,7 @@
     "zustand": "^5.0.11"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "@tailwindcss/vite": "^4.3.3",
     "@tauri-apps/cli": "^2.11.4",
     "@types/react": "^19.2.14",
