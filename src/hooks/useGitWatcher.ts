@@ -8,6 +8,7 @@ import { useProjectSettingsStore } from "../stores/useProjectSettingsStore";
 
 interface FsChangedPayload {
   paths: string[];
+  todoPaths: string[];
 }
 
 /**
@@ -21,8 +22,11 @@ export function useGitWatcher(repoPaths: string[]) {
     const unlisten = listen<FsChangedPayload>("git-fs-changed", (event) => {
       void useGitStore.getState().refreshAll(event.payload.paths);
       void useSkillStore.getState().refreshAll(event.payload.paths);
-      if (useProjectSettingsStore.getState().settings.showTodos) {
-        void useTodoStore.getState().refreshAll(event.payload.paths);
+      if (
+        useProjectSettingsStore.getState().settings.showTodos &&
+        event.payload.todoPaths.length > 0
+      ) {
+        void useTodoStore.getState().refreshAll(event.payload.todoPaths);
       }
     });
 
@@ -57,9 +61,6 @@ export function useGitWatcher(repoPaths: string[]) {
     // Initial refresh
     void refreshAll(repoPaths);
     void useSkillStore.getState().refreshAll(repoPaths);
-    if (useProjectSettingsStore.getState().settings.showTodos) {
-      void useTodoStore.getState().refreshAll(repoPaths);
-    }
   }, [repoPaths.join("\0")]);
 
   useEffect(() => {

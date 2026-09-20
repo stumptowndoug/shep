@@ -8,7 +8,7 @@ import { useEditorStore } from "../../stores/useEditorStore";
 import { useThemeStore } from "../../stores/useThemeStore";
 import { useKeybindingStore } from "../../stores/useKeybindingStore";
 import { useProjectSettingsStore } from "../../stores/useProjectSettingsStore";
-import { useRepoStore } from "../../stores/useRepoStore";
+import { useTerminalStore } from "../../stores/useTerminalStore";
 import { useTodoStore } from "../../stores/useTodoStore";
 import { useTerminalSettingsStore } from "../../stores/useTerminalSettingsStore";
 import { useUsageSettingsStore } from "../../stores/useUsageSettingsStore";
@@ -449,8 +449,8 @@ export default function SettingsPanel() {
               const enabling = !projectSettings.showTodos;
               void updateProjectSettings({ showTodos: enabling });
               if (enabling) {
-                const repoPaths = useRepoStore.getState().repos.map((repo) => repo.path);
-                void useTodoStore.getState().refreshAll(repoPaths);
+                const repoPath = useTerminalStore.getState().activeProjectPath;
+                if (repoPath) void useTodoStore.getState().refreshTodos(repoPath);
               }
             }}
             className={`option-card option-card--compact ${projectSettings.showTodos ? "selected" : ""}`}

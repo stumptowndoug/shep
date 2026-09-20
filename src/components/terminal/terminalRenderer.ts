@@ -7,6 +7,12 @@ export interface TerminalRendererState {
   webglFailed: boolean;
 }
 
+export function suspendTerminalRenderer(state: TerminalRendererState): void {
+  const loadedWebgl = state.rendererAddon;
+  state.rendererAddon = null;
+  loadedWebgl?.dispose();
+}
+
 export function reconcileTerminalRenderer(
   term: Terminal,
   state: TerminalRendererState,
@@ -16,9 +22,7 @@ export function reconcileTerminalRenderer(
   // paints terminal background rectangles opaque. Disposing the addon keeps
   // the terminal, buffer, selection, and PTY intact while restoring DOM.
   if (theme.isTransparent) {
-    const loadedWebgl = state.rendererAddon;
-    state.rendererAddon = null;
-    loadedWebgl?.dispose();
+    suspendTerminalRenderer(state);
     return;
   }
 

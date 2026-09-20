@@ -8,6 +8,11 @@ const IGNORED_DIRS: &[&str] = &[
     ".next",
     "dist",
     "build",
+    "output",
+    "coverage",
+    ".cache",
+    ".venv",
+    "venv",
     "__pycache__",
     "vendor",
     ".shep-worktrees",
@@ -641,12 +646,12 @@ mod tests {
         fs::write(dir.join("docs/TODOS.md"), "- [ ] nested\n").unwrap();
         fs::create_dir_all(dir.join("node_modules/pkg")).unwrap();
         fs::write(dir.join("node_modules/pkg/TODO.md"), "- [ ] ignored\n").unwrap();
+        fs::create_dir_all(dir.join("output/run")).unwrap();
+        fs::write(dir.join("output/run/TODO.md"), "- [ ] generated\n").unwrap();
 
         let files = read_todos(&dir.to_string_lossy()).unwrap();
         let rels: Vec<&str> = files.iter().map(|f| f.relative_path.as_str()).collect();
         assert_eq!(rels, vec!["todo.md", "docs/TODOS.md"]);
         let _ = fs::remove_dir_all(&dir);
     }
-
 }
-
