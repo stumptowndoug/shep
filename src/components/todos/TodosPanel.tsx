@@ -1,4 +1,4 @@
-import { useState, Fragment } from "react";
+import { useEffect, useState, Fragment } from "react";
 import { Square, SquareCheckBig, SquareKanban, LayoutList, Sparkles } from "lucide-react";
 import tabKindMeta from "../../lib/tabKindMeta";
 import type { TodoFile, TodoItem, TodoSection } from "../../lib/types";
@@ -248,6 +248,12 @@ export default function TodosPanel() {
   const [saving, setSaving] = useState(false);
   const [installingSkill, setInstallingSkill] = useState(false);
   const [viewPref, setViewPref] = useState<"board" | "list" | null>(null);
+
+  useEffect(() => {
+    if (activeProjectPath) {
+      void useTodoStore.getState().refreshTodos(activeProjectPath);
+    }
+  }, [activeProjectPath]);
 
   if (!activeProjectPath) {
     return (

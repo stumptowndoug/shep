@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -14,11 +14,29 @@ const FALLBACK_POLL_SECS: u64 = 60;
 const GIT_PASSTHROUGH: &[&str] = &["HEAD", "refs", "worktrees"];
 
 /// Directories to ignore entirely — high-churn build artifacts.
-const IGNORED_DIRS: &[&str] = &["node_modules", "target", ".next", "dist", "__pycache__"];
+const IGNORED_DIRS: &[&str] = &[
+    "node_modules",
+    "target",
+    ".next",
+    "dist",
+    "output",
+    "coverage",
+    ".cache",
+    ".venv",
+    "venv",
+    "__pycache__",
+];
 
 #[derive(serde::Serialize, Clone)]
 pub struct FsChangedPayload {
     pub paths: Vec<String>,
+    #[serde(rename = "todoPaths")]
+    pub todo_paths: Vec<String>,
+}
+
+struct WatchSignal {
+    repo_root: PathBuf,
+    todo_changed: bool,
 }
 
 pub struct GitWatcher {
@@ -33,13 +51,13 @@ impl GitWatcher {
         let watched_paths = Arc::new(Mutex::new(HashSet::<PathBuf>::new()));
 
         // Channel for raw FS events → debounce thread
-        let (tx, rx) = std::sync::mpsc::channel::<PathBuf>();
+        let (tx, rx) = std::sync::mpsc::channel::<WatchSignal>();
 
         // --- Debounce thread ---
         let debounce_app = app_handle.clone();
         let debounce_shutdown = Arc::clone(&shutdown);
         std::thread::spawn(move || {
-            let mut pending: HashSet<PathBuf> = HashSet::new();
+            let mut pending: HashMap<PathBuf, bool> = HashMap::new();
 
             loop {
                 if debounce_shutdown.load(Ordering::Relaxed) {
@@ -47,21 +65,24 @@ impl GitWatcher {
                 }
 
                 match rx.recv_timeout(Duration::from_millis(DEBOUNCE_MS)) {
-                    Ok(repo_root) => {
-                        pending.insert(repo_root);
+                    Ok(signal) => {
+                        pending
+                            .entry(signal.repo_root)
+                            .and_modify(|changed| *changed |= signal.todo_changed)
+                            .or_insert(signal.todo_changed);
                         // Drain any immediately available events
-                        while let Ok(path) = rx.try_recv() {
-                            pending.insert(path);
+                        while let Ok(signal) = rx.try_recv() {
+                            pending
+                                .entry(signal.repo_root)
+                                .and_modify(|changed| *changed |= signal.todo_changed)
+                                .or_insert(signal.todo_changed);
                         }
                     }
                     Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
                         if !pending.is_empty() {
-                            let paths: Vec<String> = pending
-                                .drain()
-                                .map(|p| p.to_string_lossy().to_string())
-                                .collect();
+                            let (paths, todo_paths) = drain_pending(&mut pending);
                             let _ = debounce_app
-                                .emit("git-fs-changed", FsChangedPayload { paths });
+                                .emit("git-fs-changed", FsChangedPayload { paths, todo_paths });
                         }
                     }
                     Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
@@ -70,11 +91,8 @@ impl GitWatcher {
 
             // Flush any remaining
             if !pending.is_empty() {
-                let paths: Vec<String> = pending
-                    .drain()
-                    .map(|p| p.to_string_lossy().to_string())
-                    .collect();
-                let _ = debounce_app.emit("git-fs-changed", FsChangedPayload { paths });
+                let (paths, todo_paths) = drain_pending(&mut pending);
+                let _ = debounce_app.emit("git-fs-changed", FsChangedPayload { paths, todo_paths });
             }
         });
 
@@ -98,7 +116,13 @@ impl GitWatcher {
                         .iter()
                         .map(|p| p.to_string_lossy().to_string())
                         .collect();
-                    let _ = poll_app.emit("git-fs-changed", FsChangedPayload { paths });
+                    let _ = poll_app.emit(
+                        "git-fs-changed",
+                        FsChangedPayload {
+                            paths,
+                            todo_paths: Vec::new(),
+                        },
+                    );
                 }
             }
         });
@@ -120,7 +144,10 @@ impl GitWatcher {
                 let watched = watcher_watched.lock().unwrap();
                 for root in watched.iter() {
                     if path.starts_with(root) {
-                        let _ = tx.send(root.clone());
+                        let _ = tx.send(WatchSignal {
+                            repo_root: root.clone(),
+                            todo_changed: is_todo_path(path),
+                        });
                         break;
                     }
                 }
@@ -178,6 +205,25 @@ impl GitWatcher {
     }
 }
 
+fn drain_pending(pending: &mut HashMap<PathBuf, bool>) -> (Vec<String>, Vec<String>) {
+    let mut paths = Vec::with_capacity(pending.len());
+    let mut todo_paths = Vec::new();
+    for (path, todo_changed) in pending.drain() {
+        let path = path.to_string_lossy().to_string();
+        if todo_changed {
+            todo_paths.push(path.clone());
+        }
+        paths.push(path);
+    }
+    (paths, todo_paths)
+}
+
+fn is_todo_path(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| matches!(name.to_ascii_lowercase().as_str(), "todo.md" | "todos.md"))
+}
+
 /// Determine whether a filesystem event path should trigger a git refresh.
 fn should_watch_path(path: &Path) -> bool {
     let components: Vec<&str> = path
@@ -201,4 +247,37 @@ fn should_watch_path(path: &Path) -> bool {
     }
 
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn recognizes_only_todo_markdown_filenames() {
+        assert!(is_todo_path(Path::new("/repo/TODO.md")));
+        assert!(is_todo_path(Path::new("/repo/docs/todos.MD")));
+        assert!(!is_todo_path(Path::new("/repo/notes.md")));
+        assert!(!is_todo_path(Path::new("/repo/todo.txt")));
+    }
+
+    #[test]
+    fn ignores_high_churn_generated_directories() {
+        assert!(!should_watch_path(Path::new("/repo/output/run/result.json")));
+        assert!(!should_watch_path(Path::new("/repo/.venv/lib/module.py")));
+        assert!(should_watch_path(Path::new("/repo/src/module.rs")));
+    }
+
+    #[test]
+    fn drains_todo_roots_separately_from_general_refreshes() {
+        let mut pending = HashMap::from([
+            (PathBuf::from("/repo/a"), false),
+            (PathBuf::from("/repo/b"), true),
+        ]);
+        let (mut paths, todo_paths) = drain_pending(&mut pending);
+        paths.sort();
+        assert_eq!(paths, vec!["/repo/a", "/repo/b"]);
+        assert_eq!(todo_paths, vec!["/repo/b"]);
+        assert!(pending.is_empty());
+    }
 }

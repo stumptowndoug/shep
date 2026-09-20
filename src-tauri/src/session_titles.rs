@@ -2,10 +2,11 @@ use chrono::DateTime;
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
 use serde::Serialize;
 use serde_json::Value;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 use unicode_segmentation::UnicodeSegmentation;
 use url::Url;
 
@@ -756,6 +757,22 @@ fn resolve_cursor(
     let chats = home.join(".cursor/chats");
     let mut candidates = Vec::new();
 
+    if let Some(id) = session_id {
+        let key = cursor_cache_key(home, repo_path, id);
+        if let Some(path) = cursor_session_cache()
+            .lock()
+            .ok()
+            .and_then(|cache| cache.get(&key).cloned())
+        {
+            if let Some(found) = read_cursor_session(&path, repo_path, started_after_ms, Some(id)) {
+                return Some(found.1);
+            }
+            if let Ok(mut cache) = cursor_session_cache().lock() {
+                cache.remove(&key);
+            }
+        }
+    }
+
     for workspace in fs::read_dir(chats).ok()?.flatten() {
         if !workspace.path().is_dir() {
             continue;
@@ -771,39 +788,68 @@ fn resolve_cursor(
             if session_id.is_some_and(|expected| expected != id) {
                 continue;
             }
-            let Ok(text) = fs::read_to_string(session_path.join("meta.json")) else {
-                continue;
-            };
-            let Ok(meta) = serde_json::from_str::<Value>(&text) else {
-                continue;
-            };
-            if meta.get("cwd").and_then(Value::as_str) != Some(repo_path)
-                || meta.get("isSubagent").and_then(Value::as_bool) == Some(true)
-            {
-                continue;
-            }
-            let Some(created_at_ms) = meta.get("createdAtMs")
-                .and_then(|value| value.as_i64().or_else(|| value.as_str()?.parse().ok()))
+            let Some((distance, found)) =
+                read_cursor_session(&session_path, repo_path, started_after_ms, session_id)
             else {
                 continue;
             };
-            if session_id.is_none()
-                && created_at_ms < started_after_ms.saturating_sub(LAUNCH_TOLERANCE_MS)
-            {
-                continue;
+            if let Ok(mut cache) = cursor_session_cache().lock() {
+                cache.insert(
+                    cursor_cache_key(home, repo_path, &found.session_id),
+                    session_path,
+                );
             }
-            let title = meta.get("title")
-                .and_then(Value::as_str)
-                .and_then(compact_generated_title);
-            candidates.push((created_at_ms.abs_diff(started_after_ms), id.to_string(), title));
+            candidates.push((distance, found));
         }
     }
 
     candidates.sort_by_key(|candidate| candidate.0);
-    candidates.into_iter().next().map(|(_, session_id, title)| SessionTitleMatch {
-        session_id,
-        title,
-    })
+    candidates.into_iter().next().map(|(_, found)| found)
+}
+
+fn cursor_session_cache() -> &'static Mutex<HashMap<String, PathBuf>> {
+    static CACHE: OnceLock<Mutex<HashMap<String, PathBuf>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn cursor_cache_key(home: &Path, repo_path: &str, session_id: &str) -> String {
+    format!("{}\0{repo_path}\0{session_id}", home.to_string_lossy())
+}
+
+fn read_cursor_session(
+    session_path: &Path,
+    repo_path: &str,
+    started_after_ms: i64,
+    expected_id: Option<&str>,
+) -> Option<(u64, SessionTitleMatch)> {
+    let id = session_path.file_name()?.to_str()?;
+    if expected_id.is_some_and(|expected| expected != id) {
+        return None;
+    }
+    let text = fs::read_to_string(session_path.join("meta.json")).ok()?;
+    let meta: Value = serde_json::from_str(&text).ok()?;
+    if meta.get("cwd").and_then(Value::as_str) != Some(repo_path)
+        || meta.get("isSubagent").and_then(Value::as_bool) == Some(true)
+    {
+        return None;
+    }
+    let created_at_ms = meta.get("createdAtMs")
+        .and_then(|value| value.as_i64().or_else(|| value.as_str()?.parse().ok()))?;
+    if expected_id.is_none()
+        && created_at_ms < started_after_ms.saturating_sub(LAUNCH_TOLERANCE_MS)
+    {
+        return None;
+    }
+    let title = meta.get("title")
+        .and_then(Value::as_str)
+        .and_then(compact_generated_title);
+    Some((
+        created_at_ms.abs_diff(started_after_ms),
+        SessionTitleMatch {
+            session_id: id.to_string(),
+            title,
+        },
+    ))
 }
 
 fn resolve_claude(
@@ -1106,6 +1152,24 @@ mod tests {
 
         let anchored = resolve_session_title_from_home(&home, "cursor", "/repo", 10_100, Some("chat-2"), None).unwrap();
         assert_eq!(anchored.session_id, "chat-2");
+
+        fs::write(
+            first.join("meta.json"),
+            r#"{
+            "schemaVersion":1,"createdAtMs":10000,"cwd":"/repo","title":"Updated title"
+        }"#,
+        )
+        .unwrap();
+        let cached = resolve_session_title_from_home(
+            &home,
+            "cursor",
+            "/repo",
+            10_100,
+            Some("chat-1"),
+            None,
+        )
+        .unwrap();
+        assert_eq!(cached.title.as_deref(), Some("Updated title"));
 
         fs::remove_dir_all(home).unwrap();
     }

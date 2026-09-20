@@ -26,7 +26,10 @@ import { useKeybindingStore } from "../../stores/useKeybindingStore";
 import { useTerminalSettingsStore } from "../../stores/useTerminalSettingsStore";
 import { useTerminalStore } from "../../stores/useTerminalStore";
 import { terminalCache } from "./terminalCache";
-import { reconcileTerminalRenderer } from "./terminalRenderer";
+import {
+  reconcileTerminalRenderer,
+  suspendTerminalRenderer,
+} from "./terminalRenderer";
 import { TerminalInputGuard } from "./TerminalInputGuard";
 import {
   shouldSuppressCursorDim,
@@ -387,6 +390,11 @@ export default function TerminalView({
     };
   }, [ptyId, visible, assistantId, getOrCreateTerminal, fitAndResize]);
 
+  useEffect(() => {
+    if (visible) return;
+    const cached = terminalCache.get(ptyId);
+    if (cached) suspendTerminalRenderer(cached);
+  }, [ptyId, visible]);
 
   useEffect(() => {
     return () => {

@@ -545,8 +545,10 @@ pub fn get_computer_name() -> String {
 // ── Todo commands ───────────────────────────────────────────────────
 
 #[tauri::command]
-pub fn read_todos(repo_path: &str) -> Result<Vec<TodoFile>, String> {
-    todos::read_todos(repo_path)
+pub async fn read_todos(repo_path: String) -> Result<Vec<TodoFile>, String> {
+    tauri::async_runtime::spawn_blocking(move || todos::read_todos(&repo_path))
+        .await
+        .map_err(|error| format!("To-do discovery failed: {error}"))?
 }
 
 #[tauri::command]
