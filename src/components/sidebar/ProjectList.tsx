@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import type { RepoInfo, RepoGroup } from "../../lib/types";
 import { open } from "@tauri-apps/plugin-dialog";
+import { FolderPlus, Folders } from "lucide-react";
 import { useGitStore } from "../../stores/useGitStore";
 import { useRepoStore } from "../../stores/useRepoStore";
 import { useNoticeStore } from "../../stores/useNoticeStore";
@@ -9,6 +10,12 @@ import ProjectItem from "./ProjectItem";
 import GroupHeader from "./GroupHeader";
 import GitStatusRow from "./GitStatusRow";
 import ProjectActionMenu, { type ProjectActionKind } from "../shared/ProjectActionMenu";
+
+/** Ask for a folder to add as a project. Resolves null when cancelled. */
+export async function pickProjectFolder(): Promise<string | null> {
+  const selected = await open({ directory: true, multiple: false, title: "Select project folder" });
+  return typeof selected === "string" ? selected : null;
+}
 
 interface ProjectListProps {
   repos: RepoInfo[];
@@ -99,16 +106,26 @@ export default function ProjectList({
     });
   }, []);
 
-  const handleAddClick = async () => {
-    const selected = await open({
-      directory: true,
-      multiple: false,
-      title: "Select project folder",
-    });
-    if (selected) {
-      onAddProject(selected);
+
+  const handleAddProject = useCallback(async () => {
+    try {
+      const folder = await pickProjectFolder();
+      if (folder) await onAddProject(folder);
+    } catch (error) {
+      useNoticeStore.getState().pushNotice({
+        tone: "error",
+        title: "Couldn't add project",
+        message: getErrorMessage(error),
+      });
     }
-  };
+  }, [onAddProject]);
+
+  const handleStartGroup = useCallback((repoPath: string | null = null) => {
+    pendingMoveRepoPath.current = repoPath;
+    createGroupSubmittedRef.current = false;
+    setNewGroupName("");
+    setCreatingGroup(true);
+  }, []);
 
   const handleCreateGroupSubmit = useCallback(() => {
     if (createGroupSubmittedRef.current) return;
@@ -116,9 +133,12 @@ export default function ProjectList({
     const trimmed = newGroupName.trim();
     const repoToMove = pendingMoveRepoPath.current;
     pendingMoveRepoPath.current = null;
-    if (trimmed && repoToMove) {
+    if (trimmed) {
       useRepoStore.getState().createGroup(trimmed)
-        .then((group) => onMoveToGroup(repoToMove, group.id))
+        .then(async (group) => {
+          if (repoToMove) await onMoveToGroup(repoToMove, group.id);
+          setExpandedGroups((prev) => new Set(prev).add(group.id));
+        })
         .catch((error) => {
           useNoticeStore.getState().pushNotice({
             tone: "error",
@@ -189,14 +209,10 @@ export default function ProjectList({
           onClick={() => handleProjectClick(repo.path)}
           onAddProject={onAddProject}
           onMoveToGroup={onMoveToGroup}
-          onNewGroupForRepo={(repoPath) => {
-            pendingMoveRepoPath.current = repoPath;
-            createGroupSubmittedRef.current = false;
-            setCreatingGroup(true);
-          }}
+          onNewGroupForRepo={handleStartGroup}
         />
         {isExpanded && (
-          <div className="mt-1 mb-2 flex flex-col gap-0.5 pl-2">
+          <div className="side-children">
             <ProjectActionMenu
               variant="project"
               projectName={repo.name}
@@ -210,7 +226,46 @@ export default function ProjectList({
   };
 
   return (
-    <div className="flex flex-col gap-0.5 pb-2">
+    <div className="side-list">
+      <div className="project-list__actions" role="group" aria-label="Create projects and groups">
+        <button type="button" className="nav-item" onClick={() => void handleAddProject()} title="Choose a project folder">
+          <FolderPlus size={14} aria-hidden="true" />
+          <span>New Project</span>
+        </button>
+        <button type="button" className="nav-item" onClick={() => handleStartGroup()} aria-expanded={creatingGroup} disabled={creatingGroup}>
+          <Folders size={14} aria-hidden="true" />
+          <span>New Group</span>
+        </button>
+      </div>
+      {creatingGroup && (
+        <form
+          className="group-create-form"
+          onSubmit={(e) => {
+            e.preventDefault();
+            handleCreateGroupSubmit();
+          }}
+        >
+          <input
+            className="group-create-form__input"
+            type="text"
+            placeholder="Group name"
+            aria-label="New group name"
+            title="Enter to create, Esc to cancel"
+            autoFocus
+            value={newGroupName}
+            onChange={(e) => setNewGroupName(e.target.value)}
+            onBlur={handleCreateGroupSubmit}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") {
+                createGroupSubmittedRef.current = true;
+                pendingMoveRepoPath.current = null;
+                setCreatingGroup(false);
+                setNewGroupName("");
+              }
+            }}
+          />
+        </form>
+      )}
       {sortedGroups.map((group) => {
         const groupRepos = groupedRepos.get(group.id) ?? [];
         const isGroupExpanded = expandedGroups.has(group.id);
@@ -224,7 +279,7 @@ export default function ProjectList({
               onDelete={onDeleteGroup}
             />
             {isGroupExpanded && (
-              <div className="pl-4">
+              <div className="side-children">
                 {groupRepos.length === 0 ? (
                   <div className="group-empty-hint">No projects in this group</div>
                 ) : (
@@ -237,37 +292,7 @@ export default function ProjectList({
       })}
 
       {ungroupedRepos.map(renderRepoItem)}
-
-      <button className="btn-ghost w-full mt-1" onClick={handleAddClick}>
-        <span>+</span>
-        <span>Add Project</span>
-      </button>
-      {creatingGroup && (
-        <form
-          className="group-create-form"
-          onSubmit={(e) => {
-            e.preventDefault();
-            handleCreateGroupSubmit();
-          }}
-        >
-          <input
-            className="group-create-form__input"
-            type="text"
-            placeholder="Group name"
-            autoFocus
-            value={newGroupName}
-            onChange={(e) => setNewGroupName(e.target.value)}
-            onBlur={handleCreateGroupSubmit}
-            onKeyDown={(e) => {
-              if (e.key === "Escape") {
-                createGroupSubmittedRef.current = true;
-                setCreatingGroup(false);
-                setNewGroupName("");
-              }
-            }}
-          />
-        </form>
-      )}
+      {repos.length === 0 && <div className="side-empty">No projects yet.</div>}
     </div>
   );
 }

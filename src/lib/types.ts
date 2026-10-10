@@ -44,6 +44,7 @@ export interface ProjectSettings {
   autoImportWorktrees: boolean;
   agentLabelMode: AgentLabelMode;
   defaultAgentMode: SessionMode;
+  defaultAgentInterface: AgentInterface;
   showTodos: boolean;
   /** Shape of a lazily created TODO.md. */
   todoFileStyle: TodoFileStyle;
@@ -97,6 +98,8 @@ export interface CommandState {
 }
 
 export type SessionMode = "standard" | "yolo";
+/** How an agent tab talks to its agent: a CLI in a terminal, or ACP chat. */
+export type AgentInterface = "terminal" | "chat";
 export type TerminalLabelSource = "default" | "terminal" | "session" | "user";
 
 // ── Unified tab model ──────────────────────────────────────────────
@@ -112,7 +115,10 @@ interface TabBase {
 
 export interface TerminalTabData extends TabBase {
   kind: "terminal" | "assistant";
+  /** Runtime session id. PTYs and ACP chat agents share one id space. */
   ptyId: number;
+  /** Assistant tabs only: "chat" renders an ACP conversation instead of xterm. */
+  agentInterface: AgentInterface;
   repoPath: string;
   commandName: string | null;
   assistantId: string | null;
@@ -145,6 +151,11 @@ export interface PanelTabData extends TabBase {
 }
 
 export type UnifiedTab = TerminalTabData | PanelTabData;
+
+/** Tabs backed by a running session (PTY or ACP chat) rather than a panel. */
+export function isSessionTab(tab: UnifiedTab): tab is TerminalTabData {
+  return tab.kind === "terminal" || tab.kind === "assistant";
+}
 
 export function panelTabId(kind: PanelTabKind): string {
   return `panel-${kind}`;
@@ -190,12 +201,21 @@ export interface AgentStatusObservation {
 
 // ── Coding assistants ───────────────────────────────────────────────
 
+export interface AcpAdapter {
+  command: string;
+  args: string[];
+  /** Shown when the adapter binary is missing. */
+  install: string;
+}
+
 export interface CodingAssistant {
   id: string;
   name: string;
   command: string;
   yoloFlag: string | null;
   modelFlag: string;
+  /** Agent Client Protocol adapter, when the agent supports chat. */
+  acp?: AcpAdapter;
   description?: string;
   docsUrl?: string;
 }

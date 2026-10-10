@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import type { AgentStatusObservation, TerminalTabData, TabActivity, UnifiedTab, PanelTabKind, PanelTabData } from "../lib/types";
-import { panelTabId, panelTabDefaults } from "../lib/types";
+import { isSessionTab, panelTabId, panelTabDefaults } from "../lib/types";
 import { nextAgentDoneState } from "../lib/agentActivity";
 import { useUIStore } from "./useUIStore";
 
@@ -104,7 +104,7 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
         const activeTab = project.tabs.find((tab) => tab.id === project.activeTabId);
         if (
           activeTab &&
-          (activeTab.kind === "terminal" || activeTab.kind === "assistant") &&
+          isSessionTab(activeTab) &&
           state.tabActivity[activeTab.ptyId]?.agentDone
         ) {
           return {
@@ -136,7 +136,7 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
       const tabActivity = { ...state.tabActivity };
       if (project) {
         for (const tab of project.tabs) {
-          if (tab.kind === "terminal" || tab.kind === "assistant") {
+          if (isSessionTab(tab)) {
             delete tabActivity[tab.ptyId];
           }
         }
@@ -203,7 +203,7 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
       if (!ps || !ps.tabs.some((t) => t.id === id)) return state;
       const tab = ps.tabs.find((candidate) => candidate.id === id);
       const clearDone = tab &&
-        (tab.kind === "terminal" || tab.kind === "assistant") &&
+        isSessionTab(tab) &&
         state.tabActivity[tab.ptyId]?.agentDone;
       return {
         projectState: {
@@ -238,7 +238,7 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
             ...ps,
             tabs: ps.tabs.map((t) => {
               if (t.id !== id) return t;
-              if (t.kind === "terminal" || t.kind === "assistant") {
+              if (isSessionTab(t)) {
                 return { ...t, ...patch, labelSource: "user" as const };
               }
               return { ...t, ...patch };
@@ -257,14 +257,14 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
       for (const [path, project] of Object.entries(state.projectState)) {
         const index = project.tabs.findIndex(
           (tab) =>
-            (tab.kind === "terminal" || tab.kind === "assistant") &&
+            isSessionTab(tab) &&
             tab.ptyId === ptyId,
         );
         if (index === -1) continue;
 
         const tab = project.tabs[index];
         if (
-          (tab.kind !== "terminal" && tab.kind !== "assistant") ||
+          !isSessionTab(tab) ||
           tab.labelSource === "user"
         ) {
           return state;
@@ -298,14 +298,14 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
       for (const [path, project] of Object.entries(state.projectState)) {
         const index = project.tabs.findIndex(
           (tab) =>
-            (tab.kind === "terminal" || tab.kind === "assistant") &&
+            isSessionTab(tab) &&
             tab.ptyId === ptyId,
         );
         if (index === -1) continue;
 
         const tab = project.tabs[index];
         if (
-          tab.kind !== "terminal" && tab.kind !== "assistant"
+          !isSessionTab(tab)
         ) {
           return state;
         }
@@ -412,7 +412,7 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
     if (!state.activeProjectPath) return undefined;
     const ps = state.projectState[state.activeProjectPath];
     return ps?.tabs.find(
-      (t): t is TerminalTabData => (t.kind === "terminal" || t.kind === "assistant") && t.commandName === commandName,
+      (t): t is TerminalTabData => isSessionTab(t) && t.commandName === commandName,
     );
   },
 
@@ -421,7 +421,7 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
     for (const project of Object.values(state.projectState)) {
       const tab = project.tabs.find(
         (candidate): candidate is TerminalTabData =>
-          (candidate.kind === "terminal" || candidate.kind === "assistant") &&
+          isSessionTab(candidate) &&
           candidate.ptyId === ptyId,
       );
       if (tab) return tab;
@@ -482,7 +482,7 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
       for (const [path, project] of Object.entries(state.projectState)) {
         const tab = project.tabs.find(
           (candidate) =>
-            (candidate.kind === "terminal" || candidate.kind === "assistant") &&
+            isSessionTab(candidate) &&
             candidate.ptyId === ptyId,
         );
         if (tab) {

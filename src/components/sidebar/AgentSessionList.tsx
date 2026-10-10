@@ -96,16 +96,16 @@ export default function AgentSessionList({
   if (sessions.length === 0) return null;
 
   return (
-    <div className="sidebar-section px-2 pb-1">
+    <div className="side-sec">
       <SidebarSectionToggle
-        label="Agent Sessions"
+        label="Agents"
         collapsed={collapsed}
         badge={sessions.length}
         onToggle={handleToggle}
       />
 
       {!collapsed && (
-        <div className="sidebar-section__list agent-session-list">
+        <div className="side-list">
           {sessions.map((item) => (
             <AgentSessionRow
               key={`${item.tab.repoPath}:${item.tab.id}`}

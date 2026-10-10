@@ -4,7 +4,9 @@ import { useTerminalStore } from "../../stores/useTerminalStore";
 import { useGitStore } from "../../stores/useGitStore";
 import { useProjectSettingsStore } from "../../stores/useProjectSettingsStore";
 import ProjectList from "./ProjectList";
-import SidebarFooter from "./SidebarFooter";
+import SidebarNav, { SidebarNewAgent } from "./SidebarNav";
+import shepMark from "../../assets/shep-mark.png";
+import { startWindowDrag } from "../../lib/windowDrag";
 import SidebarUsage from "./SidebarUsage";
 import AgentSessionList, { type AgentSessionItem } from "./AgentSessionList";
 import SidebarSectionToggle from "./SidebarSectionToggle";
@@ -80,14 +82,10 @@ export default function Sidebar({
       const priorityDifference = agentSessionPriority(aActivity) - agentSessionPriority(bActivity);
       if (priorityDifference !== 0) return priorityDifference;
 
-      const aIsSelected = a.tab.repoPath === activeRepoPath && a.tab.id === activeTabId;
-      const bIsSelected = b.tab.repoPath === activeRepoPath && b.tab.id === activeTabId;
-      if (aIsSelected !== bIsSelected) return aIsSelected ? -1 : 1;
-
-      const recentDifference = (bActivity?.lastOutputAt ?? 0) - (aActivity?.lastOutputAt ?? 0);
-      return recentDifference || a.projectName.localeCompare(b.projectName) || a.tab.label.localeCompare(b.tab.label);
+      // Selection and streaming output must not move rows under the pointer.
+      return a.projectName.localeCompare(b.projectName) || a.tab.label.localeCompare(b.tab.label);
     });
-  }, [repos, projectState, tabActivity, gitStatuses, activeRepoPath, activeTabId]);
+  }, [repos, projectState, tabActivity, gitStatuses]);
 
   const handleToggleProjects = useCallback(() => {
     setProjectsCollapsed((value) => !value);
@@ -98,8 +96,16 @@ export default function Sidebar({
   }, [projectSettingsLoaded, loadProjectSettings]);
 
   return (
-    <div className="w-72 shrink-0 flex flex-col h-full pr-4 mr-4 border-r border-[var(--glass-border)]" onContextMenu={(e) => e.preventDefault()}>
-      <div className="flex-1 overflow-y-auto min-h-0">
+    <aside className="sidebar" onContextMenu={(e) => e.preventDefault()}>
+      <div className="sidebar-titlebar" onMouseDown={startWindowDrag} />
+      <div className="sidebar-top" onMouseDown={startWindowDrag}>
+        <div className="brand">
+          <img src={shepMark} alt="" className="brand__mark" />
+          <span>Shep</span>
+        </div>
+      </div>
+      <SidebarNewAgent hasProject={activeRepoPath !== null} />
+      <div className="side-scroll">
         <AgentSessionList
           sessions={agentSessions}
           activeRepoPath={activeRepoPath}
@@ -107,11 +113,11 @@ export default function Sidebar({
           labelMode={projectSettings.agentLabelMode}
           onSelectSession={onSelectProjectTab}
         />
-        <div className="sidebar-section px-2 pb-2">
+        <div className="side-sec">
           <SidebarSectionToggle
             label="Projects"
             collapsed={projectsCollapsed}
-            badge={repos.length}
+            badge={repos.length || null}
             onToggle={handleToggleProjects}
           />
           {!projectsCollapsed && (
@@ -131,8 +137,10 @@ export default function Sidebar({
           )}
         </div>
       </div>
-      <SidebarUsage />
-      <SidebarFooter />
-    </div>
+      <div className="sidebar-bottom">
+        <SidebarUsage />
+        <SidebarNav />
+      </div>
+    </aside>
   );
 }

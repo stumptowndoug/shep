@@ -280,9 +280,9 @@ export default function CommandsPanel({
           </div>
         </div>
         <div className="commands-panel__header-actions">
-          <button className="btn-ghost" onClick={() => setCreating(true)}>
+          <button className="btn-primary" onClick={() => setCreating(true)}>
             <Plus size={14} />
-            <span>Add Command</span>
+            <span>New command</span>
           </button>
           <button
             className="commands-panel__header-btn glass-button"

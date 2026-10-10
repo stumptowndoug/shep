@@ -24,6 +24,15 @@ impl PtyManager {
         self.sessions.lock().unwrap().len()
     }
 
+    /// Session ids are shared with ACP chat processes so the frontend can key
+    /// tab activity by one number regardless of transport.
+    pub fn allocate_id(&self) -> u32 {
+        let mut next_id = self.next_id.lock().unwrap();
+        let id = *next_id;
+        *next_id += 1;
+        id
+    }
+
     pub fn begin_shutdown(&self) -> bool {
         !self.shutting_down.swap(true, Ordering::SeqCst)
     }
@@ -45,11 +54,7 @@ impl PtyManager {
         channel: Channel<PtyOutput>,
     ) -> Result<u32, String> {
         let session = PtySession::spawn(command, args, cwd, env, cols, rows, color_theme, channel)?;
-
-        let mut next_id = self.next_id.lock().unwrap();
-        let id = *next_id;
-        *next_id += 1;
-
+        let id = self.allocate_id();
         self.sessions.lock().unwrap().insert(id, session);
         Ok(id)
     }

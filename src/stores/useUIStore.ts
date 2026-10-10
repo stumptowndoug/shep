@@ -6,7 +6,6 @@ interface UIStore {
   portsPanelActive: boolean;
   historyPanelActive: boolean;
   sidebarVisible: boolean;
-  diffPanelVisible: boolean;
   username: string | null;
   computerName: string | null;
   toggleSettings: () => void;
@@ -15,7 +14,6 @@ interface UIStore {
   toggleHistoryPanel: () => void;
   deactivateAllOverlays: () => void;
   toggleSidebar: () => void;
-  toggleDiffPanel: () => void;
   setUsername: (name: string) => void;
   setComputerName: (name: string) => void;
 }
@@ -33,7 +31,6 @@ export const useUIStore = create<UIStore>((set) => ({
   portsPanelActive: false,
   historyPanelActive: false,
   sidebarVisible: true,
-  diffPanelVisible: true,
   username: null,
   computerName: null,
   toggleSettings: () =>
@@ -58,7 +55,6 @@ export const useUIStore = create<UIStore>((set) => ({
     }),
   deactivateAllOverlays: () => set(deactivateAll),
   toggleSidebar: () => set((s) => ({ sidebarVisible: !s.sidebarVisible })),
-  toggleDiffPanel: () => set((s) => ({ diffPanelVisible: !s.diffPanelVisible })),
   setUsername: (name: string) => set({ username: name }),
   setComputerName: (name: string) => set({ computerName: name }),
 }));

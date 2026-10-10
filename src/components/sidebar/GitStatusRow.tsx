@@ -23,9 +23,9 @@ export default function GitStatusRow({ repoPath }: GitStatusRowProps) {
   return (
     <button
       onClick={() => useTerminalStore.getState().addPanelTab("git")}
-      className={`section-toggle ${isActive ? "!text-[var(--text-primary)] !bg-white/6" : ""}`}
+      className={`section-toggle ${isActive ? "on" : ""}`}
     >
-      <span className="shrink-0" style={{ color: "var(--section-icon-color)" }}><GitBranch size={14} /></span>
+      <GitBranch size={14} />
       <span className="truncate" title={label}>{label}</span>
       {changeCount > 0 && (
         <span className="badge">{changeCount}</span>

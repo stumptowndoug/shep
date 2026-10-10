@@ -31,7 +31,8 @@ function createMarkdownRenderer(): MarkdownIt {
   return markdown;
 }
 
-export async function getMarkdownRenderer(theme: string): Promise<MarkdownIt> {
+/** Returns the same promise per theme, so callers can pass it to React's `use`. */
+export function getMarkdownRenderer(theme: string): Promise<MarkdownIt> {
   if (!cached.has(theme)) {
     cached.set(theme, (async () => {
       const markdown = createMarkdownRenderer();
@@ -45,8 +46,7 @@ export async function getMarkdownRenderer(theme: string): Promise<MarkdownIt> {
     })());
   }
 
-  const markdown = await cached.get(theme)!;
-  return markdown;
+  return cached.get(theme)!;
 }
 
 export function getPlainMarkdownRenderer(): MarkdownIt {

@@ -8,6 +8,7 @@ use tauri::ipc::Channel;
 use tauri::{Emitter, State};
 use url::Url;
 
+use crate::acp::{AcpManager, AcpOutput};
 use crate::agent_status::{self, AgentRuntimeStatus};
 use crate::fonts::{self, FontFaceData, FontFamily};
 use crate::git;
@@ -308,6 +309,44 @@ pub fn kill_pty(pty_id: u32, pty_manager: State<'_, PtyManager>) -> Result<(), S
     pty_manager.kill(pty_id)
 }
 
+// ── ACP agent commands ──────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn spawn_acp_agent(
+    command: String,
+    args: Vec<String>,
+    cwd: String,
+    on_output: Channel<AcpOutput>,
+    pty_manager: State<'_, PtyManager>,
+    acp_manager: State<'_, AcpManager>,
+) -> Result<u32, String> {
+    let id = pty_manager.allocate_id();
+    let manager = acp_manager.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        manager.spawn(id, &command, args, &cwd, on_output)?;
+        Ok(id)
+    })
+    .await
+    .map_err(|error| format!("Agent startup failed: {error}"))?
+}
+
+#[tauri::command]
+pub async fn write_acp_agent(
+    agent_id: u32,
+    line: String,
+    acp_manager: State<'_, AcpManager>,
+) -> Result<(), String> {
+    let manager = acp_manager.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || manager.write(agent_id, &line))
+        .await
+        .map_err(|error| format!("Agent write failed: {error}"))?
+}
+
+#[tauri::command]
+pub fn kill_acp_agent(agent_id: u32, acp_manager: State<'_, AcpManager>) {
+    acp_manager.kill(agent_id);
+}
+
 #[tauri::command]
 pub async fn resolve_session_title(
     pty_id: u32,
@@ -353,48 +392,70 @@ pub async fn get_agent_runtime_status(
 }
 
 #[tauri::command]
-pub fn upsert_session_history(
+pub async fn upsert_session_history(
     record: SessionHistoryUpsert,
     db: State<'_, UsageDb>,
 ) -> Result<(), String> {
-    session_history::upsert(db.inner(), record)
+    let db = db.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || session_history::upsert(&db, record))
+        .await
+        .map_err(|error| format!("Session history save failed: {error}"))?
 }
 
 #[tauri::command]
-pub fn record_session_history_activity(
+pub async fn record_session_history_activity(
     provider: String,
     session_id: String,
     timestamp: i64,
     ended: bool,
     db: State<'_, UsageDb>,
 ) -> Result<(), String> {
-    session_history::record_activity(db.inner(), &provider, &session_id, timestamp, ended)
+    let db = db.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        session_history::record_activity(&db, &provider, &session_id, timestamp, ended)
+    })
+    .await
+    .map_err(|error| format!("Session history update failed: {error}"))?
 }
 
 #[tauri::command]
-pub fn list_session_history(
+pub async fn list_session_history(
     project_path: Option<String>,
     query: Option<String>,
     limit: Option<u32>,
     db: State<'_, UsageDb>,
 ) -> Result<Vec<SessionHistoryEntry>, String> {
-    session_history::list(db.inner(), project_path.as_deref(), query.as_deref(), limit)
+    let db = db.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        session_history::list(&db, project_path.as_deref(), query.as_deref(), limit)
+    })
+    .await
+    .map_err(|error| format!("Session history query failed: {error}"))?
 }
 
 // ── App lifecycle commands ────────────────────────────────────────
 
 #[tauri::command]
-pub fn get_pty_session_count(pty_manager: State<'_, PtyManager>) -> usize {
-    pty_manager.session_count()
+pub fn get_pty_session_count(
+    pty_manager: State<'_, PtyManager>,
+    acp_manager: State<'_, AcpManager>,
+) -> usize {
+    pty_manager.session_count() + acp_manager.session_count()
 }
 
 #[tauri::command]
-pub fn shutdown_and_quit(app: tauri::AppHandle, pty_manager: State<'_, PtyManager>, watcher: State<'_, GitWatcher>) {
+pub fn shutdown_and_quit(
+    app: tauri::AppHandle,
+    pty_manager: State<'_, PtyManager>,
+    acp_manager: State<'_, AcpManager>,
+    watcher: State<'_, GitWatcher>,
+) {
     if !pty_manager.begin_shutdown() {
         return;
     }
     watcher.shutdown();
     pty_manager.kill_all();
+    acp_manager.kill_all();
     app.exit(0);
 }
 

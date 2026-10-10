@@ -58,6 +58,9 @@ pub struct ProjectSettings {
     /// Permission mode used when starting or resuming agent sessions.
     #[serde(default = "default_agent_session_mode", rename = "defaultAgentMode")]
     pub default_agent_mode: String,
+    /// Interface used when starting agents: "chat" (ACP) or "terminal" (CLI).
+    #[serde(default = "default_agent_interface", rename = "defaultAgentInterface")]
+    pub default_agent_interface: String,
     #[serde(default = "default_true", rename = "showTodos")]
     pub show_todos: bool,
     /// Shape of a lazily created TODO.md: "kanban" (columned board) or "list".
@@ -77,12 +80,17 @@ fn default_agent_session_mode() -> String {
     "yolo".to_string()
 }
 
+fn default_agent_interface() -> String {
+    "chat".to_string()
+}
+
 impl Default for ProjectSettings {
     fn default() -> Self {
         ProjectSettings {
             auto_import_worktrees: true,
             agent_label_mode: default_agent_label_mode(),
             default_agent_mode: default_agent_session_mode(),
+            default_agent_interface: default_agent_interface(),
             show_todos: true,
             todo_file_style: default_todo_file_style(),
         }
@@ -366,6 +374,15 @@ pub struct WorkspaceConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn project_settings_ignore_removed_changes_sidebar_preference() {
+        let settings: ProjectSettings =
+            serde_yaml::from_str("showDiffPanelOnStartup: true\nshowTodos: false\n").unwrap();
+        assert!(!settings.show_todos);
+        let saved = serde_yaml::to_string(&settings).unwrap();
+        assert!(!saved.contains("showDiffPanelOnStartup"));
+    }
 
     #[test]
     fn project_settings_default_agent_mode_to_yolo() {

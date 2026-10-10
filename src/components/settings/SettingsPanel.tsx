@@ -13,6 +13,7 @@ import { useTodoStore } from "../../stores/useTodoStore";
 import { useTerminalSettingsStore } from "../../stores/useTerminalSettingsStore";
 import { useUsageSettingsStore } from "../../stores/useUsageSettingsStore";
 import { UsageLimitSettings } from "./UsageLimitSettings";
+import OptionGroup from "../shared/OptionGroup";
 import { useUpdateStore } from "../../stores/useUpdateStore";
 import { assistantLogoSrc, getAssistantLogoClass } from "../../lib/assistantLogos";
 import {
@@ -20,7 +21,7 @@ import {
   TERMINAL_FONT_FAMILY,
 } from "../../lib/terminalConfig";
 import { ALL_USAGE_PROVIDERS, getProviderLabel } from "../usage/usageHelpers";
-import type { CursorStyle, BudgetMode, FontFamily } from "../../lib/types";
+import type { AgentInterface, SessionMode, CursorStyle, BudgetMode, FontFamily } from "../../lib/types";
 import { getErrorMessage } from "../../lib/errors";
 import { listMonospaceFamilies } from "../../lib/tauri";
 
@@ -45,7 +46,8 @@ function InfoTip({ text }: { text: string }) {
 }
 
 export default function SettingsPanel() {
-  const optionClass = "option-card w-44 justify-start";
+  const optionClass = "option-card settings-editor";
+  const [section, setSection] = useState("Appearance");
   const [appMeta, setAppMeta] = useState<AppMeta | null>(null);
   const [appMetaError, setAppMetaError] = useState<string | null>(null);
   const [fontFamilies, setFontFamilies] = useState<FontFamily[]>([]);
@@ -235,29 +237,41 @@ export default function SettingsPanel() {
   };
 
   return (
-    <div className="absolute inset-0 overflow-y-auto pt-3 pb-6">
+    <div className="page settings-page">
+      <header className="page__heading">
+        <div className="page__eyebrow">Shep</div>
+        <h1 className="page__title">Settings.</h1>
+        <p className="page__lede">Appearance, session defaults, and tools.</p>
+      </header>
+      <nav className="page-tabs" aria-label="Settings categories">
+        {["Appearance", "Workspace", "Terminal", "Usage", "About"].map((name) => (
+          <button key={name} className={section === name ? "on" : ""}
+            aria-pressed={section === name} onClick={() => setSection(name)}>{name}</button>
+        ))}
+      </nav>
       {/* ── Theme ──────────────────────────────────────────── */}
-      <section className="settings-section">
-        <h2 className="section-label !p-0 settings-section__header">Theme</h2>
+      <section className="settings-section" hidden={section !== "Appearance"}>
+        <h2 className="page__label settings-section__header">Theme</h2>
 
-        <div className="flex flex-wrap gap-3">
+        <div className="theme-grid">
           {[...DARK_THEMES, ...LIGHT_THEMES, ...TRANSPARENT_THEMES].map((t) => {
             const active = t.id === themeId;
             return (
               <button
                 key={t.id}
                 onClick={() => setTheme(t.id)}
-                className={`${optionClass} ${active ? "selected" : ""}`}
+                className={`theme-choice ${active ? "selected" : ""}`}
+                aria-pressed={active}
               >
-                <div
-                  className="shrink-0 rounded-full"
-                  style={{
-                    width: 24,
-                    height: 24,
-                    background: `linear-gradient(135deg, ${t.bgRadial1} 0%, ${t.bgLinearMid} 50%, ${t.bgRadial3} 100%)`,
-                  }}
-                />
-                <span>{t.name}</span>
+                <span className="theme-choice__preview" aria-hidden="true" style={{ background: t.appBg, color: t.appFg }}>
+                  <span className="theme-choice__sidebar" style={{ background: t.sidebarBg ?? t.frameTint }}>
+                    <i /><i /><i />
+                  </span>
+                  <span className="theme-choice__sample"><b>Aa</b><span>
+                    {[t.termBlue, t.termGreen, t.termMagenta, t.termYellow].map((color, i) => <i key={i} style={{ background: color }} />)}
+                  </span></span>
+                </span>
+                <span className="theme-choice__label">{t.name}{active && <Check size={14} />}</span>
               </button>
             );
           })}
@@ -314,10 +328,10 @@ export default function SettingsPanel() {
       </section>
 
       {/* ── Editor ─────────────────────────────────────────── */}
-      <section className="settings-section">
-        <h2 className="section-label !p-0 settings-section__header">Editor</h2>
+      <section className="settings-section" hidden={section !== "Workspace"}>
+        <h2 className="page__label settings-section__header">Editor</h2>
 
-        <div className="flex flex-wrap gap-3">
+        <div className="settings-editors">
           {EDITOR_OPTIONS.map((option) => {
             const active = option.id === settings.preferredEditor;
             return (
@@ -325,6 +339,7 @@ export default function SettingsPanel() {
                 key={option.id}
                 onClick={() => void setPreferredEditor(option.id)}
                 className={`${optionClass} ${active ? "selected" : ""}`}
+                aria-pressed={active}
               >
                 <img
                   src={option.logoSrc}
@@ -344,8 +359,8 @@ export default function SettingsPanel() {
       </section>
 
       {/* ── Keybindings ────────────────────────────────────── */}
-      <section className="settings-section">
-        <h2 className="section-label !p-0 settings-section__header">Keybindings</h2>
+      <section className="settings-section" hidden={section !== "Terminal"}>
+        <h2 className="page__label settings-section__header">Keybindings</h2>
 
         <div className="flex flex-wrap gap-3">
           {KEYBINDING_PRESETS.map((preset) => {
@@ -372,8 +387,8 @@ export default function SettingsPanel() {
       </section>
 
       {/* ── Projects ───────────────────────────────────────── */}
-      <section className="settings-section">
-        <h2 className="section-label !p-0 settings-section__header">Projects</h2>
+      <section className="settings-section" hidden={section !== "Workspace"}>
+        <h2 className="page__label settings-section__header">Projects</h2>
 
         <div className="settings-row">
           <span className="settings-row__label flex items-center gap-2">
@@ -411,24 +426,31 @@ export default function SettingsPanel() {
 
         <div className="settings-row">
           <span className="settings-row__label flex items-center gap-2">
+            <span>Default Agent Interface</span>
+            <InfoTip text="Chat talks to agents over the Agent Client Protocol and renders messages, tool calls and diffs. Terminal runs the agent's own CLI. Agents without a chat adapter always use the terminal." />
+          </span>
+          <OptionGroup<AgentInterface>
+            label="Default Agent Interface"
+            value={projectSettings.defaultAgentInterface}
+            onChange={(value) => void updateProjectSettings({ defaultAgentInterface: value })}
+            options={[{ value: "chat", label: "Chat" }, { value: "terminal", label: "Terminal" }]}
+          />
+        </div>
+
+        <div className="settings-row">
+          <span className="settings-row__label flex items-center gap-2">
             <span>Default Agent Mode</span>
             <InfoTip text="YOLO starts supported agents with permission checks disabled and also applies when resuming sessions. Pi already runs tools without a separate approval layer." />
           </span>
-          <div className="flex flex-wrap gap-2">
-            <button
-              onClick={() => void updateProjectSettings({ defaultAgentMode: "standard" })}
-              className={`option-card option-card--compact ${projectSettings.defaultAgentMode === "standard" ? "selected" : ""}`}
-            >
-              Standard
-            </button>
-            <button
-              onClick={() => void updateProjectSettings({ defaultAgentMode: "yolo" })}
-              className={`option-card option-card--compact ${projectSettings.defaultAgentMode === "yolo" ? "selected" : ""}`}
-              title="Start agents with approval prompts disabled"
-            >
-              YOLO
-            </button>
-          </div>
+          <OptionGroup<SessionMode>
+            label="Default Agent Mode"
+            value={projectSettings.defaultAgentMode}
+            onChange={(value) => void updateProjectSettings({ defaultAgentMode: value })}
+            options={[
+              { value: "standard", label: "Standard" },
+              { value: "yolo", label: "YOLO", title: "Start agents with approval prompts disabled" },
+            ]}
+          />
         </div>
 
         {projectIsSaving && <div className="mt-2 text-xs text-[var(--text-muted)]">Saving project settings...</div>}
@@ -436,8 +458,8 @@ export default function SettingsPanel() {
       </section>
 
       {/* ── To-dos ─────────────────────────────────────────── */}
-      <section className="settings-section">
-        <h2 className="section-label !p-0 settings-section__header">To-dos</h2>
+      <section className="settings-section" hidden={section !== "Workspace"}>
+        <h2 className="page__label settings-section__header">To-dos</h2>
 
         <div className="settings-row">
           <span className="settings-row__label flex items-center gap-2">
@@ -482,8 +504,8 @@ export default function SettingsPanel() {
       </section>
 
       {/* ── Terminal ───────────────────────────────────────── */}
-      <section className="settings-section">
-        <h2 className="section-label !p-0 settings-section__header">Terminal</h2>
+      <section className="settings-section" hidden={section !== "Terminal"}>
+        <h2 className="page__label settings-section__header">Terminal</h2>
 
         <div className="settings-row">
           <span className="settings-row__label">Cursor</span>
@@ -618,8 +640,8 @@ export default function SettingsPanel() {
       </section>
 
       {/* ── Usage ──────────────────────────────────────────── */}
-      <section className="settings-section">
-        <h2 className="section-label !p-0 settings-section__header">Usage Providers</h2>
+      <section className="settings-section" hidden={section !== "Usage"}>
+        <h2 className="page__label settings-section__header">Usage Providers</h2>
 
         <div className="usage-provider-grid">
           {ALL_USAGE_PROVIDERS.map((provider) => {
@@ -702,8 +724,8 @@ export default function SettingsPanel() {
       </section>
 
       {/* ── Updates ─────────────────────────────────────────── */}
-      <section className="settings-section">
-        <h2 className="section-label !p-0 settings-section__header">Updates</h2>
+      <section className="settings-section" hidden={section !== "About"}>
+        <h2 className="page__label settings-section__header">Updates</h2>
 
         {updateStatus === "available" && (
           <div className="settings-meta-grid mb-4" style={{ border: "1px solid rgba(122,162,247,0.3)", borderRadius: 8, padding: 12 }}>
@@ -769,8 +791,8 @@ export default function SettingsPanel() {
       </section>
 
       {/* ── About ───────────────────────────────────────────── */}
-      <section className="settings-section">
-        <h2 className="section-label !p-0 settings-section__header">About</h2>
+      <section className="settings-section" hidden={section !== "About"}>
+        <h2 className="page__label settings-section__header">About</h2>
 
         {appMeta ? (
           <div className="settings-meta-grid">

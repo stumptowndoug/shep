@@ -10,7 +10,7 @@ import {
   recordSessionHistoryActivity,
 } from "../lib/tauri";
 import { useThemeStore } from "../stores/useThemeStore";
-import type { AgentSemanticState, AgentStatusObservation, PtyOutput, CommandConfig, SessionHistoryEntry, SessionMode } from "../lib/types";
+import { isSessionTab, type AgentSemanticState, type AgentStatusObservation, type PtyOutput, type CommandConfig, type SessionHistoryEntry, type SessionMode } from "../lib/types";
 import {
   detectAgentScreenStatus,
   readTerminalBottomScreen,
@@ -29,6 +29,7 @@ import { CODING_ASSISTANTS } from "../components/sidebar/constants";
 import type { Terminal } from "@xterm/xterm";
 import { getErrorMessage } from "../lib/errors";
 import { sessionResumeArgs } from "../lib/sessionResume";
+import { closeChat } from "../lib/acp/chatSessions";
 import {
   clearTerminalPipelineCounters,
   recordPendingOutput,
@@ -784,6 +785,7 @@ export function usePty() {
             providerSessionId: null,
             sessionMode: null,
             labelSource: "default",
+            agentInterface: "terminal",
           });
         }
 
@@ -819,7 +821,7 @@ export function usePty() {
       const state = useTerminalStore.getState();
       const commands = useCommandStore.getState().projectCommands[path] ?? [];
       const command = commands.find((c) => c.name === commandName);
-      const tab = state.getAllProjectTabs(path).find((t) => (t.kind === "terminal" || t.kind === "assistant") && t.commandName === commandName);
+      const tab = state.getAllProjectTabs(path).find((t) => isSessionTab(t) && t.commandName === commandName);
       if (command?.ptyId) {
         cleanupActivityState(command.ptyId);
         stoppingPtys.add(command.ptyId);
@@ -846,29 +848,19 @@ export function usePty() {
     [stopCommand, startCommand],
   );
 
-  const spawnBlankShell = useCallback(
-    async (cols: number, rows: number, requestedRepoPath?: string) => {
+  /** Open a terminal tab running a shell command string. */
+  const runInTerminal = useCallback(
+    async (script: string, label: string, cols: number, rows: number, requestedRepoPath?: string) => {
       const repoPath = requestedRepoPath ?? activeRepoPath;
-      if (!repoPath) return;
+      if (!repoPath) return null;
 
       try {
-        const shell = await getDefaultShell();
-        const ptyId = await spawnSession(
-          `${shell} -l`,
-          null,
-          {},
-          cols,
-          rows,
-          null,
-          repoPath,
-        );
-        if (!ptyId) return;
-
-        const id = nextTabId();
+        const ptyId = await spawnSession(script, null, {}, cols, rows, null, repoPath);
+        if (!ptyId) return null;
         addTab({
-          id,
+          id: nextTabId(),
           kind: "terminal",
-          label: "Terminal",
+          label,
           ptyId,
           repoPath,
           commandName: null,
@@ -876,22 +868,30 @@ export function usePty() {
           providerSessionId: null,
           sessionMode: null,
           labelSource: "default",
+          agentInterface: "terminal",
         });
-
         return ptyId;
       } catch (e) {
         if (import.meta.env.DEV) {
-          console.error("Failed to spawn shell:", e);
+          console.error(`Failed to open ${label}:`, e);
         }
         pushNotice({
           tone: "error",
-          title: "Couldn’t open shell",
+          title: `Couldn’t open ${label}`,
           message: getErrorMessage(e),
         });
         return null;
       }
     },
     [activeRepoPath, spawnSession, addTab, pushNotice],
+  );
+
+  const spawnBlankShell = useCallback(
+    async (cols: number, rows: number, requestedRepoPath?: string) => {
+      const shell = await getDefaultShell();
+      return runInTerminal(`${shell} -l`, "Terminal", cols, rows, requestedRepoPath);
+    },
+    [runInTerminal],
   );
 
   const launchAssistant = useCallback(
@@ -939,6 +939,7 @@ export function usePty() {
           providerSessionId: null,
           sessionMode: mode,
           labelSource: "default",
+          agentInterface: "terminal",
         });
         startSessionTitleResolver(ptyId, assistantId, activeRepoPath, startedAfterMs, model);
         startAgentStatusObserver(ptyId, assistantId, activeRepoPath);
@@ -1000,6 +1001,7 @@ export function usePty() {
           providerSessionId: session.sessionId,
           sessionMode: mode,
           labelSource: session.title ? "session" : "default",
+          agentInterface: "terminal",
         });
 
         historyActivityWrites.set(ptyId, resumedAt);
@@ -1049,7 +1051,13 @@ export function usePty() {
       if (!path) return;
       const tabs = state.projectState[path]?.tabs ?? [];
       const tab = tabs.find((t) => t.id === tabId);
-      if (!tab || (tab.kind !== "terminal" && tab.kind !== "assistant")) return;
+      if (!tab || !isSessionTab(tab)) return;
+      if (tab.agentInterface === "chat") {
+        // Select the next tab before native cleanup or history I/O can stall.
+        removeTab(tabId);
+        await closeChat(tab.ptyId);
+        return;
+      }
 
       cleanupActivityState(tab.ptyId);
       stopSessionTitleResolver(tab.ptyId);
@@ -1076,7 +1084,11 @@ export function usePty() {
     const tabs = state.getAllProjectTabs(repoPath);
 
     for (const tab of tabs) {
-      if (tab.kind !== "terminal" && tab.kind !== "assistant") continue;
+      if (!isSessionTab(tab)) continue;
+      if (tab.agentInterface === "chat") {
+        await closeChat(tab.ptyId);
+        continue;
+      }
       cleanupActivityState(tab.ptyId);
       stopSessionTitleResolver(tab.ptyId);
       stoppingPtys.add(tab.ptyId);
@@ -1094,6 +1106,7 @@ export function usePty() {
     stopCommand,
     restartCommand,
     spawnBlankShell,
+    runInTerminal,
     launchAssistant,
     resumeAssistant,
     closeTab,

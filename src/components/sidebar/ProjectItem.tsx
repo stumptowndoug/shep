@@ -317,10 +317,9 @@ export default function ProjectItem({
               {createPathPreview ?? `.shep-worktrees/${repo.name}/...`}
             </div>
           </div>
-          <div style={{ padding: "6px 8px", borderTop: "1px solid rgba(255,255,255,0.08)" }}>
+          <div style={{ padding: "6px 8px" }}>
             <button
-              className="btn-primary"
-              style={{ width: "100%", fontSize: 12, padding: "4px 0" }}
+              className="btn-primary w-full"
               disabled={!wtBranchName.trim() || creatingWorktree}
               onClick={() => void handleCreateWorktree()}
             >

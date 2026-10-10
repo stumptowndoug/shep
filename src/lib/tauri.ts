@@ -188,6 +188,31 @@ export function killPty(ptyId: number): Promise<void> {
   return invoke("kill_pty", { ptyId });
 }
 
+// ── ACP agent commands ──────────────────────────────────────────────
+
+export type AcpOutput =
+  | { event: "line"; data: string }
+  | { event: "exit"; data: { code: number; stderr: string } };
+
+export function spawnAcpAgent(
+  command: string,
+  args: string[],
+  cwd: string,
+  onOutput: (msg: AcpOutput) => void,
+): Promise<number> {
+  const channel = new Channel<AcpOutput>();
+  channel.onmessage = onOutput;
+  return invoke("spawn_acp_agent", { command, args, cwd, onOutput: channel });
+}
+
+export function writeAcpAgent(agentId: number, line: string): Promise<void> {
+  return invoke("write_acp_agent", { agentId, line });
+}
+
+export function killAcpAgent(agentId: number): Promise<void> {
+  return invoke("kill_acp_agent", { agentId });
+}
+
 export interface SessionTitleMatch {
   sessionId: string;
   title: string | null;

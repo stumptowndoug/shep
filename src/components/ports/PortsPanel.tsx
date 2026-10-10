@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { RefreshCcw, Skull, ExternalLink, Folder } from "lucide-react";
+import { RefreshCcw, Square, ExternalLink, Folder } from "lucide-react";
 import { listListeningPorts, killPort, openUrl } from "../../lib/tauri";
 import { useNoticeStore } from "../../stores/useNoticeStore";
 import { getErrorMessage } from "../../lib/errors";
@@ -88,9 +88,13 @@ export default function PortsPanel() {
   });
 
   return (
-    <div className="absolute inset-0 overflow-y-auto pt-3 pb-6">
-      <div className="flex items-center justify-between mb-4 pr-6 pl-3">
-        <h2 className="section-label !p-0">Ports</h2>
+    <div className="page">
+      <div className="page__heading page__heading--actions">
+        <div>
+          <div className="page__eyebrow">Local servers</div>
+          <h1 className="page__title">Ports.</h1>
+          <p className="page__lede">Local servers running across your projects.</p>
+        </div>
         <button
           className="icon-btn"
           onClick={() => void refresh()}
@@ -103,7 +107,7 @@ export default function PortsPanel() {
       </div>
 
       {error && (
-        <div className="text-sm mx-6 mt-2 p-3 rounded-md" style={{ background: "rgba(255,80,80,0.1)", color: "var(--text-danger, #e55)" }}>
+        <div className="callout callout--danger mb-4 !block">
           <p className="font-medium mb-1">Scan error</p>
           <p className="opacity-70 font-mono text-xs">{error}</p>
         </div>
@@ -123,18 +127,17 @@ export default function PortsPanel() {
 
       {groupKeys.map((group) => (
         <section key={group} className="settings-section">
-          <div className="flex items-center gap-1.5 settings-section__header opacity-60">
+          <div className="port-group__heading">
             <Folder size={12} />
-            <span className="text-xs font-medium uppercase tracking-wide">{group}</span>
+            <span className="page__label !mb-0">{group}</span>
             <span className="text-xs opacity-50">({grouped[group].length})</span>
           </div>
 
-          <div className="flex flex-col gap-1">
+          <div className="port-group">
             {grouped[group].map((port) => (
               <div
                 key={`${port.pid}-${port.port}`}
-                className="flex items-center gap-3 px-3 py-2 rounded-md"
-                style={{ background: "var(--surface-hover)" }}
+                className="port-row"
               >
                 <span
                   className="font-mono text-sm font-semibold shrink-0"
@@ -156,21 +159,15 @@ export default function PortsPanel() {
                     )}
                   </div>
                   {port.cwd && (
-                    <span className="text-xs opacity-40 truncate">{port.cwd}</span>
+                    <span className="port-row__path">{port.cwd}</span>
                   )}
                 </div>
 
-                <span className="text-xs opacity-40 shrink-0 font-mono" title="Uptime">
-                  {formatUptime(port.uptime)}
-                </span>
-
-                <span className="text-xs opacity-40 shrink-0" style={{ minWidth: "50px" }} title="Memory">
-                  {formatMemory(port.memory_kb)}
-                </span>
-
-                <span className="text-xs opacity-30 shrink-0 font-mono" title="PID" style={{ minWidth: "44px" }}>
-                  {port.pid}
-                </span>
+                <div className="port-row__metrics">
+                  <span title="Uptime">{formatUptime(port.uptime)}</span>
+                  <span title="Memory">{formatMemory(port.memory_kb)}</span>
+                  <span title="Process ID">PID {port.pid}</span>
+                </div>
 
                 <div className="flex items-center gap-1 shrink-0">
                   <button
@@ -187,9 +184,9 @@ export default function PortsPanel() {
                     disabled={killing.has(port.pid)}
                     title={`Kill ${port.process} (pid ${port.pid})`}
                     aria-label={`Kill process on port ${port.port}`}
-                    style={{ color: "var(--text-danger, #e55)" }}
+                    data-danger="true"
                   >
-                    <Skull size={13} />
+                    <Square size={12} />
                   </button>
                 </div>
               </div>

@@ -348,7 +348,7 @@ export default function GitPanel() {
   useEffect(() => {
     // Wait until the changed-files list has actually loaded for this repo.
     // Otherwise hasSelectedDiff is spuriously false on initial mount and the
-    // "diff" mode set by an external caller (e.g. DiffSummaryPanel click)
+    // "diff" mode set by an external caller (e.g. toolbar changes summary)
     // gets flipped back to "file".
     if (changedFilesLoadedFor !== activeProjectPath) return;
     if (viewerMode === "diff" && !hasSelectedDiff) {

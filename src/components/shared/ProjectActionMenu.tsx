@@ -65,9 +65,7 @@ export default function ProjectActionMenu({
   };
 
   const label = projectName ? `Add to ${projectName}` : "Add project tab";
-  const buttonClass = variant === "tab"
-    ? "tab tab-auto !px-3 font-semibold"
-    : "section-toggle project-new-tab";
+  const buttonClass = variant === "tab" ? "icon-btn" : "section-toggle";
 
   return (
     <>
@@ -82,7 +80,7 @@ export default function ProjectActionMenu({
         aria-haspopup="menu"
         aria-expanded={open}
       >
-        {variant === "tab" ? "+" : (
+        {variant === "tab" ? <Plus size={16} /> : (
           <>
             <span className="shrink-0 w-[14px] flex items-center justify-center">
               <Plus size={14} />

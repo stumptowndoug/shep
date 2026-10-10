@@ -179,7 +179,7 @@ function ActivityBarChart({
 
   return (
     <div className="usage-chart">
-      <div className="usage-chart__bars" aria-hidden="true">
+      <div className={`usage-chart__bars ${trend.length > 12 ? "usage-chart__bars--dense" : ""}`} aria-hidden="true">
         {trend.map((bucket, index) => {
           const date = dates[index];
           const intensity = bucket.tokens === 0 ? 0 : Math.max(bucket.tokens / maxTokens, 0.12);
@@ -766,7 +766,11 @@ export default function UsagePanel() {
   const isBusy = loading || overviewLoading;
 
   return (
-    <div className="absolute inset-0 overflow-y-auto pt-3 pb-6">
+    <div className="page">
+      <header className="page__heading">
+        <div className="page__eyebrow">Coding agents</div>
+        <h1 className="page__title">Usage.</h1>
+      </header>
       <div className="usage-window-tabs-row">
         <div className="usage-window-tabs">
           {TIME_WINDOWS.map((timeWindow) => (
@@ -774,6 +778,7 @@ export default function UsagePanel() {
               key={timeWindow.key}
               type="button"
               className={`usage-window-tab ${window === timeWindow.key ? "usage-window-tab--active" : ""}`}
+              aria-pressed={window === timeWindow.key}
               onClick={() => {
                 setWindow(timeWindow.key);
                 // fetchOverview depends on window via its useCallback dep —

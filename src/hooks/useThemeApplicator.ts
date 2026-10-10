@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { getCurrentWindow, Effect, EffectState } from "@tauri-apps/api/window";
 import { useThemeStore } from "../stores/useThemeStore";
 import { applyThemeToTerminals } from "../components/terminal/terminalTheme";
-import { hexLuminance } from "../lib/themes";
+import { accentButtonText, hexLuminance, themeAccent } from "../lib/themes";
 import type { ShepTheme } from "../lib/themes";
 import { toPtyColorTheme } from "../lib/ptyColorTheme";
 import { updatePtyColorTheme } from "../lib/tauri";
@@ -41,6 +41,12 @@ export function useThemeApplicator(): void {
     for (const [key, cssVar] of CSS_VAR_MAP) {
       style.setProperty(cssVar, theme[key] as string);
     }
+
+    const accent = themeAccent(theme);
+    style.setProperty("--accent", accent);
+    style.setProperty("--button-fg", accentButtonText(accent));
+    if (theme.sidebarBg) style.setProperty("--sidebar-bg", theme.sidebarBg);
+    else style.removeProperty("--sidebar-bg");
 
     // Overlay color: white for dark themes, black for light themes
     const isLight = hexLuminance(theme.appBg) > 0.3;

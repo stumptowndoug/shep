@@ -1,12 +1,24 @@
 import type { CodingAssistant } from "../../lib/types";
 
 export const CODING_ASSISTANTS: CodingAssistant[] = [
-  { id: "claude", name: "Claude Code", command: "claude", yoloFlag: "--dangerously-skip-permissions", modelFlag: "--model" },
-  { id: "codex", name: "Codex", command: "codex", yoloFlag: "--yolo", modelFlag: "--model" },
+  {
+    id: "claude", name: "Claude Code", command: "claude", yoloFlag: "--dangerously-skip-permissions", modelFlag: "--model",
+    acp: { command: "claude-agent-acp", args: [], install: "npm i -g @agentclientprotocol/claude-agent-acp" },
+  },
+  {
+    id: "codex", name: "Codex", command: "codex", yoloFlag: "--yolo", modelFlag: "--model",
+    acp: { command: "codex-acp", args: [], install: "npm i -g @agentclientprotocol/codex-acp" },
+  },
   { id: "cursor", name: "Cursor", command: "cursor-agent", yoloFlag: "--yolo", modelFlag: "--model" },
   { id: "antigravity", name: "Antigravity", command: "agy", yoloFlag: "--dangerously-skip-permissions", modelFlag: "--model" },
-  { id: "opencode", name: "Open Code", command: "opencode", yoloFlag: "--auto", modelFlag: "--model" },
-  { id: "pi", name: "pi", command: "pi", yoloFlag: null, modelFlag: "--model" },
+  {
+    id: "opencode", name: "Open Code", command: "opencode", yoloFlag: "--auto", modelFlag: "--model",
+    acp: { command: "opencode", args: ["acp"], install: "Included with opencode" },
+  },
+  {
+    id: "pi", name: "pi", command: "pi", yoloFlag: null, modelFlag: "--model",
+    acp: { command: "pi-acp", args: [], install: "npm i -g pi-acp" },
+  },
 ];
 
 export const ASSISTANT_INSTALL_URLS: Record<string, string> = {

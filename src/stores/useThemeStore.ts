@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { buildCustomTheme } from "../lib/customThemes";
-import { DEFAULT_THEME_ID, THEMES } from "../lib/themes";
+import { DEFAULT_THEME_ID, THEMES, withLayeredSurfaces } from "../lib/themes";
 import type { ShepTheme } from "../lib/themes";
 
 const THEME_ID_STORAGE_KEY = "shep:theme";
@@ -48,8 +48,8 @@ function saveCustomTheme(theme: ShepTheme): void {
 }
 
 function resolveTheme(id: string, customTheme: ShepTheme | null): ShepTheme {
-  if (id === customTheme?.id) return customTheme;
-  return THEMES[id] ?? THEMES[DEFAULT_THEME_ID];
+  const base = id === customTheme?.id ? customTheme : THEMES[id] ?? THEMES[DEFAULT_THEME_ID];
+  return withLayeredSurfaces(base);
 }
 
 interface ThemeStore {
@@ -80,7 +80,7 @@ export const useThemeStore = create<ThemeStore>((set, get) => ({
     set({
       customTheme: imported,
       themeId: imported.id,
-      theme: imported,
+      theme: withLayeredSurfaces(imported),
     });
     return imported;
   },

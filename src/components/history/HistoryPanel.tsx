@@ -161,13 +161,12 @@ export default function HistoryPanel({
   }, [onResumeSession]);
 
   return (
-    <div className="history-panel absolute inset-0 overflow-y-auto">
-      <header className="history-panel__header">
+    <div className="page">
+      <header className="page__heading page__heading--actions">
         <div>
-          <h2 className="history-panel__title">Session history</h2>
-          <p className="history-panel__description">
-            Find and resume conversations Shep has seen.
-          </p>
+          <div className="page__eyebrow">Sessions</div>
+          <h1 className="page__title">History.</h1>
+          <p className="page__lede">Find and resume conversations Shep has seen.</p>
         </div>
         <button
           type="button"

@@ -1,3 +1,4 @@
+mod acp;
 mod agent_status;
 mod commands;
 mod fonts;
@@ -15,6 +16,7 @@ mod workspace;
 
 use tauri::{Emitter, Manager, RunEvent, WindowEvent};
 
+use acp::AcpManager;
 use pty::manager::PtyManager;
 use usage::UsageDb;
 use watcher::GitWatcher;
@@ -29,6 +31,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .manage(PtyManager::new())
+        .manage(AcpManager::new())
         .manage(WorkspaceManager::new())
         .manage(UsageDb::open().unwrap_or_else(|e| {
             eprintln!("Usage database failed to open ({e}), using in-memory fallback");
@@ -72,7 +75,8 @@ pub fn run() {
                 if pty.is_shutting_down() {
                     return;
                 }
-                let count = pty.session_count();
+                let acp = window.state::<AcpManager>();
+                let count = pty.session_count() + acp.session_count();
                 if count > 0 {
                     api.prevent_close();
                     let _ = window.emit("quit-requested", count);
@@ -110,6 +114,9 @@ pub fn run() {
             commands::update_pty_color_theme,
             commands::resize_pty,
             commands::kill_pty,
+            commands::spawn_acp_agent,
+            commands::write_acp_agent,
+            commands::kill_acp_agent,
             commands::resolve_session_title,
             commands::get_agent_runtime_status,
             commands::upsert_session_history,
@@ -178,7 +185,8 @@ pub fn run() {
             if pty.is_shutting_down() {
                 return;
             }
-            let count = pty.session_count();
+            let acp = app_handle.state::<AcpManager>();
+            let count = pty.session_count() + acp.session_count();
             if count > 0 {
                 api.prevent_exit();
                 let _ = app_handle.emit("quit-requested", count);
