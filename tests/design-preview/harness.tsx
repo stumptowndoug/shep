@@ -9,12 +9,20 @@ import { useTerminalSettingsStore } from '../../src/stores/useTerminalSettingsSt
 import { useUsageSettingsStore } from '../../src/stores/useUsageSettingsStore';
 import { useThemeStore } from '../../src/stores/useThemeStore';
 import { useChatStore } from '../../src/stores/useChatStore';
+import { useUIStore } from '../../src/stores/useUIStore';
 import { emptyChat } from '../../src/lib/acp/chatModel';
-import type { RepoInfo } from '../../src/lib/types';
-import tauriConfig from '../../src-tauri/tauri.conf.json';
+import type { PortInfo, RepoInfo } from '../../src/lib/types';
 import '../../src/styles/globals.css';
 
 const params = new URLSearchParams(location.search);
+let previewPorts: PortInfo[] = params.get('ports') === 'empty' ? [] : [
+  {port:5173,pid:1234,process:'node',framework:'Vite',project:'shep',cwd:'/preview/shep',memory_kb:148480,uptime:'02:14:32'},
+  {port:8787,pid:1235,process:'node',framework:'Express',project:'shep',cwd:'/preview/shep/api',memory_kb:58368,uptime:'02:12:08'},
+  {port:4000,pid:2345,process:'beam.smp',framework:'Phoenix',project:'springroll',cwd:'/preview/springroll',memory_kb:286720,uptime:'01:28:04'},
+  {port:5174,pid:2346,process:'node',framework:'Vite',project:'springroll',cwd:'/preview/springroll/web',memory_kb:129024,uptime:'01:25:41'},
+  {port:8080,pid:3456,process:'python3',framework:'',project:'',cwd:'/preview/tools/local-development/long-running-preview-server',memory_kb:24576,uptime:'12-03:08:14'},
+];
+let portScans = 0;
 const changedFiles = params.get('changes') === 'empty' ? [] : [
   { path: 'src/App.tsx', status: 'M', area: 'unstaged', old_path: null },
   { path: 'src/styles/globals.css', status: 'M', area: 'unstaged', old_path: null },
@@ -82,10 +90,14 @@ mockIPC((cmd, payload) => {
     // Cover an unavailable CLI, an installed terminal-only agent, and a missing chat adapter.
     case 'check_command_exists': return !['grok', 'agy', 'codex-acp'].includes(String(args?.command));
     case 'get_models_for_provider': return ['Default model', 'Fast model', 'Reasoning model'];
-    case 'list_listening_ports': return [
-      {port:5173,pid:1234,process:'node',project:'shep',cwd:'/preview/shep',command:'pnpm dev',memory_kb:148480,uptime:'02:14:32'},
-      {port:4000,pid:2345,process:'beam.smp',project:'springroll',cwd:'/preview/springroll',command:'mix phx.server',memory_kb:286720,uptime:'01:28:04'},
-    ];
+    case 'list_listening_ports': {
+      portScans++;
+      if (params.get('ports') === 'error' && portScans === 1) return Promise.reject('Unable to read listening processes.');
+      if (params.get('ports') === 'slow' && portScans === 1) return new Promise(resolve => setTimeout(() => resolve(previewPorts), 2000));
+      return previewPorts;
+    }
+    case 'kill_port': previewPorts = previewPorts.filter(port => port.pid !== args?.pid); return null;
+    case 'open_url': document.documentElement.dataset.previewLastOpenedUrl = String(args?.url); return null;
     case 'get_pi_config': return {settings:{defaultProvider:null,defaultModel:null},configuredProviders:[]};
     case 'get_all_usage_snapshots': return snapshots;
     case 'list_session_history': return histories.filter(item => (!args?.projectPath || item.projectPath === args.projectPath) && (!args?.query || item.title.toLowerCase().includes(String(args.query).toLowerCase())));
@@ -113,10 +125,13 @@ if (previewWidth >= 800 && previewHeight >= 600) {
   root.style.height = `${previewHeight}px`;
 }
 if (params.get('view') === 'chat') useTerminalStore.getState().setActiveTab('preview-900');
+if (params.get('view') === 'ports') useUIStore.getState().togglePortsPanel();
 const theme = new URLSearchParams(location.search).get('theme');
 if (theme) useThemeStore.getState().setTheme(theme);
 // Show the native titlebar's footprint so browser checks catch crowded controls.
 // These dots are decorative; the browser preview never changes a native window.
+// Rust config is excluded from Vite's watcher; read it fresh on preview reload.
+const tauriConfig = await fetch('/src-tauri/tauri.conf.json', {cache:'no-store'}).then(response => response.json());
 const trafficLights = tauriConfig.app.windows[0].trafficLightPosition;
 createRoot(document.getElementById('root')!).render(<>
   <App />
