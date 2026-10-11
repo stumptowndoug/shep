@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { Channel } from "@tauri-apps/api/core";
 import { mockIPC } from "@tauri-apps/api/mocks";
 import { usePty } from "../../src/hooks/usePty";
+import ChatView from "../../src/components/chat/ChatView";
 import { AcpConnection } from "../../src/lib/acp/connection";
 import { startChat, sendPrompt, cancelTurn } from "../../src/lib/acp/chatSessions";
 import { CODING_ASSISTANTS } from "../../src/components/sidebar/constants";
@@ -234,7 +235,41 @@ function Harness() {
       killGate.resolve();
       await orphanClosing;
       pass("PASS: lost frontend state — tab close still stops the native agent");
-      setStatus("All 9 checks passed");
+      reset();
+      const keyed = await startChat({ assistant: CODING_ASSISTANTS.find((a) => a.id === "claude")!, repoPath: "/test/project", mode: "standard" });
+      await until(() => useChatStore.getState().chats[keyed]?.status === "ready");
+      sendPrompt(keyed, "Keep working");
+      await until(() => writes.includes("session/prompt"));
+      const host = document.createElement("div");
+      document.body.append(host);
+      const view = createRoot(host);
+      view.render(<ChatView chatId={keyed} assistantId="claude" repoPath="/test/project" fullAccess={false} />);
+      await until(() => Boolean(host.querySelector(".chat-composer__input")));
+      const cancels = () => writes.filter((method) => method === "session/cancel").length;
+      // Writes go through async IPC; let them land before counting.
+      const press = async (target: EventTarget, init: KeyboardEventInit) => {
+        target.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init }));
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      };
+      const outside = document.createElement("input");
+      document.body.append(outside);
+      await press(outside, { key: "Escape" });
+      assert(cancels() === 0, "Esc in unrelated UI stopped the agent");
+      host.style.display = "none";
+      await press(document.body, { key: "Escape" });
+      assert(cancels() === 0, "Esc stopped a hidden chat");
+      host.style.display = "";
+      await press(document.body, { key: "Escape" });
+      assert(cancels() === 1, "Esc with nothing focused did not stop the agent");
+      await press(host.querySelector(".chat-composer__input")!, { key: "c", ctrlKey: true });
+      assert(cancels() === 2, "Ctrl+C in the composer did not stop the agent");
+      view.unmount();
+      host.remove();
+      outside.remove();
+      killGate.resolve(); historyGate.resolve();
+      await closeTab(useTerminalStore.getState().findTabByPtyId(keyed)!.id);
+      pass("PASS: Esc and Ctrl+C stop a visible chat, and only that chat");
+      setStatus("All 10 checks passed");
     } catch (error) {
       setStatus(`FAIL: ${error instanceof Error ? error.message : error}`);
     } finally {

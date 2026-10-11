@@ -4,7 +4,8 @@ import { ChatItemView } from "./ChatItems";
 import ChatComposer from "./ChatComposer";
 import CursorRequestCard from "./CursorRequestCard";
 import { useChatStore } from "../../stores/useChatStore";
-import { answerPermission, cancelChatStartup } from "../../lib/acp/chatSessions";
+import { answerPermission, cancelChatStartup, cancelTurn } from "../../lib/acp/chatSessions";
+import { isStopShortcut } from "../../lib/acp/chatKeys";
 import { openUrl } from "../../lib/tauri";
 import { pendingRequest, RECENT_TURN_LIMIT, type ChatTurn } from "../../lib/acp/chatModel";
 import { splitTurn, turnStopMessage } from "../../lib/acp/chatPresentation";
@@ -106,6 +107,24 @@ export default function ChatView({ chatId, assistantId, repoPath, fullAccess, on
     return () => observer.disconnect();
   }, []);
 
+  // Esc or Ctrl+C stops the agent from anywhere in this chat, or when nothing
+  // has focus. Hidden chats (other tabs, overlays) and other focused UI are left alone.
+  const rootRef = useCallback((node: HTMLDivElement | null) => {
+    if (!node) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.isComposing || !isStopShortcut(event)) return;
+      if (useChatStore.getState().chats[chatId]?.status !== "working") return;
+      if (node.getClientRects().length === 0) return;
+      const target = event.target;
+      const unfocused = target === document.body || target === document.documentElement;
+      if (!unfocused && !(target instanceof Node && node.contains(target))) return;
+      event.preventDefault();
+      cancelTurn(chatId);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [chatId]);
+
   if (!chat) return null;
   const notices = chat.notices ?? [];
   const request = pendingRequest(chat);
@@ -114,7 +133,7 @@ export default function ChatView({ chatId, assistantId, repoPath, fullAccess, on
   const projectName = repoPath.split("/").filter(Boolean).pop() ?? repoPath;
 
   return (
-    <div className="chat-view">
+    <div ref={rootRef} className="chat-view">
       <div
         ref={scrollRef}
         className="chat-view__scroll"

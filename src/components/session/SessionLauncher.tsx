@@ -16,6 +16,7 @@ import { useNoticeStore } from "../../stores/useNoticeStore";
 import Select from "../shared/Select";
 import OptionGroup from "../shared/OptionGroup";
 import { assistantLogoSrc, getAssistantLogoClass } from "../../lib/assistantLogos";
+import { chatHintDone, markChatHintDone } from "../../lib/acp/chatKeys";
 import { ASSISTANT_INSTALL_URLS } from "../sidebar/constants";
 
 /** The other things a project can open, below the agents. */
@@ -55,6 +56,7 @@ export default function SessionLauncher({ onStartSession, onRunInTerminal, onOpe
   // Explicit picks override the project defaults for this launch only.
   const [modeOverride, setMode] = useState<SessionMode | null>(null);
   const [interfaceOverride, setAgentInterface] = useState<AgentInterface | null>(null);
+  const [hintDone, setHintDone] = useState(chatHintDone);
   const mode = modeOverride ?? defaultAgentMode;
   const [launching, setLaunching] = useState(false);
   const [installingAdapter, setInstallingAdapter] = useState<string | null>(null);
@@ -210,6 +212,7 @@ export default function SessionLauncher({ onStartSession, onRunInTerminal, onOpe
   const handleStart = async () => {
     if (!selectedAssistant || !activeRepoPath || launching) return;
     setLaunching(true);
+    if (agentInterface === "chat") markChatHintDone();
 
     // Chat sessions pick their model in the composer, from the agent's own list.
     const started = await onStartSession(
@@ -464,6 +467,20 @@ export default function SessionLauncher({ onStartSession, onRunInTerminal, onOpe
             : agentInterface === "chat"
               ? "A conversation with messages, tool calls, and changes."
               : "The agent’s own command-line interface, in your workspace."}</p>
+          {/* Upgraded users keep Terminal; point out Chat once, until they try it or dismiss this. */}
+          {!hintDone && selectedAssistant.acp && defaultAgentInterface === "terminal" && agentInterface === "terminal" && chatCheck?.available !== false && (
+            <div className="callout mt-3" role="note">
+              <MessageSquare size={15} aria-hidden="true" />
+              <div className="callout__body">
+                <div><strong>New:</strong> run agents as a chat, with tool calls and changes inline.</div>
+                <p className="field-note">Pick Chat above, or make it your default in Settings.</p>
+              </div>
+              <button type="button" className="icon-btn" aria-label="Dismiss chat tip" onClick={() => {
+                markChatHintDone();
+                setHintDone(true);
+              }}><X size={14} aria-hidden="true" /></button>
+            </div>
+          )}
           {selectedAssistant.acp && chatCheck?.available === false && (
             <div className="callout mt-3">
               <MessageSquare size={15} />
