@@ -3337,7 +3337,8 @@ body.theme-clear .app-shell__frame {
 .project-row:focus-within .project-row__pin,
 .project-row__pin--on,
 .project-row__pin:focus-visible { display: grid; }
-.project-row__pin--on { color: var(--muted); }
+.project-row__pin--on,
+.project-row__pin--on:hover { color: inherit; }
 /* Pinned to the bottom of the scroll area, so a long project list scrolls
    beneath it inside the island. */
 .project-list__tools {
@@ -3372,10 +3373,9 @@ body.theme-clear .app-shell__frame {
 .project-list__tool:hover,
 .project-list__tool--on { background: var(--state-active); color: var(--fg); }
 .project-group { display: flex; flex-direction: column; gap: 1px; }
-.project-group__header { display: flex; align-items: center; height: var(--row-h); padding: 0 10px; border-radius: var(--radius-md); }
-.project-group__header:hover { background: var(--state-hover); }
-.project-group__toggle { display: flex; flex: 1; align-items: center; gap: 10px; min-width: 0; height: 100%; padding: 0; border: none; background: none; color: var(--faint); font-size: var(--text-2xs); font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; cursor: pointer; }
-.project-group__header:hover .project-group__toggle { color: var(--muted); }
+.project-group__header { display: flex; align-items: center; height: var(--row-h); padding: 0 10px; border-radius: var(--radius-md); color: var(--faint); }
+.project-group__header:hover { background: var(--state-hover); color: var(--muted); }
+.project-group__toggle { display: flex; flex: 1; align-items: center; gap: 10px; min-width: 0; height: 100%; padding: 0; border: none; background: none; color: inherit; font-size: var(--text-2xs); font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; cursor: pointer; }
 .project-group__icon { flex: none; color: var(--muted); opacity: 0.75; }
 .project-group__count { color: var(--faint); font-family: var(--font-mono); font-size: var(--text-2xs); font-weight: 400; letter-spacing: 0; }
 .project-group__header:hover .project-row__pin,
