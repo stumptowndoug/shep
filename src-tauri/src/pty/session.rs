@@ -156,10 +156,7 @@ fn run_output_coalescer(
         data.push_str(&first);
         let mut exit_code = None;
 
-        loop {
-            let Some(remaining) = OUTPUT_COALESCE_WINDOW.checked_sub(started.elapsed()) else {
-                break;
-            };
+        while let Some(remaining) = OUTPUT_COALESCE_WINDOW.checked_sub(started.elapsed()) {
             match receiver.recv_timeout(remaining) {
                 Ok(ReaderOutput::Data(next)) => data.push_str(&next),
                 Ok(ReaderOutput::Exit(code)) => {
@@ -465,7 +462,7 @@ fn decode_utf8_chunks(pending: &mut Vec<u8>, incoming: &[u8]) -> Vec<String> {
 
 /// Find all descendant PIDs of the given root PID by walking the process tree.
 /// Uses `pgrep -P <pid>` to find direct children, then recurses.
-fn get_all_descendants(root_pid: i32) -> Vec<i32> {
+pub(crate) fn get_all_descendants(root_pid: i32) -> Vec<i32> {
     let mut descendants = Vec::new();
     let mut queue = vec![root_pid];
 
@@ -496,19 +493,13 @@ impl PtySession {
         args: Option<Vec<String>>,
         cwd: &str,
         env: HashMap<String, String>,
-        cols: u16,
-        rows: u16,
+        size: PtySize,
         color_theme: PtyColorTheme,
         channel: Channel<PtyOutput>,
     ) -> Result<Self, String> {
         let pty_system = native_pty_system();
         let pair = pty_system
-            .openpty(PtySize {
-                rows,
-                cols,
-                pixel_width: 0,
-                pixel_height: 0,
-            })
+            .openpty(size)
             .map_err(|e| format!("Failed to open PTY: {e}"))?;
 
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());

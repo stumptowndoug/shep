@@ -270,7 +270,7 @@ fn cursor_parse_aggregated_usage(body: &str) -> Result<CursorWindowAggregate, St
         .flatten()
         .filter_map(cursor_model_aggregate)
         .collect();
-    models.sort_by(|a, b| b.tokens_total().cmp(&a.tokens_total()));
+    models.sort_by_key(|model| std::cmp::Reverse(model.tokens_total()));
 
     let tokens_input = cursor_u64(json.get("totalInputTokens"))
         .or_else(|| Some(models.iter().map(|model| model.tokens_input).sum()));

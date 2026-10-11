@@ -1,5 +1,5 @@
 import { invoke, Channel } from "@tauri-apps/api/core";
-import type {
+import type { FolderSuggestion,
   RepoInfo,
   RepoGroup,
   RegisteredRepo,
@@ -26,6 +26,7 @@ import type {
   PiConfig,
   PiSettings,
   DiffFileStat,
+  GitChanges,
   TodoFile,
   SkillInfo,
   SessionHistoryEntry,
@@ -67,6 +68,22 @@ export function deleteGroup(groupId: string): Promise<void> {
 
 export function moveRepoToGroup(repoPath: string, groupId: string | null): Promise<void> {
   return invoke("move_repo_to_group", { repoPath, groupId });
+}
+
+export function suggestProjectFolders(limit = 6): Promise<FolderSuggestion[]> {
+  return invoke("suggest_project_folders", { limit });
+}
+
+export function setGroupPinned(groupId: string, pinned: boolean): Promise<void> {
+  return invoke("set_group_pinned", { groupId, pinned });
+}
+
+export function setRepoPinned(repoPath: string, pinned: boolean): Promise<void> {
+  return invoke("set_repo_pinned", { repoPath, pinned });
+}
+
+export function markRepoOpened(repoPath: string): Promise<number> {
+  return invoke("mark_repo_opened", { repoPath });
 }
 
 export function loadWorkspace(repoPath: string): Promise<WorkspaceConfig> {
@@ -118,6 +135,14 @@ export function listMonospaceFamilies(): Promise<FontFamily[]> {
 
 export function loadFontFamily(family: string): Promise<FontFaceData[]> {
   return invoke("load_font_family", { family });
+}
+
+export function readMarkdownFile(repoPath: string, filePath: string): Promise<string> {
+  return invoke("read_markdown_file", { repoPath, filePath });
+}
+
+export function openFileInEditor(repoPath: string, filePath: string): Promise<void> {
+  return invoke("open_file_in_editor", { repoPath, filePath });
 }
 
 export function openInEditor(
@@ -188,6 +213,42 @@ export function killPty(ptyId: number): Promise<void> {
   return invoke("kill_pty", { ptyId });
 }
 
+// ── ACP agent commands ──────────────────────────────────────────────
+
+export type AcpOutput =
+  | { event: "line"; data: string }
+  | { event: "stderr"; data: string }
+  | { event: "exit"; data: { code: number; stderr: string } };
+
+export interface AcpRuntimeCommand { command: string; args: string[] }
+
+export function getManagedAcpAdapter(adapter: string): Promise<AcpRuntimeCommand | null> {
+  return invoke("get_managed_acp_adapter", { adapter });
+}
+
+export function installManagedAcpAdapter(adapter: string): Promise<AcpRuntimeCommand> {
+  return invoke("install_managed_acp_adapter", { adapter });
+}
+
+export function spawnAcpAgent(
+  command: string,
+  args: string[],
+  cwd: string,
+  onOutput: (msg: AcpOutput) => void,
+): Promise<number> {
+  const channel = new Channel<AcpOutput>();
+  channel.onmessage = onOutput;
+  return invoke("spawn_acp_agent", { command, args, cwd, onOutput: channel });
+}
+
+export function writeAcpAgent(agentId: number, line: string): Promise<void> {
+  return invoke("write_acp_agent", { agentId, line });
+}
+
+export function killAcpAgent(agentId: number): Promise<void> {
+  return invoke("kill_acp_agent", { agentId });
+}
+
 export interface SessionTitleMatch {
   sessionId: string;
   title: string | null;
@@ -251,8 +312,16 @@ export function listSessionHistory(
 
 // ── App lifecycle commands ────────────────────────────────────────
 
-export function shutdownAndQuit(): Promise<void> {
-  return invoke("shutdown_and_quit");
+export function shutdownAndQuit(restart = false): Promise<void> {
+  return invoke("shutdown_and_quit", { restart });
+}
+
+export function getSessionCount(): Promise<number> {
+  return invoke("get_pty_session_count");
+}
+
+export function getStorageWarning(): Promise<string | null> {
+  return invoke("get_storage_warning");
 }
 
 // ── File watcher commands ─────────────────────────────────────────
@@ -350,23 +419,6 @@ export function gitFileDiff(path: string, filePath: string, staged: boolean): Pr
   return invoke("git_file_diff", { path, filePath, staged });
 }
 
-/** Read a file's contents for preview in file-viewer mode. `source` is one
- *  of: "working" (from disk), "staged" (from git index), "head" (from HEAD). */
-export function gitFileContents(
-  path: string,
-  filePath: string,
-  source: "working" | "staged" | "head",
-): Promise<string> {
-  return invoke("git_file_contents", { path, filePath, source });
-}
-
-/** List all files known to git — tracked + untracked-but-not-ignored.
- *  Returns repo-relative paths, same set a user would consider "files in
- *  this project" (build artifacts and node_modules are excluded). */
-export function gitListFiles(path: string): Promise<string[]> {
-  return invoke("git_list_files", { path });
-}
-
 export function gitSwitchBranch(path: string, branchName: string): Promise<void> {
   return invoke("git_switch_branch", { path, branchName });
 }
@@ -377,6 +429,10 @@ export function gitCreateBranch(path: string, branchName: string): Promise<void>
 
 export function gitDiffStats(path: string): Promise<DiffFileStat[]> {
   return invoke("git_diff_stats", { path });
+}
+
+export function gitChanges(path: string): Promise<GitChanges> {
+  return invoke("git_changes", { path });
 }
 
 // ── System commands ────────────────────────────────────────────────

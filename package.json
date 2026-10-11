@@ -6,7 +6,12 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "test": "pnpm test:unit && pnpm test:rust && pnpm test:browser",
+    "test:unit": "node --test tests/*.test.ts",
+    "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml --locked",
+    "test:browser": "playwright test",
     "test:agent-status": "node --test tests/agentScreenStatus.test.ts",
+    "test:chat": "node --test tests/chatModel.test.ts tests/chatOptions.test.ts tests/chatModelPreferences.test.ts tests/chatContent.test.ts tests/chatDrafts.test.ts tests/cursorProtocol.test.ts tests/antigravityProtocol.test.ts tests/sessionResume.test.ts",
     "test:terminal-theme": "node --test tests/terminalColorMode.test.ts",
     "test:terminal-input": "playwright test",
     "test:usage": "node --test tests/usageHelpers.test.ts",
@@ -16,7 +21,6 @@
   },
   "dependencies": {
     "@pierre/diffs": "^1.3.4",
-    "@pierre/trees": "1.0.0-beta.3",
     "@shikijs/markdown-it": "^4.4.2",
     "@tauri-apps/api": "^2.11.1",
     "@tauri-apps/plugin-dialog": "^2.7.2",
@@ -30,7 +34,7 @@
     "@xterm/addon-webgl": "^0.19.0",
     "@xterm/xterm": "^6.0.0",
     "lucide-react": "^1.29.0",
-    "markdown-it": "^15.0.0",
+    "markdown-it": "^15.0.1",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "shiki": "^4.4.2",
@@ -53,7 +57,10 @@
       "esbuild": "0.28.1",
       "picomatch": "4.0.4",
       "postcss": "8.5.23",
-      "shiki": "4.4.2"
+      "shiki": "4.4.2",
+      "markdown-it@14.3.0": "14.3.1",
+      "nanoid@3.3.17": "3.3.18",
+      "source-map-js@1.2.1": "1.2.2"
     },
     "onlyBuiltDependencies": [
       "esbuild"

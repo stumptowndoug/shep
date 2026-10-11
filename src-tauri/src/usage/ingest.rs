@@ -13,7 +13,7 @@ const MAX_FILES_PER_CYCLE: usize = 10;
 
 /// Run incremental ingestion for all providers.
 /// Returns true if all providers are fully caught up (no remaining work).
-pub fn ingest_all(conn: &Connection) -> bool {
+pub fn ingest_all(conn: &mut Connection) -> bool {
     let mut all_done = true;
 
     match ingest_claude(conn, MAX_FILES_PER_CYCLE) {
@@ -220,7 +220,7 @@ fn ingest_claude_file(conn: &Connection, path: &Path) -> Result<(), String> {
 // ── Gemini ────────────────────────────────────────────────
 
 /// Returns Ok(true) if fully caught up, Ok(false) if more files remain.
-fn ingest_gemini(conn: &Connection, budget: usize) -> Result<bool, String> {
+fn ingest_gemini(conn: &mut Connection, budget: usize) -> Result<bool, String> {
     let tmp_dir = home_join(".gemini/tmp")?;
     if !tmp_dir.exists() {
         return Ok(true);
@@ -278,7 +278,7 @@ fn ingest_gemini(conn: &Connection, budget: usize) -> Result<bool, String> {
     Ok(!skipped_remaining)
 }
 
-fn ingest_gemini_file(conn: &Connection, path: &Path) -> Result<(), String> {
+fn ingest_gemini_file(conn: &mut Connection, path: &Path) -> Result<(), String> {
     let path_str = path.to_string_lossy().to_string();
     let meta = fs::metadata(path).map_err(|e| e.to_string())?;
     let file_size = meta.len() as i64;
@@ -309,6 +309,16 @@ fn ingest_gemini_file(conn: &Connection, path: &Path) -> Result<(), String> {
         .to_string();
 
     // Delete old rows for this session and re-insert
+    // A failed file is logged and the outer batch still commits. Keep its old
+    // snapshot and cursor intact unless the replacement succeeds in full.
+    let snapshot = conn.savepoint().map_err(|error| error.to_string())?;
+    let conn = &*snapshot;
+    conn.execute(
+        "DELETE FROM usage_archive WHERE provider = 'gemini' AND session_id = ?1",
+        params![session_id],
+    )
+    .map_err(|e| e.to_string())?;
+
     conn.execute(
         "DELETE FROM usage_messages WHERE provider = 'gemini' AND session_id = ?1",
         params![session_id],
@@ -352,13 +362,13 @@ fn ingest_gemini_file(conn: &Connection, path: &Path) -> Result<(), String> {
     }
 
     upsert_cursor(conn, &path_str, "gemini", file_size, file_size, mtime)?;
-    Ok(())
+    snapshot.commit().map_err(|error| error.to_string())
 }
 
 // ── Antigravity ───────────────────────────────────────────
 
 /// Returns Ok(true) if fully caught up, Ok(false) if more files remain.
-fn ingest_antigravity(conn: &Connection, budget: usize) -> Result<bool, String> {
+fn ingest_antigravity(conn: &mut Connection, budget: usize) -> Result<bool, String> {
     let brain_dir = home_join(".gemini/antigravity-cli/brain")?;
     if !brain_dir.exists() {
         return Ok(true);
@@ -428,7 +438,7 @@ fn ingest_antigravity(conn: &Connection, budget: usize) -> Result<bool, String> 
 }
 
 fn ingest_antigravity_file(
-    conn: &Connection,
+    conn: &mut Connection,
     path: &Path,
     history: &std::collections::HashMap<String, String>,
 ) -> Result<(), String> {
@@ -508,6 +518,16 @@ fn ingest_antigravity_file(
     }
     let pricing_provider = antigravity_pricing_provider(&model);
 
+    // A failed file is logged and the outer batch still commits. Keep its old
+    // snapshot and cursor intact unless the replacement succeeds in full.
+    let snapshot = conn.savepoint().map_err(|error| error.to_string())?;
+    let conn = &*snapshot;
+    conn.execute(
+        "DELETE FROM usage_archive WHERE provider = 'antigravity' AND session_id = ?1",
+        params![session_id],
+    )
+    .map_err(|e| e.to_string())?;
+
     conn.execute(
         "DELETE FROM usage_messages WHERE provider = 'antigravity' AND session_id = ?1",
         params![session_id],
@@ -538,7 +558,7 @@ fn ingest_antigravity_file(
     .map_err(|e| e.to_string())?;
 
     upsert_cursor(conn, &path_str, "antigravity", file_size, file_size, mtime)?;
-    Ok(())
+    snapshot.commit().map_err(|error| error.to_string())
 }
 
 fn antigravity_pricing_provider(model: &str) -> &'static str {
@@ -612,7 +632,7 @@ fn estimate_text_tokens(text: &str) -> u64 {
     if chars == 0 {
         0
     } else {
-        (chars + 3) / 4
+        chars.div_ceil(4)
     }
 }
 
@@ -626,7 +646,7 @@ fn project_name_from_path(path: &str) -> String {
 // ── Codex ─────────────────────────────────────────────────
 
 /// Returns Ok(true) if fully caught up, Ok(false) if more files remain.
-fn ingest_codex(conn: &Connection, budget: usize) -> Result<bool, String> {
+fn ingest_codex(conn: &mut Connection, budget: usize) -> Result<bool, String> {
     let sessions_dir = home_join(".codex/sessions")?;
     if !sessions_dir.exists() {
         return Ok(true);
@@ -678,7 +698,7 @@ fn ingest_codex(conn: &Connection, budget: usize) -> Result<bool, String> {
     Ok(!skipped_remaining)
 }
 
-fn ingest_codex_file(conn: &Connection, path: &Path) -> Result<(), String> {
+fn ingest_codex_file(conn: &mut Connection, path: &Path) -> Result<(), String> {
     let path_str = path.to_string_lossy().to_string();
     let meta = fs::metadata(path).map_err(|e| e.to_string())?;
     let file_size = meta.len() as i64;
@@ -775,6 +795,16 @@ fn ingest_codex_file(conn: &Connection, path: &Path) -> Result<(), String> {
     let non_cached_input = input.saturating_sub(cached_input);
 
     // Delete old rows for this session and re-insert with full breakdown
+    // A failed file is logged and the outer batch still commits. Keep its old
+    // snapshot and cursor intact unless the replacement succeeds in full.
+    let snapshot = conn.savepoint().map_err(|error| error.to_string())?;
+    let conn = &*snapshot;
+    conn.execute(
+        "DELETE FROM usage_archive WHERE provider = 'codex' AND session_id = ?1",
+        params![session_id],
+    )
+    .map_err(|e| e.to_string())?;
+
     conn.execute(
         "DELETE FROM usage_messages WHERE provider = 'codex' AND session_id = ?1",
         params![session_id],
@@ -791,7 +821,7 @@ fn ingest_codex_file(conn: &Connection, path: &Path) -> Result<(), String> {
     ).map_err(|e| e.to_string())?;
 
     upsert_cursor(conn, &path_str, "codex", file_size, file_size, mtime)?;
-    Ok(())
+    snapshot.commit().map_err(|error| error.to_string())
 }
 
 // ── OpenCode ──────────────────────────────────────────────
@@ -1167,25 +1197,40 @@ fn read_pi_project(path: &Path) -> Option<String> {
 
 fn prune_old_messages(conn: &Connection) -> Result<(), String> {
     let cutoff = now_epoch_seconds() as i64 - 2_592_000; // 30 days
+    archive_messages_before(conn, cutoff)
+}
 
-    // Roll up old messages into daily aggregates
-    conn.execute(
-        "INSERT OR REPLACE INTO usage_daily (provider, date, pricing_provider, model, project, tokens_input, tokens_output, tokens_cache_write, tokens_cache_read, tokens_thoughts, tokens_total, message_count, recorded_cost)
-         SELECT provider, date(timestamp, 'unixepoch') as d, COALESCE(pricing_provider, provider), model, project,
+fn archive_messages_before(conn: &Connection, cutoff: i64) -> Result<(), String> {
+    // The insert and delete must commit together. Otherwise retrying after a
+    // failed delete would add the same tokens twice.
+    let tx = conn.unchecked_transaction().map_err(|error| error.to_string())?;
+    tx.execute(
+        "INSERT INTO usage_archive (provider, session_id, date, pricing_provider, model, project, tokens_input, tokens_output, tokens_cache_write, tokens_cache_read, tokens_thoughts, tokens_total, message_count, recorded_cost)
+         SELECT provider, session_id, date(timestamp, 'unixepoch', 'localtime') as d, COALESCE(pricing_provider, provider), COALESCE(model, 'unknown'), COALESCE(project, 'unknown'),
                 SUM(tokens_input), SUM(tokens_output), SUM(tokens_cache_write), SUM(tokens_cache_read), SUM(tokens_thoughts), SUM(tokens_total), COUNT(*), SUM(recorded_cost)
          FROM usage_messages
          WHERE timestamp < ?1 AND provider != 'opencode'
-         GROUP BY provider, d, COALESCE(pricing_provider, provider), model, project",
+         GROUP BY provider, session_id, d, COALESCE(pricing_provider, provider), COALESCE(model, 'unknown'), COALESCE(project, 'unknown')
+         ON CONFLICT DO UPDATE SET
+            tokens_input = tokens_input + excluded.tokens_input,
+            tokens_output = tokens_output + excluded.tokens_output,
+            tokens_cache_write = tokens_cache_write + excluded.tokens_cache_write,
+            tokens_cache_read = tokens_cache_read + excluded.tokens_cache_read,
+            tokens_thoughts = tokens_thoughts + excluded.tokens_thoughts,
+            tokens_total = tokens_total + excluded.tokens_total,
+            message_count = message_count + excluded.message_count,
+            recorded_cost = CASE WHEN recorded_cost IS NULL AND excluded.recorded_cost IS NULL THEN NULL
+                ELSE COALESCE(recorded_cost, 0) + COALESCE(excluded.recorded_cost, 0) END",
         params![cutoff],
     ).map_err(|e| e.to_string())?;
 
-    conn.execute(
+    tx.execute(
         "DELETE FROM usage_messages WHERE timestamp < ?1 AND provider != 'opencode'",
         params![cutoff],
     )
     .map_err(|e| e.to_string())?;
 
-    Ok(())
+    tx.commit().map_err(|error| error.to_string())
 }
 
 // ── Cursor helpers ────────────────────────────────────────
@@ -1316,8 +1361,113 @@ mod tests {
     use super::*;
 
     #[test]
+    fn repeated_rollups_preserve_totals_and_session_identity() {
+        let db = crate::usage::db::UsageDb::open_in_memory();
+        let conn = db.conn.lock().unwrap();
+        let old = 1_700_006_400_i64;
+        for tokens in [100, 150] {
+            conn.execute("INSERT INTO usage_messages (provider, session_id, timestamp, tokens_total, recorded_cost)
+                          VALUES ('claude', 'same-session', ?1, ?2, 0.5)", params![old, tokens]).unwrap();
+            archive_messages_before(&conn, old + 86_400).unwrap();
+        }
+        archive_messages_before(&conn, old + 86_400).unwrap();
+        let result: (i64, i64, i64, f64) = conn.query_row(
+            "SELECT COUNT(*), SUM(tokens_total), SUM(message_count), SUM(recorded_cost) FROM usage_archive", [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        ).unwrap();
+        assert_eq!(result, (1, 250, 2, 1.0));
+        assert_eq!(conn.query_row("SELECT COUNT(*) FROM usage_messages", [], |row| row.get::<_, i64>(0)).unwrap(), 0);
+    }
+
+    #[test]
+    fn failed_rollup_delete_rolls_back_the_archive_insert() {
+        let db = crate::usage::db::UsageDb::open_in_memory();
+        let conn = db.conn.lock().unwrap();
+        conn.execute_batch("INSERT INTO usage_messages (provider, session_id, timestamp, tokens_total) VALUES ('claude', 'one', 1, 100);
+            CREATE TRIGGER fail_prune BEFORE DELETE ON usage_messages BEGIN SELECT RAISE(ABORT, 'simulated failure'); END;").unwrap();
+        assert!(archive_messages_before(&conn, 100).is_err());
+        assert_eq!(conn.query_row("SELECT COUNT(*) FROM usage_archive", [], |row| row.get::<_, i64>(0)).unwrap(), 0);
+        conn.execute_batch("DROP TRIGGER fail_prune").unwrap();
+        archive_messages_before(&conn, 100).unwrap();
+        assert_eq!(conn.query_row("SELECT SUM(tokens_total) FROM usage_archive", [], |row| row.get::<_, i64>(0)).unwrap(), 100);
+    }
+
+    #[test]
+    fn rereading_a_codex_session_replaces_its_archived_snapshot() {
+        let db = crate::usage::db::UsageDb::open_in_memory();
+        let mut conn = db.conn.lock().unwrap();
+        let dir = std::env::temp_dir().join(format!("shep-archive-reread-{}", std::process::id()));
+        fs::create_dir(&dir).unwrap();
+        let path = dir.join("session.jsonl");
+        for total in [100, 2500] {
+            fs::write(&path, format!("{{\"timestamp\":\"2020-01-01T12:00:00Z\",\"type\":\"session_meta\",\"payload\":{{\"id\":\"same-session\",\"cwd\":\"/repo\"}}}}\n{{\"timestamp\":\"2020-01-01T12:01:00Z\",\"type\":\"event_msg\",\"payload\":{{\"type\":\"token_count\",\"info\":{{\"total_token_usage\":{{\"input_tokens\":{total},\"total_tokens\":{total}}}}}}}}}\n")).unwrap();
+            ingest_codex_file(&mut conn, &path).unwrap();
+            archive_messages_before(&conn, 2_000_000_000).unwrap();
+            assert_eq!(conn.query_row("SELECT SUM(tokens_total) FROM usage_archive", [], |row| row.get::<_, i64>(0)).unwrap(), total);
+        }
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn failed_snapshot_replacements_preserve_archives_and_cursors() {
+        for provider in ["gemini", "antigravity", "codex"] {
+            for failing_table in ["usage_messages", "ingest_cursors"] {
+                let db = crate::usage::db::UsageDb::open_in_memory();
+                let mut conn = db.conn.lock().unwrap();
+                let dir = std::env::temp_dir().join(format!(
+                    "shep-snapshot-{}-{provider}-{failing_table}", std::process::id()
+                ));
+                let log_dir = dir.join("same-session/artifacts/logs");
+                fs::create_dir_all(&log_dir).unwrap();
+                let path = log_dir.join("transcript.jsonl");
+                let write_log = |count: usize| {
+                    let content = match provider {
+                        "gemini" => serde_json::json!({
+                            "sessionId": "same-session", "lastUpdated": "2020-01-01T12:00:00Z",
+                            "messages": [{"model": "test", "tokens": {"input": count, "total": count}}]
+                        }).to_string(),
+                        "antigravity" => serde_json::json!({
+                            "created_at": "2020-01-01T12:00:00Z", "type": "USER_INPUT",
+                            "source": "USER_EXPLICIT", "content": "word ".repeat(count)
+                        }).to_string(),
+                        _ => format!("{}\n{}\n",
+                            serde_json::json!({"timestamp": "2020-01-01T12:00:00Z", "type": "session_meta", "payload": {"id": "same-session", "cwd": "/repo"}}),
+                            serde_json::json!({"timestamp": "2020-01-01T12:01:00Z", "type": "event_msg", "payload": {"type": "token_count", "info": {"total_token_usage": {"input_tokens": count, "total_tokens": count}}}})
+                        ),
+                    };
+                    fs::write(&path, content).unwrap();
+                };
+                let ingest = |conn: &mut Connection| match provider {
+                    "gemini" => ingest_gemini_file(conn, &path),
+                    "antigravity" => ingest_antigravity_file(conn, &path, &Default::default()),
+                    _ => ingest_codex_file(conn, &path),
+                };
+                write_log(100);
+                ingest(&mut conn).unwrap();
+                archive_messages_before(&conn, 2_000_000_000).unwrap();
+                let original: i64 = conn.query_row("SELECT SUM(tokens_total) FROM usage_archive", [], |row| row.get(0)).unwrap();
+                let cursor = get_cursor(&conn, &path.to_string_lossy()).unwrap();
+                write_log(2500);
+                // Reproduce the production batch: a file error is caught, then
+                // the surrounding transaction still commits other file work.
+                conn.execute_batch(&format!("CREATE TRIGGER fail_snapshot BEFORE INSERT ON {failing_table}
+                    BEGIN SELECT RAISE(ABORT, 'simulated failure'); END; BEGIN;")).unwrap();
+                assert!(ingest(&mut conn).is_err(), "{provider}/{failing_table}");
+                conn.execute_batch("COMMIT; DROP TRIGGER fail_snapshot;").unwrap();
+                assert_eq!(conn.query_row("SELECT SUM(tokens_total) FROM usage_archive", [], |row| row.get::<_, i64>(0)).unwrap(), original);
+                assert_eq!(conn.query_row("SELECT COUNT(*) FROM usage_messages", [], |row| row.get::<_, i64>(0)).unwrap(), 0);
+                assert_eq!(get_cursor(&conn, &path.to_string_lossy()).unwrap(), cursor);
+                ingest(&mut conn).unwrap();
+                archive_messages_before(&conn, 2_000_000_000).unwrap();
+                assert!(conn.query_row("SELECT SUM(tokens_total) FROM usage_archive", [], |row| row.get::<_, i64>(0)).unwrap() > original);
+                fs::remove_dir_all(dir).unwrap();
+            }
+        }
+    }
+
+    #[test]
     fn codex_ingest_uses_latest_token_count_timestamp() {
-        let conn = Connection::open_in_memory().unwrap();
+        let mut conn = Connection::open_in_memory().unwrap();
         conn.execute_batch(
             "CREATE TABLE usage_messages (
                 provider TEXT NOT NULL,
@@ -1334,6 +1484,7 @@ mod tests {
                 pricing_provider TEXT,
                 recorded_cost REAL
             );
+            CREATE TABLE usage_archive (provider TEXT, session_id TEXT);
             CREATE TABLE ingest_cursors (
                 file_path TEXT PRIMARY KEY,
                 provider TEXT NOT NULL,
@@ -1356,7 +1507,7 @@ mod tests {
         ].join("\n");
         std::fs::write(&path, contents).unwrap();
 
-        ingest_codex_file(&conn, &path).unwrap();
+        ingest_codex_file(&mut conn, &path).unwrap();
 
         let (timestamp, total): (i64, i64) = conn
             .query_row(

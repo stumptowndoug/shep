@@ -79,10 +79,11 @@ fn table_columns(conn: &Connection, table: &str) -> HashSet<String> {
 }
 
 fn column_expression(columns: &HashSet<String>, column: &str) -> String {
-    columns
-        .contains(column)
-        .then(|| format!("NULLIF(TRIM({column}), '')"))
-        .unwrap_or_else(|| "NULL".to_string())
+    if columns.contains(column) {
+        format!("NULLIF(TRIM({column}), '')")
+    } else {
+        "NULL".to_string()
+    }
 }
 
 fn clean_title(value: &str) -> Option<String> {

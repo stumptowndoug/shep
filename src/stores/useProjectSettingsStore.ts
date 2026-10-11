@@ -6,6 +6,7 @@ const DEFAULT_SETTINGS: ProjectSettings = {
   autoImportWorktrees: true,
   agentLabelMode: "repository",
   defaultAgentMode: "yolo",
+  defaultAgentInterface: "chat",
   showTodos: true,
   todoFileStyle: "kanban",
 };
@@ -32,6 +33,7 @@ export const useProjectSettingsStore = create<ProjectSettingsStore>((set, get) =
         settings: {
           ...settings,
           defaultAgentMode: settings.defaultAgentMode === "standard" ? "standard" : "yolo",
+          defaultAgentInterface: settings.defaultAgentInterface === "terminal" ? "terminal" : "chat",
         },
         hasLoaded: true,
         error: null,

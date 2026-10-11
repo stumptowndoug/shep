@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { CircleHelp, Play, Plus, Save, Square, Trash2, X } from "lucide-react";
-import tabKindMeta from "../../lib/tabKindMeta";
+import { Play, Plus, Square, Trash2, X } from "lucide-react";
 import { useTerminalStore } from "../../stores/useTerminalStore";
 import type { CommandConfig, CommandState } from "../../lib/types";
 
@@ -165,78 +164,67 @@ function CommandRow({
     }
   };
 
+  const status = isNew ? "new" : command?.status ?? "stopped";
+  const statusLabel = status === "running" ? "Running" : status === "crashed" ? "Stopped with an error" : status === "new" ? "New command" : "Stopped";
+
   return (
-    <div className="commands-panel__row-shell">
-      <div className="commands-panel__row-line">
-        <div className={`commands-panel__row ${isNew ? "is-new" : ""}`}>
+    <li className={`command-row command-row--${status}`}>
+      <span className="command-row__dot" title={statusLabel} aria-label={statusLabel} />
+      <div className="command-row__body">
+        <label className="command-row__code">
+          <span className="command-row__prompt" aria-hidden="true">$</span>
           <input
-            className="commands-panel__input commands-panel__input--command"
-            placeholder={
-              isNew
-                ? "e.g. pnpm dev, docker compose up, redis-server"
-                : "Command"
+          className="command-row__input"
+          autoFocus={isNew}
+          placeholder="e.g. pnpm dev, docker compose up, redis-server"
+          aria-label={isNew ? "New command" : `Command ${command?.name}`}
+          value={draft.command}
+          spellCheck={false}
+          autoComplete="off"
+          onChange={(e) => setDraft((current) => ({ ...current, command: e.target.value }))}
+          onKeyDown={(e) => {
+            if (!isNew) return;
+            if (e.key === "Enter") {
+              e.preventDefault();
+              void save(true);
+            } else if (e.key === "Escape") {
+              onCancelNew?.();
             }
-            value={draft.command}
-            onChange={(e) => setDraft((current) => ({ ...current, command: e.target.value }))}
+          }}
           />
-          <label className="commands-panel__auto">
-            <input
-              type="checkbox"
-              checked={draft.autostart}
-              onChange={(e) => setDraft((current) => ({ ...current, autostart: e.target.checked }))}
-            />
-            <span>Auto</span>
-            <button
-              type="button"
-              className="commands-panel__auto-help"
-              title="Auto starts this command when you open the project in Shep."
-            >
-              <CircleHelp size={12} />
-            </button>
-          </label>
-          <div className="commands-panel__row-actions">
-            <button
-              className="icon-btn commands-panel__action"
-              onClick={() => void handleRun()}
-              title={isRunning ? "Stop" : "Start"}
-            >
-              {isRunning ? (
-                <Square size={14} fill="currentColor" />
-              ) : (
-                <Play size={14} fill="currentColor" />
-              )}
-            </button>
-            {isNew && (
-              <button
-                className="icon-btn commands-panel__action"
-                onClick={onCancelNew}
-                title="Cancel"
-              >
-                <X size={14} />
-              </button>
-            )}
-          </div>
-        </div>
+        </label>
+        {error && <div className="command-row__error">{error}</div>}
+      </div>
+      <button
+        type="button"
+        className={`command-row__auto ${draft.autostart ? "command-row__auto--on" : ""}`}
+        aria-pressed={draft.autostart}
+        title="Start this command automatically when you open the project"
+        onClick={() => setDraft((current) => ({ ...current, autostart: !current.autostart }))}
+      >
+        Auto-start
+      </button>
+      <div className="command-row__actions">
+        <button
+          type="button"
+          className="icon-btn command-row__run"
+          onClick={() => void handleRun()}
+          title={isRunning ? "Stop" : isNew ? "Save and start" : "Start"}
+          aria-label={isRunning ? "Stop command" : "Start command"}
+        >
+          {isRunning ? <Square size={12} fill="currentColor" /> : <Play size={13} fill="currentColor" />}
+        </button>
         {isNew ? (
-          <button
-            className="icon-btn commands-panel__delete"
-            onClick={() => void save(true)}
-            title="Save"
-          >
-            <Save size={14} />
+          <button type="button" className="icon-btn command-row__remove" onClick={onCancelNew} title="Cancel (Esc)" aria-label="Cancel new command">
+            <X size={14} />
           </button>
         ) : (
-          <button
-            className="icon-btn commands-panel__delete"
-            onClick={() => onDeleteCommand(command!.name)}
-            title="Delete"
-          >
+          <button type="button" className="icon-btn command-row__remove" data-danger="true" onClick={() => onDeleteCommand(command!.name)} title="Delete" aria-label={`Delete ${command?.name}`}>
             <Trash2 size={14} />
           </button>
         )}
       </div>
-      {error && <div className="commands-panel__row-error">{error}</div>}
-    </div>
+    </li>
   );
 }
 
@@ -260,90 +248,89 @@ export default function CommandsPanel({
   );
 
   if (!activeProjectPath) {
-    return (
-      <div className="commands-panel commands-panel--empty">
-        Select a project to manage commands
-      </div>
-    );
+    return <div className="commands-empty-state">Select a project to manage its commands.</div>;
   }
 
+  const empty = commands.length === 0 && !creating && !savingNew;
+
   return (
-    <div className="commands-panel">
-      <div className="commands-panel__header">
-        <div className="commands-panel__title-wrap">
-          <span className="shrink-0">{tabKindMeta.commands.icon(15)}</span>
-          <div className="commands-panel__title-block">
-            <div className="commands-panel__title">Commands</div>
-            <div className="commands-panel__subtitle">
-              {runningCount} running · {commands.length} total
-            </div>
-          </div>
+    <div className="page commands-page">
+      <div className="page__heading page__heading--actions">
+        <div>
+          <h1 className="page__title">Commands.</h1>
+          <p className="page__lede">Servers and scripts for this project.</p>
         </div>
-        <div className="commands-panel__header-actions">
-          <button className="btn-ghost" onClick={() => setCreating(true)}>
-            <Plus size={14} />
-            <span>Add Command</span>
-          </button>
-          <button
-            className="commands-panel__header-btn glass-button"
-            disabled={commands.length === 0}
-            onClick={() => void onStartAllCommands()}
-          >
-            <Play size={13} fill="currentColor" />
-            <span>Play All</span>
-          </button>
-          <button
-            className="commands-panel__header-btn glass-button"
-            disabled={runningCount === 0}
-            onClick={() => void onStopAllCommands()}
-          >
-            <Square size={13} fill="currentColor" />
-            <span>Stop All</span>
+        <div className="commands-page__actions">
+          {commands.length > 0 && (
+            runningCount > 0 ? (
+              <button type="button" className="btn-secondary" onClick={() => void onStopAllCommands()}>
+                <Square size={12} fill="currentColor" aria-hidden="true" />
+                Stop all
+              </button>
+            ) : (
+              <button type="button" className="btn-secondary" onClick={() => void onStartAllCommands()}>
+                <Play size={12} fill="currentColor" aria-hidden="true" />
+                Start all
+              </button>
+            )
+          )}
+          <button type="button" className="btn-primary" onClick={() => setCreating(true)} disabled={creating}>
+            <Plus size={14} aria-hidden="true" />
+            New command
           </button>
         </div>
       </div>
 
-      <div className="commands-panel__simple-list">
-        {commands.length === 0 && !creating && !savingNew && (
-          <div className="commands-panel__empty-inline">
-            Add the commands you always run for this project.
-          </div>
-        )}
+      {!empty && (
+        <div className="commands-page__meta" role="status">
+          <span>{commands.length} {commands.length === 1 ? "command" : "commands"}</span>
+          <span className={`commands-page__running ${runningCount > 0 ? "commands-page__running--on" : ""}`}>
+            {runningCount > 0 ? `${runningCount} running` : "None running"}
+          </span>
+        </div>
+      )}
 
-        {commands.map((command) => (
-          <CommandRow
-            key={command.name}
-            command={command}
-            commands={commands}
-            onStartCommand={onStartCommand}
-            onStopCommand={onStopCommand}
-            onCreateCommand={onCreateCommand}
-            onUpdateCommand={onUpdateCommand}
-            onDeleteCommand={onDeleteCommand}
-          />
-        ))}
-
-        {creating && (
-          <CommandRow
-            isNew
-            commands={commands}
-            onStartCommand={onStartCommand}
-            onStopCommand={onStopCommand}
-            onCreateCommand={async (command) => {
-              setSavingNew(true);
-              const saved = await onCreateCommand(command);
-              if (saved !== false) {
-                setCreating(false);
-              }
-              setSavingNew(false);
-              return saved;
-            }}
-            onUpdateCommand={onUpdateCommand}
-            onDeleteCommand={onDeleteCommand}
-            onCancelNew={() => setCreating(false)}
-          />
-        )}
-      </div>
+      {empty ? (
+        <div className="ports-empty">
+          <span className="ports-empty__icon" aria-hidden="true"><Play size={20} /></span>
+          <h2>No commands yet.</h2>
+          <p>Add the servers and scripts you always run here, like pnpm dev or docker compose up.</p>
+          <button type="button" className="btn-primary" onClick={() => setCreating(true)}>New command</button>
+        </div>
+      ) : (
+        <ul className="command-list">
+          {commands.map((command) => (
+            <CommandRow
+              key={command.name}
+              command={command}
+              commands={commands}
+              onStartCommand={onStartCommand}
+              onStopCommand={onStopCommand}
+              onCreateCommand={onCreateCommand}
+              onUpdateCommand={onUpdateCommand}
+              onDeleteCommand={onDeleteCommand}
+            />
+          ))}
+          {creating && (
+            <CommandRow
+              isNew
+              commands={commands}
+              onStartCommand={onStartCommand}
+              onStopCommand={onStopCommand}
+              onCreateCommand={async (command) => {
+                setSavingNew(true);
+                const saved = await onCreateCommand(command);
+                if (saved !== false) setCreating(false);
+                setSavingNew(false);
+                return saved;
+              }}
+              onUpdateCommand={onUpdateCommand}
+              onDeleteCommand={onDeleteCommand}
+              onCancelNew={() => setCreating(false)}
+            />
+          )}
+        </ul>
+      )}
     </div>
   );
 }

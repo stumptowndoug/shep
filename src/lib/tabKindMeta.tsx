@@ -1,4 +1,4 @@
-import { FolderTree, Terminal, SquareTerminal, List, ListTodo } from "lucide-react";
+import { FileDiff, Terminal, SquarePen, SquarePlus, List, ListTodo } from "lucide-react";
 import type { TabKind } from "./types";
 
 export interface TabKindMeta {
@@ -10,8 +10,7 @@ export interface TabKindMeta {
 const meta: Record<TabKind, TabKindMeta> = {
   assistant: {
     label: "Agent",
-    icon: (size) => <SquareTerminal size={size} />,
-    shortcut: "⇧⌘T",
+    icon: (size) => <SquarePen size={size} />,
   },
   terminal: {
     label: "Terminal",
@@ -24,13 +23,14 @@ const meta: Record<TabKind, TabKindMeta> = {
     shortcut: "⇧⌘C",
   },
   git: {
-    label: "Files",
-    icon: (size) => <FolderTree size={size} />,
+    label: "Changes",
+    icon: (size) => <FileDiff size={size} />,
     shortcut: "⌘G",
   },
   launcher: {
-    label: "New Agent",
-    icon: (size) => <SquareTerminal size={size} />,
+    label: "New tab",
+    icon: (size) => <SquarePlus size={size} />,
+    shortcut: "⇧⌘T",
   },
   todos: {
     label: "To-dos",

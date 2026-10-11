@@ -11,11 +11,17 @@ import {
   renameGroup as ipcRenameGroup,
   deleteGroup as ipcDeleteGroup,
   moveRepoToGroup as ipcMoveRepoToGroup,
+  setRepoPinned,
+  setGroupPinned as ipcSetGroupPinned,
+  markRepoOpened,
 } from "../lib/tauri";
 import { useProjectSettingsStore } from "./useProjectSettingsStore";
+import { useNoticeStore } from "./useNoticeStore";
+import { getErrorMessage } from "../lib/errors";
 
 const EMPTY_REPOS: RepoInfo[] = [];
 const EMPTY_GROUPS: RepoGroup[] = [];
+let repoLoadRequest = 0;
 
 type RelatedImportMode = "expand-main" | "main-only";
 
@@ -35,6 +41,8 @@ function isMissingDirectoryError(error: unknown): boolean {
 }
 
 interface RepoStore {
+  loadStatus: "idle" | "loading" | "ready" | "error";
+  loadError: string | null;
   repos: RepoInfo[];
   groups: RepoGroup[];
   activeRepoPath: string | null;
@@ -50,26 +58,46 @@ interface RepoStore {
   renameGroup: (groupId: string, newName: string) => Promise<void>;
   deleteGroup: (groupId: string) => Promise<void>;
   moveRepoToGroup: (repoPath: string, groupId: string | null) => Promise<void>;
+  setPinned: (repoPath: string, pinned: boolean) => Promise<void>;
+  setGroupPinned: (groupId: string, pinned: boolean) => Promise<void>;
+  markOpened: (repoPath: string) => Promise<void>;
+}
+
+function patchRepo(repos: RepoInfo[], repoPath: string, patch: Partial<RepoInfo>): RepoInfo[] {
+  return repos.map((repo) => (repo.path === repoPath ? { ...repo, ...patch } : repo));
 }
 
 export const useRepoStore = create<RepoStore>((set, get) => ({
+  loadStatus: "idle",
+  loadError: null,
   repos: EMPTY_REPOS,
   groups: EMPTY_GROUPS,
   activeRepoPath: null,
   activeConfig: null,
 
   fetchRepos: async () => {
-    const repos = await listRepos();
-    set((state) => {
-      const activeStillExists = state.activeRepoPath
-        ? repos.some((repo) => repo.path === state.activeRepoPath)
-        : true;
+    const request = ++repoLoadRequest;
+    set({ loadStatus: "loading", loadError: null });
+    try {
+      const repos = await listRepos();
+      if (request !== repoLoadRequest) return;
+      set((state) => {
+        const activeStillExists = state.activeRepoPath
+          ? repos.some((repo) => repo.path === state.activeRepoPath)
+          : true;
 
-      return {
-        repos,
-        ...(activeStillExists ? {} : { activeRepoPath: null, activeConfig: null }),
-      };
-    });
+        return {
+          repos,
+          loadStatus: "ready",
+          ...(activeStillExists ? {} : { activeRepoPath: null, activeConfig: null }),
+        };
+      });
+    } catch (error) {
+      if (request !== repoLoadRequest) return;
+      const message = getErrorMessage(error);
+      set({ loadStatus: "error", loadError: message });
+      useNoticeStore.getState().pushNotice({ tone: "error", title: "Couldn’t load projects", message });
+    }
   },
 
   fetchGroups: async () => {
@@ -198,5 +226,32 @@ export const useRepoStore = create<RepoStore>((set, get) => ({
     await ipcMoveRepoToGroup(repoPath, groupId);
     const repos = await listRepos();
     set({ repos });
+  },
+
+  setPinned: async (repoPath: string, pinned: boolean) => {
+    const previous = get().repos;
+    set({ repos: patchRepo(previous, repoPath, { pinned }) });
+    try {
+      await setRepoPinned(repoPath, pinned);
+    } catch (error) {
+      set({ repos: previous });
+      throw error;
+    }
+  },
+
+  setGroupPinned: async (groupId: string, pinned: boolean) => {
+    const previous = get().groups;
+    set({ groups: previous.map((g) => (g.id === groupId ? { ...g, pinned } : g)) });
+    try {
+      await ipcSetGroupPinned(groupId, pinned);
+    } catch (error) {
+      set({ groups: previous });
+      throw error;
+    }
+  },
+
+  markOpened: async (repoPath: string) => {
+    const lastOpened = await markRepoOpened(repoPath);
+    set((state) => ({ repos: patchRepo(state.repos, repoPath, { last_opened: lastOpened }) }));
   },
 }));

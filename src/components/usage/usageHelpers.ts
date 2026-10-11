@@ -1,7 +1,6 @@
-import type { ConfigurableUsageProvider, ProviderUsageSnapshot, UsageProvider, UsageWindowSnapshot } from "../../lib/types";
+import type { ConfigurableUsageProvider, UsageProvider, UsageWindowSnapshot } from "../../lib/types";
 import type { UsageLimitVisibility } from "../../lib/usageLimitSettings";
 
-const WINDOW_PRIORITY = ["5h", "7d", "billing", "30d"];
 export const ALL_USAGE_PROVIDERS: ConfigurableUsageProvider[] = ["claude", "codex", "cursor", "antigravity", "opencode", "pi", "grok"];
 export const TONE_COLORS: Record<string, string> = {
   low: "color-mix(in srgb, var(--status-added) var(--color-opacity-utilization), transparent)",
@@ -18,15 +17,6 @@ export const TONE_TRACK: Record<string, string> = {
   critical: "color-mix(in srgb, var(--status-crashed) 10%, transparent)",
   local: "color-mix(in srgb, var(--status-running) 10%, transparent)",
 };
-
-export function getPrimaryWindow(snapshot: ProviderUsageSnapshot | null): UsageWindowSnapshot | null {
-  if (!snapshot) return null;
-  for (const window of WINDOW_PRIORITY) {
-    const match = snapshot.summaryWindows.find((entry) => entry.window === window);
-    if (match) return match;
-  }
-  return snapshot.summaryWindows[0] ?? null;
-}
 
 export function getProviderLabel(provider: UsageProvider): string {
   switch (provider) {
@@ -119,15 +109,6 @@ export function formatReset(resetAt: string | null): string {
   if (days > 0) return `${days}d ${hours}h`;
   if (hours > 0) return `${hours}h ${minutes}m`;
   return `${minutes}m`;
-}
-
-export function usageTone(window: UsageWindowSnapshot | null): "low" | "medium" | "high" | "critical" | "local" {
-  if (!window) return "local";
-  if (window.usedPercent == null) return "local";
-  if (window.usedPercent >= 90) return "critical";
-  if (window.usedPercent >= 75) return "high";
-  if (window.usedPercent >= 50) return "medium";
-  return "low";
 }
 
 // ── Pace helpers ─────────────────────────────────────────

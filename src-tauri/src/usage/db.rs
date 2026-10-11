@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 #[derive(Clone)]
 pub struct UsageDb {
     pub conn: Arc<Mutex<Connection>>,
+    pub storage_warning: Option<String>,
 }
 
 impl UsageDb {
@@ -20,6 +21,7 @@ impl UsageDb {
         let _ = seed_pricing(&conn);
         Self {
             conn: Arc::new(Mutex::new(conn)),
+            storage_warning: Some("Session history and usage are temporary and will be lost when Shep closes.".into()),
         }
     }
 
@@ -40,6 +42,7 @@ impl UsageDb {
 
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
+            storage_warning: None,
         })
     }
 }
@@ -321,6 +324,48 @@ fn migrate(conn: &Connection) -> Result<(), String> {
         .map_err(|e| format!("Failed to run migration v12: {e}"))?;
     }
 
+    if version < 13 {
+        ensure_column(conn, "session_history", "agent_interface", "TEXT")?;
+        conn.execute("INSERT INTO schema_version (version) VALUES (13)", [])
+            .map_err(|e| format!("Failed to run migration v13: {e}"))?;
+    }
+
+    if version < 14 {
+        // Before interface tracking, every saved Shep session used the CLI.
+        // Also repair databases already opened by the first chat development builds.
+        conn.execute_batch(
+            "UPDATE session_history SET agent_interface = 'terminal' WHERE agent_interface IS NULL;
+             INSERT INTO schema_version (version) VALUES (14);",
+        )
+        .map_err(|e| format!("Failed to run migration v14: {e}"))?;
+    }
+
+    if version < 15 {
+        // Keep identity for new rollups. Legacy daily rows have no session IDs
+        // and remain intact; they cannot safely be assigned invented identities.
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS usage_archive (
+                provider TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                date TEXT NOT NULL,
+                pricing_provider TEXT NOT NULL,
+                model TEXT NOT NULL,
+                project TEXT NOT NULL,
+                tokens_input INTEGER NOT NULL DEFAULT 0,
+                tokens_output INTEGER NOT NULL DEFAULT 0,
+                tokens_cache_write INTEGER NOT NULL DEFAULT 0,
+                tokens_cache_read INTEGER NOT NULL DEFAULT 0,
+                tokens_thoughts INTEGER NOT NULL DEFAULT 0,
+                tokens_total INTEGER NOT NULL DEFAULT 0,
+                message_count INTEGER NOT NULL DEFAULT 0,
+                recorded_cost REAL,
+                PRIMARY KEY (provider, session_id, date, pricing_provider, model, project)
+             );
+             CREATE INDEX IF NOT EXISTS idx_archive_date ON usage_archive(date);
+             INSERT INTO schema_version (version) VALUES (15);",
+        ).map_err(|e| format!("Failed to run migration v15: {e}"))?;
+    }
+
     Ok(())
 }
 
@@ -331,13 +376,12 @@ fn column_exists(conn: &Connection, table: &str, column: &str) -> bool {
         Err(_) => return false,
     };
 
-    let rows = match stmt.query_map([], |row| row.get::<_, String>(1)) {
+    let mut rows = match stmt.query_map([], |row| row.get::<_, String>(1)) {
         Ok(rows) => rows,
         Err(_) => return false,
     };
 
-    let exists = rows.filter_map(|row| row.ok()).any(|name| name == column);
-    exists
+    rows.any(|row| row.is_ok_and(|name| name == column))
 }
 
 fn ensure_column(
@@ -435,9 +479,46 @@ mod tests {
             )
             .unwrap();
 
-        assert_eq!(version, 12);
+        assert_eq!(version, 15);
         assert_eq!(history_table, 1);
         assert!(pricing_rows > 0);
+    }
+
+    #[test]
+    fn migrations_preserve_legacy_terminal_history_and_are_repeatable() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate(&conn).unwrap();
+        conn.execute_batch(
+            "ALTER TABLE session_history DROP COLUMN agent_interface;
+             DELETE FROM schema_version WHERE version >= 13;
+             INSERT INTO session_history (provider, session_id, project_path, title, started_at, last_activity_at, created_at, updated_at)
+             VALUES ('antigravity', 'old-session', '/repo', 'Keep this', 1, 2, 1, 2);",
+        )
+        .unwrap();
+        migrate(&conn).unwrap();
+        migrate(&conn).unwrap();
+        let row: (String, Option<String>) = conn.query_row(
+            "SELECT title, agent_interface FROM session_history WHERE session_id = 'old-session'",
+            [], |row| Ok((row.get(0)?, row.get(1)?))
+        ).unwrap();
+        assert_eq!(row, ("Keep this".into(), Some("terminal".into())));
+    }
+
+    #[test]
+    fn v14_preserves_recorded_chat_interfaces() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate(&conn).unwrap();
+        conn.execute_batch(
+            "DELETE FROM schema_version WHERE version >= 14;
+             INSERT INTO session_history (provider, session_id, project_path, started_at, last_activity_at, created_at, updated_at, agent_interface)
+             VALUES ('claude', 'chat-session', '/repo', 1, 2, 1, 2, 'chat'),
+                    ('claude', 'legacy-session', '/repo', 1, 2, 1, 2, NULL);",
+        ).unwrap();
+        migrate(&conn).unwrap();
+        migrate(&conn).unwrap();
+        let mut stmt = conn.prepare("SELECT agent_interface FROM session_history ORDER BY session_id").unwrap();
+        let interfaces: Vec<String> = stmt.query_map([], |row| row.get(0)).unwrap().map(Result::unwrap).collect();
+        assert_eq!(interfaces, ["chat", "terminal"]);
     }
 
     #[test]
@@ -475,7 +556,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(stale_count, 0);
-        assert_eq!(version, 12);
+        assert_eq!(version, 15);
     }
 
     #[test]
@@ -531,7 +612,7 @@ mod tests {
 
         assert_eq!(codex_rows, 0);
         assert_eq!(claude_rows, 3);
-        assert_eq!(version, 12);
+        assert_eq!(version, 15);
     }
 
     #[test]
@@ -587,7 +668,7 @@ mod tests {
 
         assert_eq!(antigravity_rows, 0);
         assert_eq!(claude_rows, 3);
-        assert_eq!(version, 12);
+        assert_eq!(version, 15);
     }
 
     #[test]
@@ -651,6 +732,6 @@ mod tests {
         assert_eq!(google_rows, 2);
         assert_eq!(anthropic_rows, 2);
         assert_eq!(unknown_rows, 1);
-        assert_eq!(version, 12);
+        assert_eq!(version, 15);
     }
 }

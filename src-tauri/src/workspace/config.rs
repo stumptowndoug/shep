@@ -11,7 +11,7 @@ pub struct GlobalConfig {
     pub repos: Vec<RepoEntry>,
     #[serde(default)]
     pub groups: Vec<GroupEntry>,
-    #[serde(default)]
+    #[serde(default = "legacy_project_settings")]
     pub projects: ProjectSettings,
     #[serde(default)]
     pub editor: EditorSettings,
@@ -30,7 +30,7 @@ fn default_version() -> u32 {
 impl Default for GlobalConfig {
     fn default() -> Self {
         GlobalConfig {
-            version: 1,
+            version: 2,
             repos: Vec::new(),
             groups: Vec::new(),
             projects: ProjectSettings::default(),
@@ -39,6 +39,22 @@ impl Default for GlobalConfig {
             terminal: TerminalSettings::default(),
             usage: UsageSettings::default(),
         }
+    }
+}
+
+impl GlobalConfig {
+    /// Preserve the old sidebar's loose projects once when adopting pinned navigation.
+    pub fn migrate(&mut self) -> bool {
+        if self.version >= 2 {
+            return false;
+        }
+        for repo in &mut self.repos {
+            if repo.group.is_none() {
+                repo.pinned = true;
+            }
+        }
+        self.version = 2;
+        true
     }
 }
 
@@ -58,6 +74,9 @@ pub struct ProjectSettings {
     /// Permission mode used when starting or resuming agent sessions.
     #[serde(default = "default_agent_session_mode", rename = "defaultAgentMode")]
     pub default_agent_mode: String,
+    /// Interface used when starting agents: "chat" (ACP) or "terminal" (CLI).
+    #[serde(default = "legacy_agent_interface", rename = "defaultAgentInterface")]
+    pub default_agent_interface: String,
     #[serde(default = "default_true", rename = "showTodos")]
     pub show_todos: bool,
     /// Shape of a lazily created TODO.md: "kanban" (columned board) or "list".
@@ -77,12 +96,25 @@ fn default_agent_session_mode() -> String {
     "yolo".to_string()
 }
 
+fn default_agent_interface() -> String {
+    "chat".to_string()
+}
+
+fn legacy_agent_interface() -> String {
+    "terminal".to_string()
+}
+
+fn legacy_project_settings() -> ProjectSettings {
+    ProjectSettings { default_agent_interface: legacy_agent_interface(), ..ProjectSettings::default() }
+}
+
 impl Default for ProjectSettings {
     fn default() -> Self {
         ProjectSettings {
             auto_import_worktrees: true,
             agent_label_mode: default_agent_label_mode(),
             default_agent_mode: default_agent_session_mode(),
+            default_agent_interface: default_agent_interface(),
             show_todos: true,
             todo_file_style: default_todo_file_style(),
         }
@@ -97,6 +129,10 @@ pub struct KeybindingSettings {
     pub option_delete_word: bool,
     #[serde(default = "default_true", rename = "cmdKClear")]
     pub cmd_k_clear: bool,
+}
+
+fn is_true(value: &bool) -> bool {
+    *value
 }
 
 fn default_true() -> bool {
@@ -307,6 +343,11 @@ pub struct RepoEntry {
     pub path: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub group: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub pinned: bool,
+    /// Milliseconds since the Unix epoch when the project was last opened.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_opened: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -315,15 +356,36 @@ pub struct GroupEntry {
     pub name: String,
     #[serde(default)]
     pub order: u32,
+    /// Shown as its own block in the sidebar's Projects section. Groups are
+    /// pinned by default, so only an unpinned group is written out.
+    #[serde(default = "default_true", skip_serializing_if = "is_true")]
+    pub pinned: bool,
 }
 
 // ── Repo info returned to frontend ──────────────────────────────────
+
+/// IPC responses must include defaults that the on-disk representation omits.
+#[derive(Debug, Serialize)]
+pub struct GroupInfo {
+    pub id: String,
+    pub name: String,
+    pub order: u32,
+    pub pinned: bool,
+}
+
+impl From<GroupEntry> for GroupInfo {
+    fn from(group: GroupEntry) -> Self {
+        Self { id: group.id, name: group.name, order: group.order, pinned: group.pinned }
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RepoInfo {
     pub path: String,
     pub name: String,
     pub group: Option<String>,
+    pub pinned: bool,
+    pub last_opened: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -366,6 +428,76 @@ pub struct WorkspaceConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn group_ipc_matches_the_sidebar_contract() {
+        let config: GlobalConfig = serde_yaml::from_str(include_str!("../../../tests/fixtures/legacy-navigation.yml")).unwrap();
+        let groups: Vec<GroupInfo> = config.groups.into_iter().map(GroupInfo::from).collect();
+        let expected: serde_json::Value = serde_json::from_str(include_str!("../../../tests/fixtures/navigation-groups.json")).unwrap();
+        assert_eq!(serde_json::to_value(groups).unwrap(), expected);
+    }
+
+    #[test]
+    fn legacy_navigation_pins_loose_projects_only_once() {
+        let mut config: GlobalConfig = serde_yaml::from_str(include_str!("../../../tests/fixtures/legacy-navigation.yml")).unwrap();
+        assert!(config.migrate());
+        assert!(config.repos[0].pinned);
+        assert!(!config.repos[1].pinned);
+        assert!(!config.groups[1].pinned);
+
+        config.repos[0].pinned = false;
+        let saved = serde_yaml::to_string(&config).unwrap();
+        let mut restored: GlobalConfig = serde_yaml::from_str(&saved).unwrap();
+        assert!(!restored.migrate());
+        assert!(!restored.repos[0].pinned);
+        assert!(!GlobalConfig::default().migrate());
+    }
+
+    #[test]
+    fn old_settings_keep_terminal_while_new_installs_default_to_chat() {
+        for yaml in ["version: 1\n", "version: 1\nprojects:\n  showTodos: false\n"] {
+            let config: GlobalConfig = serde_yaml::from_str(yaml).unwrap();
+            assert_eq!(config.projects.default_agent_interface, "terminal");
+        }
+        let chosen: GlobalConfig = serde_yaml::from_str("projects:\n  defaultAgentInterface: chat\n").unwrap();
+        assert_eq!(chosen.projects.default_agent_interface, "chat");
+        let fresh = GlobalConfig::default();
+        let restored: GlobalConfig = serde_yaml::from_str(&serde_yaml::to_string(&fresh).unwrap()).unwrap();
+        assert_eq!(restored.projects.default_agent_interface, "chat");
+    }
+
+    #[test]
+    fn groups_are_pinned_unless_unpinned() {
+        let group: GroupEntry = serde_yaml::from_str("id: a\nname: A\n").unwrap();
+        assert!(group.pinned);
+        assert!(!serde_yaml::to_string(&group).unwrap().contains("pinned"));
+
+        let unpinned = GroupEntry { pinned: false, ..group };
+        let round_trip: GroupEntry = serde_yaml::from_str(&serde_yaml::to_string(&unpinned).unwrap()).unwrap();
+        assert!(!round_trip.pinned);
+    }
+
+    #[test]
+    fn repo_entry_reads_old_configs_and_omits_unset_fields() {
+        let entry: RepoEntry = serde_yaml::from_str("path: /tmp/app\n").unwrap();
+        assert!(!entry.pinned);
+        assert_eq!(entry.last_opened, None);
+        assert_eq!(serde_yaml::to_string(&entry).unwrap(), "path: /tmp/app\n");
+
+        let pinned = RepoEntry { pinned: true, last_opened: Some(42), ..entry };
+        let round_trip: RepoEntry = serde_yaml::from_str(&serde_yaml::to_string(&pinned).unwrap()).unwrap();
+        assert!(round_trip.pinned);
+        assert_eq!(round_trip.last_opened, Some(42));
+    }
+
+    #[test]
+    fn project_settings_ignore_removed_changes_sidebar_preference() {
+        let settings: ProjectSettings =
+            serde_yaml::from_str("showDiffPanelOnStartup: true\nshowTodos: false\n").unwrap();
+        assert!(!settings.show_todos);
+        let saved = serde_yaml::to_string(&settings).unwrap();
+        assert!(!saved.contains("showDiffPanelOnStartup"));
+    }
 
     #[test]
     fn project_settings_default_agent_mode_to_yolo() {

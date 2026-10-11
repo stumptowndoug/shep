@@ -31,7 +31,8 @@ function createMarkdownRenderer(): MarkdownIt {
   return markdown;
 }
 
-export async function getMarkdownRenderer(theme: string): Promise<MarkdownIt> {
+/** Returns the same promise per theme, so callers can pass it to React's `use`. */
+export function getMarkdownRenderer(theme: string): Promise<MarkdownIt> {
   if (!cached.has(theme)) {
     cached.set(theme, (async () => {
       const markdown = createMarkdownRenderer();
@@ -45,8 +46,7 @@ export async function getMarkdownRenderer(theme: string): Promise<MarkdownIt> {
     })());
   }
 
-  const markdown = await cached.get(theme)!;
-  return markdown;
+  return cached.get(theme)!;
 }
 
 export function getPlainMarkdownRenderer(): MarkdownIt {
@@ -54,9 +54,4 @@ export function getPlainMarkdownRenderer(): MarkdownIt {
     plainRenderer = createMarkdownRenderer();
   }
   return plainRenderer;
-}
-
-export function isMarkdownFile(filePath: string): boolean {
-  const base = filePath.split("/").pop()?.toLowerCase() ?? "";
-  return base.endsWith(".md") || base.endsWith(".markdown");
 }

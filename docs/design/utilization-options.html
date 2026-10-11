@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Shep · Utilization design options</title>
+  <style>
+    :root { color-scheme: dark; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #17181b; color: #ececef; font-size: 13px; }
+    * { box-sizing: border-box; }
+    body { margin: 0; }
+    button, select { font: inherit; }
+    button, select, summary { cursor: pointer; }
+    button:focus-visible, select:focus-visible, summary:focus-visible { outline: 2px solid #aebffb; outline-offset: 3px; }
+    .page { max-width: 940px; margin: 56px auto; padding: 0 28px; }
+    .eyebrow { color: #9d9da7; font-size: 11px; letter-spacing: .13em; text-transform: uppercase; }
+    h1 { font-size: 26px; letter-spacing: -.8px; font-weight: 550; margin: 12px 0; }
+    .intro { color: #a7a8b2; line-height: 1.6; margin: 0; }
+    nav { display: flex; gap: 5px; padding: 5px; background: #202126; border: 1px solid #303137; border-radius: 10px; margin: 28px 0 20px; }
+    nav button { flex: 1; border: 0; border-radius: 6px; color: #a4a5af; background: transparent; padding: 12px 8px; }
+    nav button[aria-selected="true"] { background: #393b44; color: #fff; box-shadow: 0 1px 4px #0003; }
+    .description { min-height: 44px; margin: 0 0 20px; color: #b8b9c3; line-height: 1.6; }
+    .description strong { font-weight: 550; color: #ededf1; }
+    .app { border: 1px solid #36373e; background: #202126; border-radius: 12px; box-shadow: 0 18px 60px #0002; }
+    .appbar { height: 43px; display: flex; align-items: center; padding: 0 16px; border-bottom: 1px solid #303138; gap: 7px; color: #999aa5; font-size: 12px; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: #464750; }
+    .appbar span:last-child { margin: auto; padding-right: 40px; }
+    .content { padding: 26px 28px; }
+    h2 { font-size: 17px; font-weight: 550; margin: 0 0 6px; letter-spacing: -.3px; }
+    .hint { color: #9395a1; margin: 0 0 24px; font-size: 12px; }
+    .row { display: grid; grid-template-columns: minmax(155px, 1fr) 130px 180px; align-items: center; gap: 16px; min-height: 52px; }
+    .head { color: #989aa7; font-size: 11px; min-height: 29px; border-bottom: 1px solid #36373e; }
+    .head > :last-child { text-align: right; }
+    .provider { border-bottom: 1px solid #303138; padding: 6px 0; }
+    .provider:last-child { border: 0; }
+    .name { display: flex; align-items: center; gap: 10px; font-weight: 500; }
+    .icon { width: 23px; height: 23px; display: grid; place-items: center; background: #34363e; border: 1px solid #464852; border-radius: 7px; font-size: 11px; font-weight: 600; color: #e0e1e8; }
+    .sub { min-height: 42px; }
+    .sub .name { padding-left: 33px; font-size: 12px; color: #b7b9c4; font-weight: 400; }
+    select { width: 100%; border: 1px solid #41434c; border-radius: 6px; padding: 7px 8px; color: #dfe0e8; background: #292b32; }
+    .budget { color: #989aa8; font-size: 12px; }
+    .limits { justify-self: end; width: 148px; }
+    .native { text-align: right; color: #8f929f; font-size: 12px; }
+    .switches { display: grid; grid-template-columns: 64px 64px; justify-content: end; gap: 12px; }
+    .switches > span { text-align: center; }
+    .switch { justify-self: center; width: 30px; height: 18px; padding: 2px; background: #424550; border: 0; border-radius: 20px; }
+    .switch::after { content: ""; display: block; width: 14px; height: 14px; background: #b8bbc6; border-radius: 50%; transition: transform .12s; }
+    .switch[aria-checked="true"] { background: #a9b9eb; }
+    .switch[aria-checked="true"]::after { background: #202639; transform: translateX(12px); }
+    details { position: relative; justify-self: end; }
+    summary { list-style: none; color: #d2d5e1; padding: 8px 0 8px 10px; min-width: 115px; text-align: right; }
+    summary::-webkit-details-marker { display: none; }
+    summary::after { content: "⌄"; color: #838694; margin-left: 12px; }
+    .popover { position: absolute; right: 0; top: 36px; z-index: 5; background: #30323b; border: 1px solid #4b4e5b; box-shadow: 0 8px 30px #0006; border-radius: 8px; padding: 6px; width: 170px; }
+    .popover button { display: flex; justify-content: space-between; width: 100%; padding: 10px; background: transparent; color: #c6c8d4; border: 0; border-radius: 4px; }
+    .popover button[aria-pressed="true"] { background: #434957; color: white; }
+    .popover button:hover { background: #3d414d; }
+    .footer { display: flex; justify-content: space-between; gap: 15px; margin: 18px 0; font-size: 12px; color: #8f929e; line-height: 1.5; }
+    .reset { border: 0; padding: 0; background: transparent; color: #b8bdcd; text-decoration: underline; white-space: nowrap; }
+    .preview { margin-top: 24px; border-top: 1px solid #35373f; padding-top: 18px; }
+    .preview-label { color: #9a9da9; font-size: 11px; margin-bottom: 12px; }
+    .preview-items { display: flex; flex-wrap: wrap; gap: 8px; }
+    .preview-item { background: #292c33; border: 1px solid #383c47; padding: 8px 10px; border-radius: 5px; color: #b8bdcc; font-size: 11px; }
+    .preview-item b { color: #eef0f8; font-weight: 500; margin-left: 10px; }
+    @media (max-width: 620px) {
+      .page { margin: 25px auto; padding: 0 14px; }
+      .content { padding: 22px 16px; }
+      .row { grid-template-columns: minmax(120px, 1fr) 148px; gap: 8px; }
+      .budget { display: none; }
+      .description { min-height: 65px; }
+      nav button { font-size: 12px; }
+    }
+  </style>
+</head>
+<body>
+<main class="page">
+  <div class="eyebrow">Shep / design study</div>
+  <h1>Usage settings, simplified.</h1>
+  <p class="intro">Three interactive options. Same settings, different controls.</p>
+  <nav role="tablist" aria-label="Design options">
+    <button id="tab-a" role="tab" aria-controls="design" aria-selected="true" data-option="a">A · One dropdown</button>
+    <button id="tab-b" role="tab" aria-controls="design" aria-selected="false" data-option="b">B · Two switches</button>
+    <button id="tab-c" role="tab" aria-controls="design" aria-selected="false" data-option="c">C · Click to edit</button>
+  </nav>
+  <p class="description" id="description"></p>
+  <section id="design" role="tabpanel" aria-labelledby="tab-a">
+    <div class="app">
+      <div class="appbar"><i class="dot"></i><i class="dot"></i><i class="dot"></i><span>Settings</span></div>
+      <div class="content">
+        <h2>Usage</h2>
+        <p class="hint">Choose what appears in utilization.</p>
+        <div id="rows"></div>
+        <div class="preview">
+          <div class="preview-label">UTILIZATION PREVIEW · SAMPLE DATA</div>
+          <div class="preview-items" id="preview" aria-live="polite"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+  <div class="footer"><span>Prototype only. Changes here won’t affect Shep.<br>Budget controls are omitted on narrow screens for this comparison.</span><button class="reset" id="reset">Reset choices</button></div>
+</main>
+<script>
+  const defaults = { claude: [true, false], gemini: [true, false], thirdparty: [false, false] };
+  let state = structuredClone(defaults);
+  let option = 'a';
+  const labels = { claude: 'Claude', gemini: 'Gemini', thirdparty: 'Claude + GPT' };
+  const descriptions = {
+    a: '<strong>Recommended.</strong> One explicit choice per row: Hidden, Weekly, 5h, or Weekly + 5h. No toggle states to decipher.',
+    b: '<strong>Most scannable.</strong> Weekly and 5h get their own columns. Familiar switches; unavailable cells stay empty.',
+    c: '<strong>Quietest.</strong> Show the current choice as text. Click it to adjust either limit in a small menu.'
+  };
+  function value(id) { return state[id][0] ? (state[id][1] ? 'both' : 'weekly') : (state[id][1] ? 'five' : 'hidden'); }
+  const names = { hidden: 'Hidden', weekly: 'Weekly', five: '5h', both: 'Weekly + 5h' };
+  function control(id) {
+    if (option === 'a') return `<select class="limits" data-id="${id}" aria-label="${labels[id]} shown limits">${Object.entries(names).map(([v,n]) => `<option value="${v}" ${value(id) === v ? 'selected' : ''}>${n}</option>`).join('')}</select>`;
+    if (option === 'b') return `<div class="switches">${[0,1].map(i => `<button type="button" class="switch" role="switch" aria-checked="${state[id][i]}" aria-label="Show ${labels[id]} ${i ? '5h' : 'weekly'}" data-id="${id}" data-index="${i}"></button>`).join('')}</div>`;
+    return `<details><summary aria-label="Edit ${labels[id]} limits">${names[value(id)]}</summary><div class="popover">${[0,1].map(i => `<button type="button" data-id="${id}" data-index="${i}" aria-pressed="${state[id][i]}"><span>${i ? '5h' : 'Weekly'}</span><span>${state[id][i] ? 'Shown' : 'Hidden'}</span></button>`).join('')}</div></details>`;
+  }
+  function name(label, icon) { return `<span class="name">${icon ? `<span class="icon" aria-hidden="true">${icon}</span>` : ''}${label}</span>`; }
+  function render() {
+    document.querySelector('#description').innerHTML = descriptions[option];
+    document.querySelector('#design').setAttribute('aria-labelledby', `tab-${option}`);
+    document.querySelectorAll('[data-option]').forEach(b => b.setAttribute('aria-selected', b.dataset.option === option));
+    const heading = option === 'b' ? '<div class="switches"><span>Weekly</span><span>5h</span></div>' : '<span>Show in utilization</span>';
+    document.querySelector('#rows').innerHTML = `
+      <div class="row head"><span>Provider</span><span class="budget">Budget</span>${heading}</div>
+      <div class="provider"><div class="row">${name('Claude','C')}<span class="budget">Subscription</span>${control('claude')}</div></div>
+      <div class="provider"><div class="row">${name('Codex','O')}<span class="budget">Subscription</span><span class="native" title="Existing Codex display; outside this design change">${option === 'b' ? '' : 'Provider default'}</span></div></div>
+      <div class="provider"><div class="row">${name('Cursor','↗')}<span class="budget">Subscription</span><span class="native">${option === 'b' ? '' : 'Billing cycle'}</span></div></div>
+      <div class="provider"><div class="row">${name('Antigravity','A')}<span class="budget">Subscription</span><span></span></div>
+        <div class="row sub">${name('Gemini')}<span class="budget"></span>${control('gemini')}</div>
+        <div class="row sub">${name('Claude + GPT')}<span class="budget"></span>${control('thirdparty')}</div>
+      </div>`;
+    preview();
+  }
+  function preview() {
+    const items = [];
+    for (const [id, limits] of Object.entries(state)) limits.forEach((shown,i) => {
+      if (shown) items.push(`<span class="preview-item">${labels[id]} · ${i ? '5h' : 'weekly'}<b>${i ? '8%' : '24%'}</b></span>`);
+    });
+    document.querySelector('#preview').innerHTML = items.join('') || '<span class="hint">All configurable limits hidden.</span>';
+  }
+  document.querySelector('nav').addEventListener('click', e => {
+    const button = e.target.closest('[data-option]');
+    if (button) { option = button.dataset.option; render(); }
+  });
+  document.querySelector('nav').addEventListener('keydown', e => {
+    if (!['ArrowLeft', 'ArrowRight'].includes(e.key)) return;
+    e.preventDefault();
+    const index = ['a','b','c'].indexOf(option);
+    option = ['a','b','c'][(index + (e.key === 'ArrowRight' ? 1 : 2)) % 3];
+    render(); document.querySelector(`#tab-${option}`).focus();
+  });
+  document.querySelector('#rows').addEventListener('change', e => {
+    if (!e.target.matches('select')) return;
+    state[e.target.dataset.id] = [ ['weekly','both'].includes(e.target.value), ['five','both'].includes(e.target.value) ];
+    preview();
+  });
+  document.querySelector('#rows').addEventListener('click', e => {
+    const button = e.target.closest('button[data-index]');
+    if (!button) return;
+    const id = button.dataset.id, index = Number(button.dataset.index);
+    state[id][index] = !state[id][index];
+    if (option === 'b') button.setAttribute('aria-checked', state[id][index]);
+    else {
+      button.setAttribute('aria-pressed', state[id][index]);
+      button.lastElementChild.textContent = state[id][index] ? 'Shown' : 'Hidden';
+      button.closest('details').querySelector('summary').textContent = names[value(id)];
+    }
+    preview();
+  });
+  document.addEventListener('click', e => document.querySelectorAll('details[open]').forEach(d => { if (!d.contains(e.target)) d.open = false; }));
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') document.querySelectorAll('details[open]').forEach(d => { d.open = false; d.querySelector('summary').focus(); }); });
+  document.querySelector('#reset').addEventListener('click', () => { state = structuredClone(defaults); render(); });
+  render();
+</script>
+</body>
+</html>

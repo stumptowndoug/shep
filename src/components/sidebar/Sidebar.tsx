@@ -1,16 +1,22 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { RepoInfo, RepoGroup, TabActivity } from "../../lib/types";
+import type { AgentInterface, RepoInfo, TabActivity } from "../../lib/types";
+import { getTabActivityStatus } from "./ActivityIndicator";
 import { useTerminalStore } from "../../stores/useTerminalStore";
 import { useGitStore } from "../../stores/useGitStore";
 import { useProjectSettingsStore } from "../../stores/useProjectSettingsStore";
 import ProjectList from "./ProjectList";
-import SidebarFooter from "./SidebarFooter";
+import SidebarNav, { SidebarNewAgent } from "./SidebarNav";
+import { startWindowDrag } from "../../lib/windowDrag";
 import SidebarUsage from "./SidebarUsage";
 import AgentSessionList, { type AgentSessionItem } from "./AgentSessionList";
 import SidebarSectionToggle from "./SidebarSectionToggle";
-import type { ProjectActionKind } from "../shared/ProjectActionMenu";
+import type { ProjectHandlers } from "../shared/useProjectMenu";
 
-function agentSessionPriority(activity: TabActivity | undefined): number {
+function agentSessionPriority(activity: TabActivity | undefined, agentInterface?: AgentInterface): number {
+  if (agentInterface === "chat") {
+    const status = getTabActivityStatus(activity, agentInterface);
+    return status === "attention" ? 0 : status === "working" ? 3 : 4;
+  }
   if (activity?.bell || activity?.agentState === "blocked") return 0;
   if (activity && !activity.alive && activity.exitCode !== 0) return 0;
   if (activity?.agentState === "possibly_stuck") return 1;
@@ -21,34 +27,20 @@ function agentSessionPriority(activity: TabActivity | undefined): number {
 
 interface SidebarProps {
   repos: RepoInfo[];
-  groups: RepoGroup[];
   activeRepoPath: string | null;
   activeTabId: string | null;
+  handlers: ProjectHandlers;
   onSelectRepo: (repoPath: string) => void;
-  onAddProject: (repoPath: string) => Promise<void>;
-  onRemoveProject: (repoPath: string) => void;
-  onOpenInEditor: (repoPath: string) => void;
-  onProjectAction: (repoPath: string, action: ProjectActionKind) => void;
   onSelectProjectTab: (repoPath: string, tabId: string) => void;
-  onRenameGroup: (groupId: string, newName: string) => void;
-  onDeleteGroup: (groupId: string) => void;
-  onMoveToGroup: (repoPath: string, groupId: string | null) => Promise<void>;
 }
 
 export default function Sidebar({
   repos,
-  groups,
   activeRepoPath,
   activeTabId,
+  handlers,
   onSelectRepo,
-  onAddProject,
-  onRemoveProject,
-  onOpenInEditor,
-  onProjectAction,
   onSelectProjectTab,
-  onRenameGroup,
-  onDeleteGroup,
-  onMoveToGroup,
 }: SidebarProps) {
   // Projects always starts expanded on launch; collapsing is per-session only.
   const [projectsCollapsed, setProjectsCollapsed] = useState(false);
@@ -77,17 +69,13 @@ export default function Sidebar({
     return sessions.sort((a, b) => {
       const aActivity = tabActivity[a.tab.ptyId];
       const bActivity = tabActivity[b.tab.ptyId];
-      const priorityDifference = agentSessionPriority(aActivity) - agentSessionPriority(bActivity);
+      const priorityDifference = agentSessionPriority(aActivity, a.tab.agentInterface) - agentSessionPriority(bActivity, b.tab.agentInterface);
       if (priorityDifference !== 0) return priorityDifference;
 
-      const aIsSelected = a.tab.repoPath === activeRepoPath && a.tab.id === activeTabId;
-      const bIsSelected = b.tab.repoPath === activeRepoPath && b.tab.id === activeTabId;
-      if (aIsSelected !== bIsSelected) return aIsSelected ? -1 : 1;
-
-      const recentDifference = (bActivity?.lastOutputAt ?? 0) - (aActivity?.lastOutputAt ?? 0);
-      return recentDifference || a.projectName.localeCompare(b.projectName) || a.tab.label.localeCompare(b.tab.label);
+      // Selection and streaming output must not move rows under the pointer.
+      return a.projectName.localeCompare(b.projectName) || a.tab.label.localeCompare(b.tab.label);
     });
-  }, [repos, projectState, tabActivity, gitStatuses, activeRepoPath, activeTabId]);
+  }, [repos, projectState, tabActivity, gitStatuses]);
 
   const handleToggleProjects = useCallback(() => {
     setProjectsCollapsed((value) => !value);
@@ -98,8 +86,10 @@ export default function Sidebar({
   }, [projectSettingsLoaded, loadProjectSettings]);
 
   return (
-    <div className="w-72 shrink-0 flex flex-col h-full pr-4 mr-4 border-r border-[var(--glass-border)]" onContextMenu={(e) => e.preventDefault()}>
-      <div className="flex-1 overflow-y-auto min-h-0">
+    <aside className="sidebar" onContextMenu={(e) => e.preventDefault()}>
+      <div className="sidebar-titlebar" onMouseDown={startWindowDrag} />
+      <SidebarNewAgent hasProject={activeRepoPath !== null} />
+      <div className="side-scroll">
         <AgentSessionList
           sessions={agentSessions}
           activeRepoPath={activeRepoPath}
@@ -107,32 +97,31 @@ export default function Sidebar({
           labelMode={projectSettings.agentLabelMode}
           onSelectSession={onSelectProjectTab}
         />
-        <div className="sidebar-section px-2 pb-2">
+        <div className="side-sec side-island">
           <SidebarSectionToggle
             label="Projects"
             collapsed={projectsCollapsed}
-            badge={repos.length}
+            badge={repos.length || null}
             onToggle={handleToggleProjects}
           />
           {!projectsCollapsed && (
             <ProjectList
               repos={repos}
-              groups={groups}
               activeRepoPath={activeRepoPath}
+              handlers={handlers}
               onSelectRepo={onSelectRepo}
-              onAddProject={onAddProject}
-              onRemoveProject={onRemoveProject}
-              onOpenInEditor={onOpenInEditor}
-              onProjectAction={onProjectAction}
-              onRenameGroup={onRenameGroup}
-              onDeleteGroup={onDeleteGroup}
-              onMoveToGroup={onMoveToGroup}
             />
           )}
         </div>
       </div>
-      <SidebarUsage />
-      <SidebarFooter />
-    </div>
+      <div className="sidebar-bottom">
+        <div className="side-island">
+          <SidebarUsage />
+        </div>
+        <div className="side-island">
+          <SidebarNav />
+        </div>
+      </div>
+    </aside>
   );
 }

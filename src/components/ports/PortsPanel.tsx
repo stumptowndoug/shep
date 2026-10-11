@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
-import { RefreshCcw, Skull, ExternalLink, Folder } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { ArrowUpRight, ChevronDown, LoaderCircle, Radio, RefreshCcw, Search, Square, X } from "lucide-react";
 import { listListeningPorts, killPort, openUrl } from "../../lib/tauri";
 import { useNoticeStore } from "../../stores/useNoticeStore";
 import { getErrorMessage } from "../../lib/errors";
@@ -13,54 +13,46 @@ function formatMemory(kb: number): string {
   return `${(mb / 1024).toFixed(1)} GB`;
 }
 
-function formatUptime(raw: string): string {
-  if (!raw) return "—";
-  return raw.trim();
-}
-
 export default function PortsPanel() {
   const [ports, setPorts] = useState<PortInfo[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [killing, setKilling] = useState<Set<number>>(new Set());
+  const requestId = useRef(0);
+  const searchInput = useRef<HTMLInputElement>(null);
   const pushNotice = useNoticeStore((s) => s.pushNotice);
 
   const refresh = useCallback(async () => {
+    const request = ++requestId.current;
     setLoading(true);
     setError(null);
     try {
       const result = await listListeningPorts();
-      setPorts(result);
+      if (request === requestId.current) setPorts(result);
     } catch (err) {
-      const msg = getErrorMessage(err);
-      setError(msg);
-      if (import.meta.env.DEV) console.error("Port scan failed:", msg);
+      if (request === requestId.current) setError(getErrorMessage(err));
     } finally {
-      setLoading(false);
+      if (request === requestId.current) setLoading(false);
     }
   }, []);
 
-  // Load once when panel mounts
   useEffect(() => {
     void refresh();
+    return () => { requestId.current++; };
   }, [refresh]);
 
   const handleKill = useCallback(async (port: PortInfo) => {
     setKilling((prev) => new Set(prev).add(port.pid));
     try {
       await killPort(port.pid);
-      pushNotice({
-        tone: "success",
-        title: "Process killed",
-        message: `Stopped ${port.process} (pid ${port.pid}) on port ${port.port}`,
-      });
-      window.setTimeout(() => void refresh(), 500);
+      pushNotice({ tone: "success", title: "Process stopped", message: `Stopped ${port.process} (PID ${port.pid}) on port ${port.port}` });
+      // Keep the action disabled while the process exits and the list refreshes.
+      await new Promise((resolve) => window.setTimeout(resolve, 500));
+      await refresh();
     } catch (err) {
-      pushNotice({
-        tone: "error",
-        title: "Kill failed",
-        message: getErrorMessage(err),
-      });
+      pushNotice({ tone: "error", title: "Couldn’t stop process", message: getErrorMessage(err) });
     } finally {
       setKilling((prev) => {
         const next = new Set(prev);
@@ -70,133 +62,133 @@ export default function PortsPanel() {
     }
   }, [pushNotice, refresh]);
 
-  const handleOpenBrowser = useCallback((port: number) => {
-    void openUrl(`http://localhost:${port}`);
-  }, []);
+  const handleOpenBrowser = useCallback(async (port: number) => {
+    try {
+      await openUrl(`http://localhost:${port}`);
+    } catch (err) {
+      pushNotice({ tone: "error", title: "Couldn’t open port", message: getErrorMessage(err) });
+    }
+  }, [pushNotice]);
 
-  // Group by project
-  const grouped = ports.reduce<Record<string, PortInfo[]>>((acc, port) => {
-    const key = port.project || "Other";
-    (acc[key] ??= []).push(port);
-    return acc;
-  }, {});
-
-  const groupKeys = Object.keys(grouped).sort((a, b) => {
-    if (a === "Other") return 1;
-    if (b === "Other") return -1;
-    return a.localeCompare(b);
-  });
+  const search = query.trim().toLowerCase();
+  const filtered = ports.filter((port) => !search ||
+    [port.port, port.pid, port.project, port.process, port.framework, port.cwd]
+      .join(" ").toLowerCase().includes(search));
+  const grouped = new Map<string, PortInfo[]>();
+  for (const port of filtered) {
+    const group = port.project || "Other";
+    const entries = grouped.get(group) ?? [];
+    entries.push(port);
+    grouped.set(group, entries);
+  }
+  const groups = [...grouped].sort(([a], [b]) =>
+    Number(a === "Other") - Number(b === "Other") || a.localeCompare(b));
+  const projectCount = new Set(ports.map((port) => port.project).filter(Boolean)).size;
+  const updateQuery = (value: string) => {
+    setQuery(value);
+    // Reveal matches when the query changes, while keeping groups collapsible.
+    setCollapsed(new Set());
+  };
+  const clearSearch = () => { updateQuery(""); searchInput.current?.focus(); };
 
   return (
-    <div className="absolute inset-0 overflow-y-auto pt-3 pb-6">
-      <div className="flex items-center justify-between mb-4 pr-6 pl-3">
-        <h2 className="section-label !p-0">Ports</h2>
-        <button
-          className="icon-btn"
-          onClick={() => void refresh()}
-          disabled={loading}
-          title="Refresh"
-          aria-label="Refresh port list"
-        >
-          <RefreshCcw size={14} className={loading ? "animate-spin" : ""} />
+    <div className="page ports-page">
+      <div className="page__heading page__heading--actions">
+        <div>
+          <h1 className="page__title">Ports.</h1>
+          <p className="page__lede">Your running servers, all in one place.</p>
+        </div>
+        <button type="button" className="btn-secondary" onClick={() => void refresh()} disabled={loading} aria-label="Refresh port list">
+          <RefreshCcw size={14} className={loading ? "animate-spin" : ""} aria-hidden="true" />
+          Refresh
         </button>
       </div>
 
+      <div className="ports-page__toolbar">
+        <div className="ports-search">
+          <Search size={14} aria-hidden="true" />
+          <input ref={searchInput} type="text" value={query} onChange={(event) => updateQuery(event.target.value)}
+            onKeyDown={(event) => { if (event.key === "Escape") clearSearch(); }}
+            placeholder="Search ports" aria-label="Search ports" autoComplete="off" spellCheck={false} />
+          {query && <button type="button" className="icon-btn" aria-label="Clear search" onClick={clearSearch}><X size={13} aria-hidden="true" /></button>}
+        </div>
+        <p className="ports-page__summary" role="status">
+          {loading ? "Scanning…" : error ? "Scan unavailable" : <>
+            {ports.length > 0 && <span className="ports-page__live-dot" aria-hidden="true" />}
+            <span>{search ? `${filtered.length} of ${ports.length} ports` : `${ports.length} listening`}</span>
+            {!search && projectCount > 0 && <span className="ports-page__project-count">{projectCount} {projectCount === 1 ? "project" : "projects"}</span>}
+          </>}
+        </p>
+      </div>
+
       {error && (
-        <div className="text-sm mx-6 mt-2 p-3 rounded-md" style={{ background: "rgba(255,80,80,0.1)", color: "var(--text-danger, #e55)" }}>
-          <p className="font-medium mb-1">Scan error</p>
-          <p className="opacity-70 font-mono text-xs">{error}</p>
+        <div className="callout callout--danger ports-page__error" role="alert">
+          <div><strong>Couldn’t scan ports.</strong><p>{error}{ports.length > 0 ? " Showing the last successful scan." : ""}</p></div>
+          <button type="button" className="btn-secondary" onClick={() => void refresh()} disabled={loading}>Try again</button>
         </div>
       )}
 
-      {!error && ports.length === 0 && !loading && (
-        <p className="text-sm opacity-50 mt-8 text-center">
-          No dev ports detected
-        </p>
+      {!error && filtered.length === 0 && (
+        <div className="ports-empty">
+          <span className="ports-empty__icon" aria-hidden="true">{loading ? <LoaderCircle size={22} className="animate-spin" /> : <Radio size={22} />}</span>
+          <h2>{loading ? "Looking for servers…" : search ? "No matching ports." : "No local servers."}</h2>
+          <p>{loading ? "Scanning the processes listening on this machine." : search ? "Try a port number, project, or process name." : "Start a development server in a project, then refresh this list."}</p>
+          {search && !loading && <button type="button" className="btn-ghost" onClick={clearSearch}>Clear search</button>}
+        </div>
       )}
 
-      {!error && ports.length === 0 && loading && (
-        <p className="text-sm opacity-50 mt-8 text-center">
-          Scanning ports...
-        </p>
-      )}
-
-      {groupKeys.map((group) => (
-        <section key={group} className="settings-section">
-          <div className="flex items-center gap-1.5 settings-section__header opacity-60">
-            <Folder size={12} />
-            <span className="text-xs font-medium uppercase tracking-wide">{group}</span>
-            <span className="text-xs opacity-50">({grouped[group].length})</span>
-          </div>
-
-          <div className="flex flex-col gap-1">
-            {grouped[group].map((port) => (
-              <div
-                key={`${port.pid}-${port.port}`}
-                className="flex items-center gap-3 px-3 py-2 rounded-md"
-                style={{ background: "var(--surface-hover)" }}
-              >
-                <span
-                  className="font-mono text-sm font-semibold shrink-0"
-                  style={{ minWidth: "52px" }}
-                >
-                  :{port.port}
-                </span>
-
-                <div className="flex flex-col min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm truncate">{port.process}</span>
-                    {port.framework && (
-                      <span
-                        className="text-xs px-1.5 py-0.5 rounded shrink-0"
-                        style={{ background: "var(--surface-active)" }}
-                      >
-                        {port.framework}
-                      </span>
-                    )}
-                  </div>
-                  {port.cwd && (
-                    <span className="text-xs opacity-40 truncate">{port.cwd}</span>
-                  )}
-                </div>
-
-                <span className="text-xs opacity-40 shrink-0 font-mono" title="Uptime">
-                  {formatUptime(port.uptime)}
-                </span>
-
-                <span className="text-xs opacity-40 shrink-0" style={{ minWidth: "50px" }} title="Memory">
-                  {formatMemory(port.memory_kb)}
-                </span>
-
-                <span className="text-xs opacity-30 shrink-0 font-mono" title="PID" style={{ minWidth: "44px" }}>
-                  {port.pid}
-                </span>
-
-                <div className="flex items-center gap-1 shrink-0">
-                  <button
-                    className="icon-btn"
-                    onClick={() => handleOpenBrowser(port.port)}
-                    title={`Open localhost:${port.port}`}
-                    aria-label={`Open port ${port.port} in browser`}
-                  >
-                    <ExternalLink size={13} />
-                  </button>
-                  <button
-                    className="icon-btn"
-                    onClick={() => void handleKill(port)}
-                    disabled={killing.has(port.pid)}
-                    title={`Kill ${port.process} (pid ${port.pid})`}
-                    aria-label={`Kill process on port ${port.port}`}
-                    style={{ color: "var(--text-danger, #e55)" }}
-                  >
-                    <Skull size={13} />
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </section>
-      ))}
+      {groups.map(([group, entries]) => {
+        const closed = collapsed.has(group);
+        return (
+          <section key={group} className="port-section" aria-label={`${group} ports`}>
+            <h2 className="port-group__heading">
+              <button type="button" className="port-group__toggle" aria-expanded={!closed}
+                aria-label={`${group}, ${entries.length} ${entries.length === 1 ? "port" : "ports"}`}
+                onClick={() => setCollapsed((previous) => {
+                  const next = new Set(previous);
+                  if (closed) next.delete(group); else next.add(group);
+                  return next;
+                })}>
+                <ChevronDown size={13} aria-hidden="true" />
+                <span className="port-group__name">{group}</span>
+                <span className="port-group__count">{entries.length}</span>
+              </button>
+            </h2>
+            {!closed && <ul className="port-group">
+              {entries.sort((a, b) => a.port - b.port || a.pid - b.pid).map((port) => {
+                const stopping = killing.has(port.pid);
+                return (
+                  <li key={`${port.pid}-${port.port}`} className="port-row" aria-label={`Port ${port.port}, ${port.framework || port.process}`}>
+                    <span className="port-row__number" title={`localhost:${port.port}`}>:{port.port}</span>
+                    <div className="port-row__body">
+                      <div className="port-row__name">
+                        <span className="port-row__title" title={port.framework || port.process}>{port.framework || port.process}</span>
+                        <span className="port-row__pid">PID {port.pid}</span>
+                      </div>
+                      <div className="port-row__detail">
+                        {port.framework && <span className="port-row__process">{port.process}</span>}
+                        <span className="port-row__path" title={port.cwd}>{port.cwd || "Working directory unavailable"}</span>
+                      </div>
+                    </div>
+                    <dl className="port-row__metrics">
+                      <div><dt>Memory</dt><dd>{formatMemory(port.memory_kb)}</dd></div>
+                      <div><dt>Uptime</dt><dd>{port.uptime.trim() || "—"}</dd></div>
+                    </dl>
+                    <div className="port-row__actions">
+                      <button type="button" className="icon-btn port-row__action" onClick={() => void handleOpenBrowser(port.port)} title={`Open localhost:${port.port}`} aria-label={`Open port ${port.port} in browser`}>
+                        <ArrowUpRight size={15} aria-hidden="true" />
+                      </button>
+                      <button type="button" className="icon-btn port-row__action" onClick={() => void handleKill(port)} disabled={stopping} title={`Stop ${port.process} (PID ${port.pid})`} aria-label={`${stopping ? "Stopping" : "Stop"} process on port ${port.port}`} data-danger="true">
+                        {stopping ? <LoaderCircle size={15} className="animate-spin" aria-hidden="true" /> : <Square size={12} fill="currentColor" aria-hidden="true" />}
+                      </button>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>}
+          </section>
+        );
+      })}
     </div>
   );
 }

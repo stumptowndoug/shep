@@ -2,15 +2,14 @@ import { useCallback, useRef, useState } from "react";
 import { useTerminalStore } from "../../stores/useTerminalStore";
 import { useUIStore } from "../../stores/useUIStore";
 import { useShallow } from "zustand/shallow";
-import { GitBranch } from "lucide-react";
+import { Plus, X } from "lucide-react";
 import { assistantLogoSrc, getAssistantLogoClass } from "../../lib/assistantLogos";
 import { handleActionKey } from "../../lib/a11y";
-import { useGitStore } from "../../stores/useGitStore";
 import tabKindMeta from "../../lib/tabKindMeta";
-import type { UnifiedTab } from "../../lib/types";
+import { isSessionTab, type UnifiedTab } from "../../lib/types";
 import { useProjectSettingsStore } from "../../stores/useProjectSettingsStore";
 import { agentDisplayLabel } from "../../lib/agentLabels";
-import ProjectActionMenu, { type ProjectActionKind } from "../shared/ProjectActionMenu";
+import GitSummary from "../git/GitSummary";
 
 /** Render the icon for a tab based on its kind */
 function TabIcon({ tab }: { tab: UnifiedTab }) {
@@ -26,12 +25,12 @@ function TabIcon({ tab }: { tab: UnifiedTab }) {
 
 interface TabBarProps {
   onClose: (tabId: string) => void;
-  onProjectAction: (action: ProjectActionKind) => void;
+  changesActive: boolean;
 }
 
 export default function TabBar({
   onClose,
-  onProjectAction,
+  changesActive,
 }: TabBarProps) {
   const { activeProjectPath, projectState } = useTerminalStore(
     useShallow((s) => ({ activeProjectPath: s.activeProjectPath, projectState: s.activeProjectPath ? s.projectState[s.activeProjectPath] : null })),
@@ -39,13 +38,6 @@ export default function TabBar({
   const projectTerminals = projectState;
   const projectName = activeProjectPath ? activeProjectPath.split("/").pop() : null;
   const agentLabelMode = useProjectSettingsStore((s) => s.settings.agentLabelMode);
-  const gitStatus = useGitStore((s) => activeProjectPath ? s.projectGitStatus[activeProjectPath] : null);
-  const branch = gitStatus?.branch ?? null;
-  const branchIconColor = !gitStatus || !gitStatus.is_git_repo
-    ? undefined
-    : gitStatus.dirty
-      ? "var(--status-attention)"
-      : "var(--status-clean)";
   const tabs = projectTerminals?.tabs ?? [];
   const activeTabId = projectTerminals?.activeTabId ?? null;
   const { setActiveTab, reorderTab, updateTab } = useTerminalStore.getState();
@@ -110,31 +102,31 @@ export default function TabBar({
   }, [computeDropIndex, reorderTab]);
 
   // Only subscribe to global overlay state.
-  const { settingsActive, usagePanelActive, portsPanelActive, historyPanelActive } = useUIStore(useShallow((s) => ({
+  const { settingsActive, usagePanelActive, portsPanelActive, historyPanelActive, projectsPanelActive } = useUIStore(useShallow((s) => ({
     settingsActive: s.settingsActive,
     usagePanelActive: s.usagePanelActive,
     portsPanelActive: s.portsPanelActive,
     historyPanelActive: s.historyPanelActive,
+    projectsPanelActive: s.projectsPanelActive,
   })));
 
-  const anyOverlay = settingsActive || usagePanelActive || portsPanelActive || historyPanelActive;
+  const anyOverlay = settingsActive || usagePanelActive || portsPanelActive || historyPanelActive || projectsPanelActive;
 
   const handleSelectTab = (tabId: string) => {
     useUIStore.getState().deactivateAllOverlays();
     setActiveTab(tabId);
     const tab = tabs.find((t) => t.id === tabId);
-    if (tab && (tab.kind === "terminal" || tab.kind === "assistant")) {
+    if (tab && isSessionTab(tab)) {
       useTerminalStore.getState().clearTabBell(tab.ptyId);
     }
   };
 
-  const isRenameable = (tab: UnifiedTab) => tab.kind === "terminal" || tab.kind === "assistant";
 
   return (
     <div className="tab-bar">
       <div
         ref={containerRef}
-        className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto"
+        className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto"
         role="tablist"
         aria-label="Workspace tabs"
       >
@@ -192,7 +184,7 @@ export default function TabBar({
                 <>
                   <span
                     className={`truncate max-w-32${displayLabel.isTitle ? " session-title-output" : ""}`}
-                    onDoubleClick={isRenameable(tab) ? (e) => {
+                    onDoubleClick={isSessionTab(tab) ? (e) => {
                       e.stopPropagation();
                       setEditingTabId(tab.id);
                     } : undefined}
@@ -209,25 +201,31 @@ export default function TabBar({
                   onClose(tab.id);
                 }}
               >
-                ×
+                <X size={12} />
               </button>
             </div>
           );
         })}
 
-        <ProjectActionMenu variant="tab" onAction={onProjectAction} />
+        <button
+          type="button"
+          className="icon-btn"
+          onClick={() => {
+            useUIStore.getState().deactivateAllOverlays();
+            useTerminalStore.getState().addPanelTab("launcher");
+          }}
+          onPointerDown={(event) => event.stopPropagation()}
+          disabled={!activeProjectPath}
+          title={`New tab (${tabKindMeta.launcher.shortcut})`}
+          aria-label="New tab"
+        >
+          <Plus size={16} />
+        </button>
       </div>
       {projectName && (
-        <span className="tab-bar__breadcrumb">
-          {projectName}
-          {branch && (
-            <>
-              <span className="tab-bar__breadcrumb-on">on</span>
-              <GitBranch size={15} className="tab-bar__breadcrumb-icon" style={branchIconColor ? { color: branchIconColor } : undefined} />
-              {branch}
-            </>
-          )}
-        </span>
+        <div className="tab-bar__context">
+          <GitSummary active={changesActive} />
+        </div>
       )}
     </div>
   );

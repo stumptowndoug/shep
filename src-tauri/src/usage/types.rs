@@ -102,10 +102,7 @@ pub struct UsageBreakdownItem {
     pub tokens_cache_read: u64,
     pub tokens_cache_write: u64,
     pub tokens_thoughts: u64,
-    pub cost: Option<f64>,
-    pub cost_detail: UsageCost,
     pub sessions: Option<u64>,
-    pub trend: Vec<u64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -116,7 +113,7 @@ pub struct UsageOverview {
     pub total_cost: Option<f64>,
     pub total_cost_detail: UsageCost,
     pub active_projects: u64,
-    pub active_sessions: u64,
+    pub active_sessions: Option<u64>,
     pub providers: Vec<UsageOverviewProvider>,
     pub trend: Vec<UsageTrendBucket>,
     pub top_models: Vec<UsageBreakdownItem>,

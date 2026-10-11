@@ -1,9 +1,17 @@
-import type { TabActivity } from "../../lib/types";
+import type { AgentInterface, TabActivity } from "../../lib/types";
 
 export type ActivityIndicatorStatus = "idle" | "running" | "working" | "active" | "done" | "stuck" | "attention" | "failed";
 
-export function getTabActivityStatus(activity: TabActivity | undefined): ActivityIndicatorStatus {
+export function getTabActivityStatus(activity: TabActivity | undefined, agentInterface?: AgentInterface): ActivityIndicatorStatus {
   if (!activity) return "idle";
+  // ACP reports explicit requests. Unread notifications and completed turns
+  // aren't requests for help, so chat only shows working or needs-you.
+  if (agentInterface === "chat") {
+    if (!activity.alive) return activity.exitCode === 0 ? "idle" : "attention";
+    if (activity.agentState === "blocked" || activity.agentState === "possibly_stuck") return "attention";
+    if (activity.agentState === "working" || (activity.agentState === null && activity.active)) return "working";
+    return "idle";
+  }
   if (!activity.alive) return activity.exitCode === 0 ? "idle" : "failed";
   if (activity.bell) return "attention";
   if (activity.agentState === "possibly_stuck") return "stuck";
@@ -15,7 +23,11 @@ export function getTabActivityStatus(activity: TabActivity | undefined): Activit
   return "running";
 }
 
-function statusDescription(status: ActivityIndicatorStatus, activity?: TabActivity): string {
+function statusDescription(status: ActivityIndicatorStatus, activity?: TabActivity, agentInterface?: AgentInterface): string {
+  if (agentInterface === "chat" && status === "attention") {
+    if (activity && !activity.alive) return `Needs you — agent exited with code ${activity.exitCode ?? "unknown"}`;
+    return `Needs you${activity?.agentStatusReason ? ` — ${activity.agentStatusReason}` : ""}`;
+  }
   if (status === "failed") return activity?.exitCode == null ? "Failed" : `Failed with exit code ${activity.exitCode}`;
   if (status === "attention") {
     return activity?.lastNotificationMessage ||
@@ -35,17 +47,19 @@ function statusDescription(status: ActivityIndicatorStatus, activity?: TabActivi
 
 export default function ActivityIndicator({
   activity,
+  agentInterface,
   className = "",
 }: {
   activity?: TabActivity;
+  agentInterface?: AgentInterface;
   className?: string;
 }) {
-  const status = getTabActivityStatus(activity);
-  const description = statusDescription(status, activity);
+  const status = getTabActivityStatus(activity, agentInterface);
+  const description = statusDescription(status, activity, agentInterface);
 
   return (
     <span
-      className={`activity-indicator activity-indicator--${status}${className ? ` ${className}` : ""}`}
+      className={`activity-indicator activity-indicator--${status}${agentInterface === "chat" ? " activity-indicator--chat" : ""}${className ? ` ${className}` : ""}`}
       title={description}
       aria-label={description}
     />

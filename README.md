@@ -19,11 +19,11 @@ Shep gives each repo a dedicated workspace for terminals, AI coding agents, comm
 ## What It Does
 
 - **Project workspaces** for repos, tasks, agents, and terminal tabs
-- **Assistant launcher** for Codex CLI, Claude Code, and Antigravity CLI
+- **Agent chat and terminals** for Claude Code, Codex, Cursor, Antigravity, OpenCode, and Pi
 - **Git-aware project views** including discovered worktrees
 - **Autostart tasks** for dev servers, watchers, and recurring commands
 - **Status indicators** so crashed or noisy sessions are easy to spot
-- **Usage tracking** for AI coding assistant costs across providers
+- **Usage tracking** for token activity, models, projects, and provider limits
 - **In-app notices** for common failures instead of silent errors or browser alerts
 - **Native macOS packaging** via Tauri
 
@@ -37,7 +37,7 @@ After downloading:
 2. Drag `Shep.app` into `Applications`
 3. Launch Shep
 
-Note: the current release flow is aimed at small-group testing. If the app is unsigned or not notarized, macOS may show an extra security prompt on first launch.
+Official release builds are signed and notarized. See [release instructions](docs/RELEASING.md) for packaging and upgrade verification.
 
 ## Requirements
 
@@ -45,12 +45,12 @@ For using Shep:
 
 - macOS
 - A local git repo to work from
-- Any CLI agents you want to launch already installed on your machine
+- The CLI for agents you want to run in terminals; chat adapters can be set up from the launcher
 
 For building from source:
 
-- Node.js 20+
-- `pnpm`
+- Node.js 24+
+- `pnpm` 10
 - Rust 1.95+ via `rustup`
 - Xcode Command Line Tools
 
@@ -94,6 +94,11 @@ Use the sidebar and tab bar to:
 
 ## Assistant Modes
 
+Agents can run in **Chat** through ACP or in a **Terminal** using their CLI.
+New installations default to Chat; existing installations retain Terminal when
+they have not chosen an interface. History resumes in its recorded interface.
+Antigravity Chat uses Shep's verified managed runtime; it does not replace `agy`.
+
 Shep supports two session modes for supported coding agents:
 
 | Mode | Purpose |
@@ -108,6 +113,9 @@ Supported today:
 - Codex CLI
 - Claude Code
 - Antigravity CLI (`agy`)
+- Cursor (`cursor-agent`)
+- OpenCode (`opencode`)
+- Pi (`pi`)
 
 Gemini CLI was removed from the launcher after Google deprecated it in favor of Antigravity CLI (consumer requests stop June 18, 2026). If you still use it (e.g. on an enterprise license), run `gemini` from any Shep terminal — historical Gemini usage stays visible in the usage panel.
 
@@ -129,7 +137,7 @@ minutes after success and retry with backoff after failures.
 ### Install dependencies
 
 ```bash
-pnpm install
+pnpm install --frozen-lockfile
 ```
 
 ### Run in development
@@ -156,7 +164,8 @@ Useful validation commands:
 
 ```bash
 pnpm build
-cargo test --manifest-path src-tauri/Cargo.toml
+pnpm test
+bash scripts/check-release.sh
 ```
 
 Build artifacts land here:

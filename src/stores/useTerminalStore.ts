@@ -1,10 +1,10 @@
 import { create } from "zustand";
-import type { AgentStatusObservation, TerminalTabData, TabActivity, UnifiedTab, PanelTabKind, PanelTabData } from "../lib/types";
-import { panelTabId, panelTabDefaults } from "../lib/types";
+import type { AgentStatusObservation, TerminalTabData, TabActivity, UnifiedTab, PanelTabKind, PanelTabData, SessionMode } from "../lib/types";
+import { isSessionTab, panelTabId, panelTabDefaults } from "../lib/types";
 import { nextAgentDoneState } from "../lib/agentActivity";
 import { useUIStore } from "./useUIStore";
 
-interface ProjectTerminalState {
+export interface ProjectTerminalState {
   tabs: UnifiedTab[];
   activeTabId: string | null;
 }
@@ -15,17 +15,18 @@ interface TerminalStore {
   tabActivity: Record<number, TabActivity>;
   switchProject: (repoPath: string) => void;
   removeProject: (repoPath: string) => void;
-  addTab: (tab: UnifiedTab) => void;
-  removeTab: (id: string) => void;
-  setActiveTab: (id: string) => void;
+  addTab: (tab: UnifiedTab) => boolean;
+  removeTab: (id: string, repoPath?: string) => void;
+  setActiveTab: (id: string, repoPath?: string) => void;
   updateTab: (id: string, patch: Partial<Pick<UnifiedTab, "label">>) => void;
+  setTabSessionMode: (ptyId: number, mode: SessionMode) => void;
   setTabTitleFromPty: (ptyId: number, title: string) => void;
   setTabSessionInfo: (ptyId: number, sessionId: string, title: string | null) => void;
   reorderTab: (tabId: string, toIndex: number) => void;
   addPanelTab: (kind: PanelTabKind) => void;
   removePanelTab: (kind: PanelTabKind) => void;
   togglePanelTab: (kind: PanelTabKind) => void;
-  findTabByCommand: (commandName: string) => TerminalTabData | undefined;
+  findTabByCommand: (commandName: string, repoPath?: string) => TerminalTabData | undefined;
   findTabByPtyId: (ptyId: number) => TerminalTabData | undefined;
   initActivity: (ptyId: number) => void;
   setTabActive: (ptyId: number, active: boolean) => void;
@@ -104,7 +105,7 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
         const activeTab = project.tabs.find((tab) => tab.id === project.activeTabId);
         if (
           activeTab &&
-          (activeTab.kind === "terminal" || activeTab.kind === "assistant") &&
+          isSessionTab(activeTab) &&
           state.tabActivity[activeTab.ptyId]?.agentDone
         ) {
           return {
@@ -136,7 +137,7 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
       const tabActivity = { ...state.tabActivity };
       if (project) {
         for (const tab of project.tabs) {
-          if (tab.kind === "terminal" || tab.kind === "assistant") {
+          if (isSessionTab(tab)) {
             delete tabActivity[tab.ptyId];
           }
         }
@@ -153,10 +154,13 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
   },
 
   addTab: (tab: UnifiedTab) => {
+    let added = false;
     set((state) => {
-      const path = state.activeProjectPath;
+      const path = isSessionTab(tab) ? tab.repoPath : state.activeProjectPath;
       if (!path) return state;
-      const ps = state.projectState[path] ?? emptyState();
+      const ps = state.projectState[path];
+      if (!ps) return state; // The originating project may have been removed during launch.
+      added = true;
       return {
         projectState: {
           ...state.projectState,
@@ -167,11 +171,12 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
         },
       };
     });
+    return added;
   },
 
-  removeTab: (id: string) => {
+  removeTab: (id: string, repoPath?: string) => {
     set((state) => {
-      const path = state.activeProjectPath;
+      const path = repoPath ?? state.activeProjectPath;
       if (!path) return state;
       const ps = state.projectState[path];
       if (!ps) return state;
@@ -195,15 +200,15 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
     });
   },
 
-  setActiveTab: (id: string) => {
+  setActiveTab: (id: string, repoPath?: string) => {
     set((state) => {
-      const path = state.activeProjectPath;
+      const path = repoPath ?? state.activeProjectPath;
       if (!path) return state;
       const ps = state.projectState[path];
       if (!ps || !ps.tabs.some((t) => t.id === id)) return state;
       const tab = ps.tabs.find((candidate) => candidate.id === id);
       const clearDone = tab &&
-        (tab.kind === "terminal" || tab.kind === "assistant") &&
+        isSessionTab(tab) &&
         state.tabActivity[tab.ptyId]?.agentDone;
       return {
         projectState: {
@@ -225,6 +230,13 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
     });
   },
 
+  setTabSessionMode: (ptyId, sessionMode) => set((state) => ({
+    projectState: Object.fromEntries(Object.entries(state.projectState).map(([path, project]) => [
+      path, { ...project, tabs: project.tabs.map((tab) =>
+        isSessionTab(tab) && tab.ptyId === ptyId ? { ...tab, sessionMode } : tab) },
+    ])),
+  })),
+
   updateTab: (id: string, patch: Partial<Pick<UnifiedTab, "label">>) => {
     set((state) => {
       const path = state.activeProjectPath;
@@ -238,7 +250,7 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
             ...ps,
             tabs: ps.tabs.map((t) => {
               if (t.id !== id) return t;
-              if (t.kind === "terminal" || t.kind === "assistant") {
+              if (isSessionTab(t)) {
                 return { ...t, ...patch, labelSource: "user" as const };
               }
               return { ...t, ...patch };
@@ -257,14 +269,14 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
       for (const [path, project] of Object.entries(state.projectState)) {
         const index = project.tabs.findIndex(
           (tab) =>
-            (tab.kind === "terminal" || tab.kind === "assistant") &&
+            isSessionTab(tab) &&
             tab.ptyId === ptyId,
         );
         if (index === -1) continue;
 
         const tab = project.tabs[index];
         if (
-          (tab.kind !== "terminal" && tab.kind !== "assistant") ||
+          !isSessionTab(tab) ||
           tab.labelSource === "user"
         ) {
           return state;
@@ -298,14 +310,14 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
       for (const [path, project] of Object.entries(state.projectState)) {
         const index = project.tabs.findIndex(
           (tab) =>
-            (tab.kind === "terminal" || tab.kind === "assistant") &&
+            isSessionTab(tab) &&
             tab.ptyId === ptyId,
         );
         if (index === -1) continue;
 
         const tab = project.tabs[index];
         if (
-          tab.kind !== "terminal" && tab.kind !== "assistant"
+          !isSessionTab(tab)
         ) {
           return state;
         }
@@ -407,12 +419,13 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
     }
   },
 
-  findTabByCommand: (commandName: string) => {
+  findTabByCommand: (commandName: string, repoPath?: string) => {
     const state = get();
-    if (!state.activeProjectPath) return undefined;
-    const ps = state.projectState[state.activeProjectPath];
+    const path = repoPath ?? state.activeProjectPath;
+    if (!path) return undefined;
+    const ps = state.projectState[path];
     return ps?.tabs.find(
-      (t): t is TerminalTabData => (t.kind === "terminal" || t.kind === "assistant") && t.commandName === commandName,
+      (t): t is TerminalTabData => isSessionTab(t) && t.commandName === commandName,
     );
   },
 
@@ -421,7 +434,7 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
     for (const project of Object.values(state.projectState)) {
       const tab = project.tabs.find(
         (candidate): candidate is TerminalTabData =>
-          (candidate.kind === "terminal" || candidate.kind === "assistant") &&
+          isSessionTab(candidate) &&
           candidate.ptyId === ptyId,
       );
       if (tab) return tab;
@@ -482,7 +495,7 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
       for (const [path, project] of Object.entries(state.projectState)) {
         const tab = project.tabs.find(
           (candidate) =>
-            (candidate.kind === "terminal" || candidate.kind === "assistant") &&
+            isSessionTab(candidate) &&
             candidate.ptyId === ptyId,
         );
         if (tab) {

@@ -1,3 +1,4 @@
+use portable_pty::PtySize;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
@@ -9,6 +10,7 @@ pub struct PtyManager {
     sessions: Mutex<HashMap<u32, PtySession>>,
     next_id: Mutex<u32>,
     shutting_down: AtomicBool,
+    ready_to_exit: AtomicBool,
 }
 
 impl PtyManager {
@@ -17,11 +19,21 @@ impl PtyManager {
             sessions: Mutex::new(HashMap::new()),
             next_id: Mutex::new(1),
             shutting_down: AtomicBool::new(false),
+            ready_to_exit: AtomicBool::new(false),
         }
     }
 
     pub fn session_count(&self) -> usize {
         self.sessions.lock().unwrap().len()
+    }
+
+    /// Session ids are shared with ACP chat processes so the frontend can key
+    /// tab activity by one number regardless of transport.
+    pub fn allocate_id(&self) -> u32 {
+        let mut next_id = self.next_id.lock().unwrap();
+        let id = *next_id;
+        *next_id += 1;
+        id
     }
 
     pub fn begin_shutdown(&self) -> bool {
@@ -30,6 +42,14 @@ impl PtyManager {
 
     pub fn is_shutting_down(&self) -> bool {
         self.shutting_down.load(Ordering::SeqCst)
+    }
+
+    pub fn finish_shutdown(&self) {
+        self.ready_to_exit.store(true, Ordering::SeqCst);
+    }
+
+    pub fn can_exit(&self) -> bool {
+        self.ready_to_exit.load(Ordering::SeqCst)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -44,13 +64,14 @@ impl PtyManager {
         color_theme: PtyColorTheme,
         channel: Channel<PtyOutput>,
     ) -> Result<u32, String> {
-        let session = PtySession::spawn(command, args, cwd, env, cols, rows, color_theme, channel)?;
-
-        let mut next_id = self.next_id.lock().unwrap();
-        let id = *next_id;
-        *next_id += 1;
-
-        self.sessions.lock().unwrap().insert(id, session);
+        let mut sessions = self.sessions.lock().unwrap();
+        if self.is_shutting_down() {
+            return Err("Shep is shutting down".into());
+        }
+        let size = PtySize { cols, rows, pixel_width: 0, pixel_height: 0 };
+        let session = PtySession::spawn(command, args, cwd, env, size, color_theme, channel)?;
+        let id = self.allocate_id();
+        sessions.insert(id, session);
         Ok(id)
     }
 

@@ -13,6 +13,10 @@ export interface ShepTheme {
 
   // Glass tints
   frameTint: string;
+  /** Sidebar ground. Set by `withLayeredSurfaces`; absent on raw theme definitions. */
+  sidebarBg?: string;
+  /** Things you act on: primary buttons, links, focus, selection. */
+  accent?: string;
   panelTint: string;
   glassBorder: string;
   glassPanelStrong: string;
@@ -807,6 +811,56 @@ export function hexLuminance(hex: string): number {
   const b = parseInt(hex.slice(5, 7), 16) / 255;
   const toLinear = (c: number) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
   return 0.2126 * toLinear(r) + 0.7152 * toLinear(g) + 0.0722 * toLinear(b);
+}
+
+/** Accents for the built-in themes (each theme's signature color). */
+const THEME_ACCENTS: Record<string, string> = {
+  "tokyo-night": "#7aa2f7",
+  "tokyo-glass": "#7aa2f7",
+  "tokyo-day": "#2e7de9",
+  dracula: "#bd93f9",
+  catppuccin: "#cba6f7",
+  "catppuccin-glass": "#cba6f7",
+  "catppuccin-latte": "#8839ef",
+  carbonfox: "#78a9ff",
+  jellybeans: "#8197bf",
+  kanagawa: "#7e9cd8",
+  "nightfox-dark": "#719cd6",
+  "nightfox-glass": "#719cd6",
+  "nightfox-light": "#2848a9",
+  solarized: "#268bd2",
+  "github-light": "#0969da",
+};
+
+export function themeAccent(theme: ShepTheme): string {
+  return theme.accent ?? THEME_ACCENTS[theme.id] ?? theme.termBlue;
+}
+
+/** Text color for a filled accent button: white unless the accent is too light. */
+export function accentButtonText(accent: string): string {
+  return 1.05 / (hexLuminance(accent) + 0.05) >= 3.2 ? "#ffffff" : "#000000";
+}
+
+/** Dark themes: the main panel steps this much darker than the theme color. */
+const MAIN_PANEL_SHADE = 0.82;
+
+function shadeHex(hex: string, factor: number): string {
+  const channel = (offset: number) =>
+    Math.round(parseInt(hex.slice(offset, offset + 2), 16) * factor).toString(16).padStart(2, "0");
+  return `#${channel(1)}${channel(3)}${channel(5)}`;
+}
+
+/**
+ * Dark opaque themes keep their own color for the sidebar and put the main
+ * panel (frame, terminals, chat) one step darker. Light and glass themes
+ * are unchanged; their sidebar is tinted in CSS instead.
+ */
+export function withLayeredSurfaces(theme: ShepTheme): ShepTheme {
+  if (theme.isTransparent || !/^#[0-9a-f]{6}$/i.test(theme.appBg) || hexLuminance(theme.appBg) > 0.3) {
+    return theme;
+  }
+  const main = shadeHex(theme.appBg, MAIN_PANEL_SHADE);
+  return { ...theme, sidebarBg: theme.appBg, appBg: main, frameTint: main };
 }
 
 export const DARK_THEMES: ShepTheme[] = THEME_LIST.filter((t) => !t.isTransparent && hexLuminance(t.appBg) <= 0.3);

@@ -32,8 +32,8 @@ async function ensureNotificationPermission() {
   return permissionGranted;
 }
 
-export async function notifyAgent(ptyId: number, message: string) {
-  useTerminalStore.getState().setTabBell(ptyId, message);
+export async function notifyAgent(ptyId: number, message: string, { attention = true }: { attention?: boolean } = {}) {
+  if (attention) useTerminalStore.getState().setTabBell(ptyId, message);
 
   if (focused) {
     return;

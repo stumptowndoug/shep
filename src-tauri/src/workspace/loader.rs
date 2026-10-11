@@ -10,6 +10,7 @@ use super::config::{
 };
 
 static CONFIG_CACHE: Mutex<Option<(GlobalConfig, SystemTime)>> = Mutex::new(None);
+static CONFIG_WRITE_LOCK: Mutex<()> = Mutex::new(());
 
 // ── Paths ───────────────────────────────────────────────────────────
 
@@ -57,8 +58,14 @@ pub fn load_global_config() -> Result<GlobalConfig, String> {
 
     let content =
         fs::read_to_string(&path).map_err(|e| format!("Failed to read global config: {e}"))?;
-    let config: GlobalConfig =
-        serde_yaml::from_str(&content).map_err(|e| format!("Failed to parse global config: {e}"))?;
+    let mut config: GlobalConfig =
+        serde_yaml::from_str(&content).map_err(|e| format!("Failed to parse global config: {e}. A previous copy may be available at {}.", path.with_extension("yml.bak").display()))?;
+
+    if config.migrate() {
+        // Persist the marker before exposing migrated data, so a later unpin is respected.
+        save_global_config(&config)?;
+        return Ok(config);
+    }
 
     if let Ok(mut guard) = CONFIG_CACHE.lock() {
         *guard = Some((config.clone(), mtime));
@@ -68,13 +75,19 @@ pub fn load_global_config() -> Result<GlobalConfig, String> {
 }
 
 pub fn save_global_config(config: &GlobalConfig) -> Result<(), String> {
+    let _write_guard = CONFIG_WRITE_LOCK.lock().map_err(|_| "Configuration writer is unavailable")?;
     let dir = shep_home()?;
     fs::create_dir_all(&dir).map_err(|e| format!("Failed to create .shep dir: {e}"))?;
 
     let path = global_config_path()?;
     let yaml =
         serde_yaml::to_string(config).map_err(|e| format!("Failed to serialize config: {e}"))?;
-    fs::write(&path, &yaml).map_err(|e| format!("Failed to write global config: {e}"))?;
+    if path.exists() {
+        let previous = fs::read(&path).map_err(|e| format!("Failed to back up global config: {e}"))?;
+        super::atomic_file::write(&path.with_extension("yml.bak"), &previous)
+            .map_err(|e| format!("Failed to back up global config: {e}"))?;
+    }
+    super::atomic_file::write(&path, yaml.as_bytes()).map_err(|e| format!("Failed to write global config: {e}"))?;
 
     // Update cache with the config we just wrote
     if let Ok(mtime) = fs::metadata(&path).and_then(|m| m.modified()) {
@@ -173,6 +186,8 @@ pub fn list_repos() -> Result<Vec<RepoInfo>, String> {
                 path: entry.path.clone(),
                 name,
                 group: entry.group.clone(),
+                pinned: entry.pinned,
+                last_opened: entry.last_opened,
             }
         })
         .collect();
@@ -196,6 +211,8 @@ pub fn register_repo(repo_path: &str) -> Result<RegisteredRepo, String> {
         config.repos.push(RepoEntry {
             path: canonical_str.clone(),
             group: None,
+            pinned: false,
+            last_opened: None,
         });
         save_global_config(&config)?;
     }
@@ -227,7 +244,7 @@ pub fn save_repo_workspace(repo_path: &str, config: &WorkspaceConfig) -> Result<
     let path = repo_workspace_file(repo_path);
     let yaml =
         serde_yaml::to_string(config).map_err(|e| format!("Failed to serialize config: {e}"))?;
-    fs::write(&path, yaml).map_err(|e| format!("Failed to write workspace file: {e}"))
+    super::atomic_file::write(&path, yaml.as_bytes()).map_err(|e| format!("Failed to write workspace file: {e}"))
 }
 
 // ── Migration ───────────────────────────────────────────────────────
@@ -245,6 +262,7 @@ pub fn migrate_old_projects() -> Result<(), String> {
     }
 
     let mut global_config = GlobalConfig::default();
+    global_config.projects.default_agent_interface = "terminal".into();
 
     let entries = fs::read_dir(&old_dir).map_err(|e| format!("Failed to read old projects: {e}"))?;
 
@@ -315,7 +333,12 @@ pub fn migrate_old_projects() -> Result<(), String> {
         }
 
         // Add to global registry
-        global_config.repos.push(RepoEntry { path: cwd, group: None });
+        global_config.repos.push(RepoEntry {
+            path: cwd,
+            group: None,
+            pinned: true,
+            last_opened: None,
+        });
     }
 
     if !global_config.repos.is_empty() {
@@ -356,6 +379,7 @@ pub fn create_group(name: &str) -> Result<GroupEntry, String> {
         id,
         name: trimmed.to_string(),
         order: next_order,
+        pinned: true,
     };
 
     config.groups.push(entry.clone());
@@ -408,6 +432,45 @@ pub fn move_repo_to_group(repo_path: &str, group_id: Option<&str>) -> Result<(),
         .ok_or_else(|| format!("Repo not found: {repo_path}"))?;
     repo.group = group_id.map(|s| s.to_string());
     save_global_config(&config)
+}
+
+pub fn set_group_pinned(group_id: &str, pinned: bool) -> Result<(), String> {
+    let mut config = load_global_config()?;
+    let group = config
+        .groups
+        .iter_mut()
+        .find(|g| g.id == group_id)
+        .ok_or_else(|| format!("Group not found: {group_id}"))?;
+    group.pinned = pinned;
+    save_global_config(&config)
+}
+
+pub fn set_repo_pinned(repo_path: &str, pinned: bool) -> Result<(), String> {
+    let mut config = load_global_config()?;
+    let repo = config
+        .repos
+        .iter_mut()
+        .find(|r| r.path == repo_path)
+        .ok_or_else(|| format!("Repo not found: {repo_path}"))?;
+    repo.pinned = pinned;
+    save_global_config(&config)
+}
+
+/// Record that a project was opened, for recency ordering. Returns the timestamp.
+pub fn mark_repo_opened(repo_path: &str) -> Result<u64, String> {
+    let mut config = load_global_config()?;
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+    let repo = config
+        .repos
+        .iter_mut()
+        .find(|r| r.path == repo_path)
+        .ok_or_else(|| format!("Repo not found: {repo_path}"))?;
+    repo.last_opened = Some(now);
+    save_global_config(&config)?;
+    Ok(now)
 }
 
 fn slug_from_name(name: &str) -> String {

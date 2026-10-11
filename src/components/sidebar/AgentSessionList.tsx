@@ -75,7 +75,7 @@ function AgentSessionRow({
           {secondary}
         </span>
       </span>
-      <ActivityIndicator activity={activity} className="agent-session-row__indicator" />
+      <ActivityIndicator activity={activity} agentInterface={tab.agentInterface} className="agent-session-row__indicator" />
     </div>
   );
 }
@@ -96,16 +96,16 @@ export default function AgentSessionList({
   if (sessions.length === 0) return null;
 
   return (
-    <div className="sidebar-section px-2 pb-1">
+    <div className="side-sec side-island">
       <SidebarSectionToggle
-        label="Agent Sessions"
+        label="Agents"
         collapsed={collapsed}
         badge={sessions.length}
         onToggle={handleToggle}
       />
 
       {!collapsed && (
-        <div className="sidebar-section__list agent-session-list">
+        <div className="side-list">
           {sessions.map((item) => (
             <AgentSessionRow
               key={`${item.tab.repoPath}:${item.tab.id}`}

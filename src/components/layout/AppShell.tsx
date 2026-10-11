@@ -1,11 +1,15 @@
 import { Suspense, lazy, useEffect, useCallback, useRef, useMemo } from "react";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import Sidebar from "../sidebar/Sidebar";
 import TabBar from "./TabBar";
 import TerminalView from "../terminal/TerminalView";
 import TerminalErrorBoundary from "../terminal/TerminalErrorBoundary";
+import { startChat } from "../../lib/acp/chatSessions";
+import { CODING_ASSISTANTS } from "../sidebar/constants";
 import NoticeCenter from "../shared/NoticeCenter";
-import { PanelLeft, PanelRight } from "lucide-react";
+import TooltipLayer from "../shared/TooltipLayer";
+import { PanelLeft } from "lucide-react";
+import { startWindowDrag } from "../../lib/windowDrag";
+import shepMark from "../../assets/shep-mark.svg";
 import { useRepoStore } from "../../stores/useRepoStore";
 import { useCommandStore } from "../../stores/useCommandStore";
 import { useTerminalStore } from "../../stores/useTerminalStore";
@@ -19,8 +23,11 @@ import { useThemeApplicator } from "../../hooks/useThemeApplicator";
 import { useGitWatcher } from "../../hooks/useGitWatcher";
 import { computeTerminalSize } from "../../lib/terminalMeasure";
 import { listen } from "@tauri-apps/api/event";
-import { ask } from "@tauri-apps/plugin-dialog";
-import { getUsername, getComputerName, openInEditor, saveWorkspace, shutdownAndQuit, refreshUsageData } from "../../lib/tauri";
+import { ask, open } from "@tauri-apps/plugin-dialog";
+import { checkCommandExists, getUsername, getComputerName, getStorageWarning, openInEditor, saveWorkspace, refreshUsageData } from "../../lib/tauri";
+import { requestAppShutdown } from "../../lib/appLifecycle";
+import { chatAdapterAvailable } from "../../lib/acp/adapters";
+import { sessionResumeInterface } from "../../lib/sessionResume";
 import { useEditorStore } from "../../stores/useEditorStore";
 import { useTerminalSettingsStore } from "../../stores/useTerminalSettingsStore";
 import { useUsageStore } from "../../stores/useUsageStore";
@@ -30,9 +37,10 @@ import { useUpdateStore } from "../../stores/useUpdateStore";
 import { initNotifications } from "../../lib/notifications";
 import { getErrorMessage } from "../../lib/errors";
 import { useNoticeStore } from "../../stores/useNoticeStore";
-import type { ProjectActionKind } from "../shared/ProjectActionMenu";
+import type { ProjectActionKind } from "../../lib/types";
+import type { ProjectHandlers } from "../shared/useProjectMenu";
 
-import type { CommandConfig, CommandState, SessionHistoryEntry, TerminalTabData, UnifiedTab, SessionMode, WorkspaceConfig } from "../../lib/types";
+import { isSessionTab, type AgentInterface, type CommandConfig, type CommandState, type SessionHistoryEntry, type TerminalTabData, type UnifiedTab, type SessionMode, type WorkspaceConfig } from "../../lib/types";
 const LAST_REPO_STORAGE_KEY = "shep:last-repo-path";
 
 // Stable empty arrays to avoid infinite re-render loops with zustand v5's
@@ -46,8 +54,11 @@ const SessionLauncher = lazy(() => import("../session/SessionLauncher"));
 const UsagePanel = lazy(() => import("../usage/UsagePanel"));
 const PortsPanel = lazy(() => import("../ports/PortsPanel"));
 const HistoryPanel = lazy(() => import("../history/HistoryPanel"));
-const DiffSummaryPanel = lazy(() => import("../git/DiffSummaryPanel"));
+const ProjectsPanel = lazy(() => import("../projects/ProjectsPanel"));
+const ProjectSwitcher = lazy(() => import("../projects/ProjectSwitcher"));
+const Welcome = lazy(() => import("../projects/Welcome"));
 const TodosPanel = lazy(() => import("../todos/TodosPanel"));
+const ChatView = lazy(() => import("../chat/ChatView"));
 
 function toCommandConfig(command: CommandState): CommandConfig {
   return {
@@ -73,9 +84,11 @@ export default function AppShell() {
   const { repos, groups, activeRepoPath, fetchRepos, fetchGroups, openRepo, addRepo, removeRepo, renameGroup, deleteGroup, moveRepoToGroup } =
     useRepoStore();
   const activeConfig = useRepoStore((s) => s.activeConfig);
+  const repoLoadStatus = useRepoStore((s) => s.loadStatus);
+  const repoLoadError = useRepoStore((s) => s.loadError);
   const setActiveConfig = useRepoStore((s) => s.setActiveConfig);
   const pushNotice = useNoticeStore((s) => s.pushNotice);
-  const { startCommand, stopCommand, spawnBlankShell, launchAssistant, resumeAssistant, closeTab, killProjectPtys } =
+  const { startCommand, stopCommand, spawnBlankShell, runInTerminal, launchAssistant, resumeAssistant, closeTab, killProjectPtys } =
     usePty();
 
   const restoreAttemptedRef = useRef(false);
@@ -111,7 +124,7 @@ export default function AppShell() {
     const all: TerminalTabData[] = [];
     for (const ps of Object.values(projectState)) {
       for (const tab of ps.tabs) {
-        if (tab.kind === "terminal" || tab.kind === "assistant") {
+        if (isSessionTab(tab)) {
           all.push(tab);
         }
       }
@@ -158,14 +171,15 @@ export default function AppShell() {
   );
 
   const {
-    settingsActive, usagePanelActive, portsPanelActive, historyPanelActive, sidebarVisible, diffPanelVisible,
+    settingsActive, usagePanelActive, portsPanelActive, historyPanelActive, projectsPanelActive, projectSwitcherOpen, sidebarVisible,
   } = useUIStore(useShallow((s) => ({
     settingsActive: s.settingsActive,
     usagePanelActive: s.usagePanelActive,
     portsPanelActive: s.portsPanelActive,
     historyPanelActive: s.historyPanelActive,
+    projectsPanelActive: s.projectsPanelActive,
+    projectSwitcherOpen: s.projectSwitcherOpen,
     sidebarVisible: s.sidebarVisible,
-    diffPanelVisible: s.diffPanelVisible,
   })));
 
   // Derive which kind of local tab is active (for panel content rendering)
@@ -177,8 +191,11 @@ export default function AppShell() {
   const { loadSettings: loadUsageSettings } = useUsageSettingsStore.getState();
 
   useEffect(() => {
-    fetchRepos();
-    fetchGroups();
+    void fetchRepos();
+    void getStorageWarning().then((warning) => {
+      if (warning) pushNotice({ tone: "error", title: "History isn’t being saved", message: warning }, { durationMs: 0 });
+    }).catch((error) => pushNotice({ tone: "error", title: "Couldn’t check history storage", message: getErrorMessage(error) }));
+    void fetchGroups().catch((error) => pushNotice({ tone: "error", title: "Couldn’t load project groups", message: getErrorMessage(error) }));
     void loadEditorSettings();
     void loadProjectSettings();
     void loadTerminalSettings();
@@ -242,13 +259,17 @@ export default function AppShell() {
 
   const handleSelectRepo = useCallback(
     async (repoPath: string) => {
-      if (repoPath === activeRepoPath) return;
+      if (repoPath === activeRepoPath) {
+        useUIStore.getState().deactivateAllOverlays();
+        return;
+      }
 
       try {
         const isFirstVisit = !useCommandStore.getState().hasProject(repoPath);
 
         useUIStore.getState().deactivateAllOverlays();
         const config = await openRepo(repoPath);
+        void useRepoStore.getState().markOpened(repoPath).catch(() => {});
         restoreAttemptedRef.current = true;
         window.localStorage.setItem(LAST_REPO_STORAGE_KEY, repoPath);
         useTerminalStore.getState().switchProject(repoPath);
@@ -260,7 +281,7 @@ export default function AppShell() {
           for (const cmd of config.commands) {
             if (cmd.autostart) {
               const { cols, rows } = getTerminalDimensions();
-              await startCommand(cmd, cols, rows);
+              await startCommand(cmd, cols, rows, repoPath);
             }
           }
         }
@@ -275,30 +296,53 @@ export default function AppShell() {
     [activeRepoPath, openRepo, startCommand, getTerminalDimensions, pushNotice],
   );
 
+  /**
+   * Register a folder and open it. With a group, the project is filed there;
+   * otherwise a newly added project is pinned so it doesn't drop out of the
+   * sidebar as soon as you switch away. Resolves to the canonical path.
+   */
   const handleAddProject = useCallback(
-    async (repoPath: string) => {
+    async (repoPath: string, groupId: string | null = null): Promise<string | null> => {
       try {
         useUIStore.getState().deactivateAllOverlays();
+        const knownPaths = new Set(useRepoStore.getState().repos.map((repo) => repo.path));
         const config = await addRepo(repoPath);
         // addRepo sets activeRepoPath in the repo store, get the canonical path
         const canonicalPath = useRepoStore.getState().activeRepoPath;
-        if (!canonicalPath) return;
+        if (!canonicalPath) return null;
+        void useRepoStore.getState().markOpened(canonicalPath).catch(() => {});
         restoreAttemptedRef.current = true;
         window.localStorage.setItem(LAST_REPO_STORAGE_KEY, canonicalPath);
         useTerminalStore.getState().switchProject(canonicalPath);
         useCommandStore.getState().switchProject(canonicalPath);
         useCommandStore.getState().loadCommands(canonicalPath, config.commands);
         void useGitStore.getState().refreshStatus(canonicalPath);
+        if (groupId) {
+          await moveRepoToGroup(canonicalPath, groupId);
+        } else if (!knownPaths.has(canonicalPath)) {
+          await useRepoStore.getState().setPinned(canonicalPath, true);
+        }
+        return canonicalPath;
       } catch (error) {
         pushNotice({
           tone: "error",
           title: "Couldn’t add project",
           message: getErrorMessage(error),
         });
+        return null;
       }
     },
-    [addRepo, pushNotice],
+    [addRepo, moveRepoToGroup, pushNotice],
   );
+
+  const handlePickAndAddProject = useCallback(async (groupId: string | null = null) => {
+    try {
+      const selected = await open({ directory: true, multiple: false, title: "Select project folder" });
+      if (typeof selected === "string") await handleAddProject(selected, groupId);
+    } catch (error) {
+      pushNotice({ tone: "error", title: "Couldn’t add project", message: getErrorMessage(error) });
+    }
+  }, [handleAddProject, pushNotice]);
 
   const handleRemoveProject = useCallback(
     async (repoPath: string) => {
@@ -412,7 +456,7 @@ export default function AppShell() {
     const store = useTerminalStore.getState();
     store.setActiveTab(tabId);
     const tab = store.projectState[repoPath]?.tabs.find((entry) => entry.id === tabId);
-    if (tab && (tab.kind === "terminal" || tab.kind === "assistant")) {
+    if (tab && isSessionTab(tab)) {
       store.clearTabBell(tab.ptyId);
     }
   }, [activeRepoPath, handleSelectRepo]);
@@ -423,7 +467,7 @@ export default function AppShell() {
     if (!path) return;
     const tab = store.projectState[path]?.tabs.find((t) => t.id === tabId);
     if (!tab) return;
-    if (tab.kind === "terminal" || tab.kind === "assistant") {
+    if (isSessionTab(tab)) {
       closeTab(tabId);
     } else {
       store.removeTab(tabId);
@@ -434,11 +478,31 @@ export default function AppShell() {
     useTerminalStore.getState().addPanelTab("launcher");
   }, []);
 
+  const launchChat = useCallback(
+    async (options: Omit<Parameters<typeof startChat>[0], "assistant"> & { assistantId: string }) => {
+      const assistant = CODING_ASSISTANTS.find((entry) => entry.id === options.assistantId);
+      if (!assistant) return null;
+      try {
+        return await startChat({ ...options, assistant });
+      } catch (error) {
+        pushNotice({ tone: "error", title: `Couldn’t start ${assistant.name}`, message: getErrorMessage(error) });
+        return null;
+      }
+    },
+    [pushNotice],
+  );
+
   const handleStartSession = useCallback(
-    async (assistantId: string, mode: SessionMode, model?: string) => {
-      const { cols, rows } = getTerminalDimensions();
-      const ptyId = await launchAssistant(assistantId, cols, rows, mode, model);
-      if (ptyId) {
+    async (assistantId: string, mode: SessionMode, agentInterface: AgentInterface, model?: string) => {
+      const repoPath = useRepoStore.getState().activeRepoPath;
+      let sessionId: number | null | undefined;
+      if (agentInterface === "chat" && repoPath) {
+        sessionId = await launchChat({ assistantId, repoPath, mode, model });
+      } else {
+        const { cols, rows } = getTerminalDimensions();
+        sessionId = await launchAssistant(assistantId, cols, rows, mode, model);
+      }
+      if (sessionId) {
         // Remove the launcher panel tab — the new terminal tab is now active
         useTerminalStore.getState().removePanelTab("launcher");
         useUIStore.getState().deactivateAllOverlays();
@@ -446,7 +510,7 @@ export default function AppShell() {
       }
       return false;
     },
-    [launchAssistant, getTerminalDimensions],
+    [launchAssistant, launchChat, getTerminalDimensions],
   );
 
   const handleResumeSession = useCallback(
@@ -481,14 +545,48 @@ export default function AppShell() {
         return true;
       }
 
-      const { cols, rows } = getTerminalDimensions();
-      const ptyId = await resumeAssistant(session, cols, rows);
-      if (!ptyId) return false;
+      const assistant = CODING_ASSISTANTS.find((entry) => entry.id === session.provider);
+      const adapter = assistant?.acp;
+      let sessionId: number | null | undefined;
+      const [terminal, chat] = await Promise.all([
+        assistant ? checkCommandExists(assistant.command).catch(() => false) : Promise.resolve(false),
+        adapter ? chatAdapterAvailable(adapter) : Promise.resolve(false),
+      ]);
+      const target = sessionResumeInterface(session, { terminal, chat });
+      if (!target) {
+        pushNotice({ tone: "error", title: "Agent setup needed", message: `Set up ${assistant?.name ?? session.provider}${session.agentInterface === "chat" ? " chat" : ""} in a new tab before resuming.` });
+        return false;
+      }
+      if (target === "chat") {
+        sessionId = await launchChat({
+          assistantId: session.provider,
+          repoPath: session.projectPath,
+          mode: useProjectSettingsStore.getState().settings.defaultAgentMode,
+          resume: { sessionId: session.sessionId, title: session.title, startedAt: session.startedAt },
+        });
+      } else {
+        const { cols, rows } = getTerminalDimensions();
+        sessionId = await resumeAssistant(session, cols, rows);
+      }
+      if (!sessionId) return false;
       useUIStore.getState().deactivateAllOverlays();
       return true;
     },
-    [getTerminalDimensions, handleSelectRepo, pushNotice, resumeAssistant],
+    [getTerminalDimensions, handleSelectRepo, launchChat, pushNotice, resumeAssistant],
   );
+
+  /** From chat: start the same agent's CLI in a new tab, e.g. for an interactive slash command. */
+  const handleOpenAgentTerminal = useCallback((assistantId: string, mode: SessionMode | null) => {
+    useUIStore.getState().deactivateAllOverlays();
+    const { cols, rows } = getTerminalDimensions();
+    void launchAssistant(assistantId, cols, rows, mode ?? useProjectSettingsStore.getState().settings.defaultAgentMode);
+  }, [getTerminalDimensions, launchAssistant]);
+
+  const handleRunInTerminal = useCallback((script: string, label: string) => {
+    useUIStore.getState().deactivateAllOverlays();
+    const { cols, rows } = getTerminalDimensions();
+    void runInTerminal(script, label, cols, rows);
+  }, [getTerminalDimensions, runInTerminal]);
 
   const handleNewShell = useCallback(() => {
     useUIStore.getState().deactivateAllOverlays();
@@ -523,9 +621,12 @@ export default function AppShell() {
     }
   }, [getTerminalDimensions, handleSelectRepo, spawnBlankShell]);
 
-  const handleActiveProjectAction = useCallback((action: ProjectActionKind) => {
+  // From the launcher: open the tab, then retire the launcher like starting an agent does.
+  const handleLauncherOpen = useCallback(async (action: ProjectActionKind) => {
     const repoPath = useTerminalStore.getState().activeProjectPath;
-    if (repoPath) void handleProjectAction(repoPath, action);
+    if (!repoPath) return;
+    await handleProjectAction(repoPath, action);
+    useTerminalStore.getState().removePanelTab("launcher");
   }, [handleProjectAction]);
 
   const handleCreateCommand = useCallback(
@@ -610,6 +711,14 @@ export default function AppShell() {
     }
   }, [pushNotice]);
 
+  const projectHandlers = useMemo<ProjectHandlers>(() => ({
+    onAddProject: handleAddProject,
+    onPickAndAddProject: (groupId?: string | null) => void handlePickAndAddProject(groupId ?? null),
+    onRemoveProject: handleRemoveProject,
+    onOpenInEditor: (repoPath: string) => void handleOpenInEditor(repoPath),
+    onMoveToGroup: handleMoveToGroup,
+  }), [handleAddProject, handleRemoveProject, handleOpenInEditor, handleMoveToGroup]);
+
   useEffect(() => {
     if (restoreAttemptedRef.current || activeRepoPath || repos.length === 0) return;
 
@@ -626,23 +735,9 @@ export default function AppShell() {
   }, [repos, activeRepoPath, handleSelectRepo]);
 
   // Listen for backend "quit-requested" event (red close button or Cmd+Q with active PTYs)
-  const quitDialogOpenRef = useRef(false);
   useEffect(() => {
-    const unlisten = listen<number>("quit-requested", async (event) => {
-      if (quitDialogOpenRef.current) return;
-      quitDialogOpenRef.current = true;
-      try {
-        const count = event.payload;
-        const confirmed = await ask(
-          `Quit Shep and stop ${count} running session${count === 1 ? "" : "s"}?`,
-          { title: "Quit Shep", kind: "warning", okLabel: "Quit", cancelLabel: "Cancel" },
-        );
-        if (confirmed) {
-          await shutdownAndQuit();
-        }
-      } finally {
-        quitDialogOpenRef.current = false;
-      }
+    const unlisten = listen<number>("quit-requested", (event) => {
+      void requestAppShutdown(false, event.payload);
     });
     return () => { unlisten.then((f) => f()); };
   }, []);
@@ -665,6 +760,14 @@ export default function AppShell() {
           break;
         case "toggle_sidebar":
           useUIStore.getState().toggleSidebar();
+          break;
+        case "switch_project": {
+          const ui = useUIStore.getState();
+          ui.setProjectSwitcherOpen(!ui.projectSwitcherOpen);
+          break;
+        }
+        case "all_projects":
+          useUIStore.getState().toggleProjectsPanel();
           break;
         case "open_in_editor": {
           const repoPath = useTerminalStore.getState().activeProjectPath;
@@ -692,70 +795,53 @@ export default function AppShell() {
     return () => { unlisten.then((f) => f()); };
   }, [handleNewShell, handleNewAssistant, handleOpenInEditor, pushNotice]);
 
-  const showOverlay = settingsActive || usagePanelActive || portsPanelActive || historyPanelActive;
+  const showOverlay = settingsActive || usagePanelActive || portsPanelActive || historyPanelActive || projectsPanelActive;
 
   return (
     <div className="app-shell">
       <NoticeCenter />
-      <div
-        className="drag-region"
-        aria-hidden="true"
-        onMouseDown={(e) => {
-          if (e.buttons === 1) {
-            if (e.detail === 2) {
-              getCurrentWindow().toggleMaximize();
-            } else {
-              getCurrentWindow().startDragging();
-            }
-          }
-        }}
-      >
-        <div className="absolute right-4 top-1/2 -translate-y-1/2 flex items-center gap-0.5 z-20">
-          <button
-            onClick={(e) => { e.stopPropagation(); useUIStore.getState().toggleSidebar(); }}
-            onMouseDown={(e) => e.stopPropagation()}
-            className={`p-1 rounded transition-opacity hover:opacity-70 ${sidebarVisible ? "opacity-40" : "opacity-15"}`}
-            title={sidebarVisible ? "Hide sidebar (Cmd+B)" : "Show sidebar (Cmd+B)"}
-            aria-label={sidebarVisible ? "Hide sidebar" : "Show sidebar"}
-          >
-            <PanelLeft size={20} />
-          </button>
-          <button
-            onClick={(e) => { e.stopPropagation(); useUIStore.getState().toggleDiffPanel(); }}
-            onMouseDown={(e) => e.stopPropagation()}
-            className={`p-1 rounded transition-opacity hover:opacity-70 ${diffPanelVisible ? "opacity-40" : "opacity-15"}`}
-            title={diffPanelVisible ? "Hide diff panel" : "Show diff panel"}
-            aria-label={diffPanelVisible ? "Hide diff panel" : "Show diff panel"}
-          >
-            <PanelRight size={20} />
-          </button>
-        </div>
-      </div>
-
+      <TooltipLayer />
+      {projectSwitcherOpen && (
+        <Suspense fallback={null}>
+          <ProjectSwitcher
+            activeRepoPath={activeRepoPath}
+            onSelectRepo={(repoPath) => void handleSelectRepo(repoPath)}
+            onAddProject={() => void handlePickAndAddProject()}
+          />
+        </Suspense>
+      )}
       <div className="app-shell__frame">
+        <button
+          type="button"
+          className="icon-btn sidebar-toggle"
+          onClick={() => useUIStore.getState().toggleSidebar()}
+          title={`${sidebarVisible ? "Hide" : "Show"} sidebar (⌘B)`}
+          aria-label={sidebarVisible ? "Hide sidebar" : "Show sidebar"}
+          aria-pressed={sidebarVisible}
+        >
+          <PanelLeft size={16} aria-hidden="true" />
+        </button>
         {sidebarVisible && (
           <Sidebar
             repos={repos}
-            groups={groups}
             activeRepoPath={activeRepoPath}
             activeTabId={showOverlay ? null : activeTabId}
+            handlers={projectHandlers}
             onSelectRepo={handleSelectRepo}
-            onAddProject={handleAddProject}
-            onRemoveProject={handleRemoveProject}
-            onOpenInEditor={handleOpenInEditor}
-            onProjectAction={handleProjectAction}
             onSelectProjectTab={handleSelectSidebarProjectTab}
-            onRenameGroup={handleRenameGroup}
-            onDeleteGroup={handleDeleteGroup}
-            onMoveToGroup={handleMoveToGroup}
           />
         )}
 
         <div className="workspace-panel">
-          <TabBar
-            onClose={handleCloseTab}
-            onProjectAction={handleActiveProjectAction}
-          />
+          <div
+            className={`workspace-bar ${sidebarVisible ? "" : "workspace-bar--under-lights"}`}
+            onMouseDown={startWindowDrag}
+          >
+            <TabBar
+              onClose={handleCloseTab}
+              changesActive={!showOverlay && activeTab?.kind === "git"}
+            />
+          </div>
 
           <div ref={terminalContainerRef} className="terminal-stage">
             {/* Global overlays (Settings, History, Usage, Ports) */}
@@ -772,6 +858,17 @@ export default function AppShell() {
             {portsPanelActive && (
               <Suspense fallback={<PanelLoader />}>
                 <PortsPanel />
+              </Suspense>
+            )}
+            {projectsPanelActive && (
+              <Suspense fallback={<PanelLoader />}>
+                <ProjectsPanel
+                  activeRepoPath={activeRepoPath}
+                  handlers={projectHandlers}
+                  onSelectRepo={handleSelectRepo}
+                  onRenameGroup={handleRenameGroup}
+                  onDeleteGroup={handleDeleteGroup}
+                />
               </Suspense>
             )}
             {historyPanelActive && (
@@ -806,7 +903,7 @@ export default function AppShell() {
             )}
             {!showOverlay && activeTab?.kind === "launcher" && (
               <Suspense fallback={<PanelLoader />}>
-                <SessionLauncher onStartSession={handleStartSession} />
+                <SessionLauncher onStartSession={handleStartSession} onRunInTerminal={handleRunInTerminal} onOpen={(action) => void handleLauncherOpen(action)} onOpenInEditor={() => { if (activeRepoPath) void handleOpenInEditor(activeRepoPath); }} />
               </Suspense>
             )}
             {!showOverlay && activeTab?.kind === "todos" && (
@@ -815,13 +912,36 @@ export default function AppShell() {
               </Suspense>
             )}
 
-            {!showOverlay && !activeTab && tabs.length === 0 && (
-              <div className="terminal-empty">
-                {activeRepoPath
-                  ? "Launch an assistant or open a terminal"
-                  : "Select or add a project to begin"}
+            {/* A project with no tabs lands on its launcher; with no projects at all, welcome. */}
+            {!showOverlay && !activeTab && tabs.length === 0 && (activeRepoPath ? (
+              <Suspense fallback={<PanelLoader />}>
+                <SessionLauncher onStartSession={handleStartSession} onRunInTerminal={handleRunInTerminal} onOpen={(action) => void handleLauncherOpen(action)} onOpenInEditor={() => { if (activeRepoPath) void handleOpenInEditor(activeRepoPath); }} />
+              </Suspense>
+            ) : repoLoadStatus === "error" ? (
+              <div className="empty-state" role="alert">
+                <h2 className="empty-state__title">Couldn’t load projects</h2>
+                <p>{repoLoadError}</p>
+                <button className="btn-primary" onClick={() => void fetchRepos()}>Retry</button>
               </div>
-            )}
+            ) : repoLoadStatus !== "ready" ? (
+              <div className="terminal-empty" role="status">Loading projects…</div>
+            ) : repos.length === 0 ? (
+              <Suspense fallback={<PanelLoader />}>
+                <Welcome
+                  onAddFolder={(path) => void handleAddProject(path)}
+                  onChooseFolder={() => void handlePickAndAddProject()}
+                />
+              </Suspense>
+            ) : (
+              <div className="empty-state">
+                <img src={shepMark} alt="" className="empty-state__mark" />
+                <h2 className="empty-state__title">No project open</h2>
+                <p>Pick a project from the sidebar, or add another.</p>
+                <div className="empty-state__actions">
+                  <button className="btn-primary" onClick={() => void handlePickAndAddProject()}>Add project</button>
+                </div>
+              </div>
+            ))}
             {allTerminalTabs.map((tab) => (
               <div
                 key={tab.id}
@@ -833,23 +953,30 @@ export default function AppShell() {
                       : "none",
                 }}
               >
-                <TerminalErrorBoundary>
-                  <TerminalView
-                    ptyId={tab.ptyId}
-                    assistantId={tab.assistantId}
-                    visible={!showOverlay && tab.repoPath === activeProjectPath && tab.id === activeTabId}
-                  />
-                </TerminalErrorBoundary>
+                {tab.agentInterface === "chat" ? (
+                  <Suspense fallback={<PanelLoader />}>
+                    <ChatView
+                      chatId={tab.ptyId}
+                      assistantId={tab.assistantId}
+                      repoPath={tab.repoPath}
+                      fullAccess={tab.sessionMode === "yolo"}
+                      onOpenTerminal={tab.assistantId ? () => handleOpenAgentTerminal(tab.assistantId!, tab.sessionMode) : undefined}
+                    />
+                  </Suspense>
+                ) : (
+                  <TerminalErrorBoundary>
+                    <TerminalView
+                      ptyId={tab.ptyId}
+                      assistantId={tab.assistantId}
+                      visible={!showOverlay && tab.repoPath === activeProjectPath && tab.id === activeTabId}
+                    />
+                  </TerminalErrorBoundary>
+                )}
               </div>
             ))}
           </div>
         </div>
 
-        {diffPanelVisible && (
-          <Suspense fallback={null}>
-            <DiffSummaryPanel />
-          </Suspense>
-        )}
       </div>
     </div>
   );

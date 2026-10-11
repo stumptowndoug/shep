@@ -1,3 +1,5 @@
+import type { AgentInterface, SessionHistoryEntry } from "./types";
+
 const SESSION_RESUME_ARGS: Record<string, (sessionId: string) => string[]> = {
   claude: (sessionId) => ["--resume", sessionId],
   codex: (sessionId) => ["resume", sessionId],
@@ -14,4 +16,13 @@ export function sessionResumeArgs(provider: string, sessionId: string): string[]
 
 export function supportsSessionResume(provider: string): boolean {
   return provider in SESSION_RESUME_ARGS;
+}
+/** Chat and CLI session stores can differ, so a known interface must never be substituted. */
+export function sessionResumeInterface(
+  session: Pick<SessionHistoryEntry, "agentInterface">,
+  available: { chat: boolean; terminal: boolean },
+): AgentInterface | null {
+  if (session.agentInterface) return available[session.agentInterface] ? session.agentInterface : null;
+  // History without an interface predates chat support. Its IDs belong to the CLI.
+  return available.terminal ? "terminal" : null;
 }

@@ -1,39 +1,68 @@
 import { useState, useEffect, useRef, useMemo } from "react";
-import type { CodingAssistant, SessionMode } from "../../lib/types";
+import type { AgentInterface, CodingAssistant, ProjectActionKind, SessionMode } from "../../lib/types";
+import tabKindMeta from "../../lib/tabKindMeta";
 import { CODING_ASSISTANTS } from "../sidebar/constants";
-import { checkCommandExists, getModelsForProvider } from "../../lib/tauri";
+import { getModelsForProvider, installManagedAcpAdapter, revealInFinder } from "../../lib/tauri";
+import { chatAvailabilityKey, commandAvailabilityKey, useAgentAvailabilityStore } from "../../stores/useAgentAvailabilityStore";
+import { getErrorMessage } from "../../lib/errors";
 import { useRepoStore } from "../../stores/useRepoStore";
 import { usePiConfigStore } from "../../stores/usePiConfigStore";
 import { useProjectSettingsStore } from "../../stores/useProjectSettingsStore";
-import { HandMetal, ChevronDown, Check, Info, X } from "lucide-react";
+import { ArrowRight, Check, Copy, Download, FolderOpen, Info, MessageSquare, SquareTerminal, X } from "lucide-react";
+import { getEditorLabel } from "../../lib/editors";
+import EditorIcon from "../shared/EditorIcon";
+import { useEditorStore } from "../../stores/useEditorStore";
+import { useNoticeStore } from "../../stores/useNoticeStore";
+import Select from "../shared/Select";
+import OptionGroup from "../shared/OptionGroup";
 import { assistantLogoSrc, getAssistantLogoClass } from "../../lib/assistantLogos";
 import { ASSISTANT_INSTALL_URLS } from "../sidebar/constants";
 
+/** The other things a project can open, below the agents. */
+const OPEN_ACTIONS: { kind: Exclude<ProjectActionKind, "assistant">; description: string }[] = [
+  { kind: "terminal", description: "A shell here" },
+  { kind: "commands", description: "Servers and scripts" },
+  { kind: "git", description: "Changed files" },
+  { kind: "todos", description: "Project TODO.md" },
+];
+
 interface SessionLauncherProps {
+  /** Open a non-agent tab (terminal, commands, files, to-dos) in place of this page. */
+  onOpen: (action: Exclude<ProjectActionKind, "assistant">) => void;
+  /** Open the project in the preferred editor (or ask for one). */
+  onOpenInEditor: () => void;
+  /** Run a setup command (e.g. an adapter install) in a new terminal tab. */
+  onRunInTerminal: (script: string, label: string) => void;
   onStartSession: (
     assistantId: string,
     mode: SessionMode,
+    agentInterface: AgentInterface,
     model?: string,
   ) => Promise<boolean>;
 }
 
-export default function SessionLauncher({ onStartSession }: SessionLauncherProps) {
+export default function SessionLauncher({ onStartSession, onRunInTerminal, onOpen, onOpenInEditor }: SessionLauncherProps) {
+  const editorLabel = getEditorLabel(useEditorStore((s) => s.settings.preferredEditor));
   const activeRepoPath = useRepoStore((s) => s.activeRepoPath);
   const defaultAgentMode = useProjectSettingsStore((s) => s.settings.defaultAgentMode);
+  const defaultAgentInterface = useProjectSettingsStore((s) => s.settings.defaultAgentInterface);
 
   const [selectedAssistant, setSelectedAssistant] = useState<CodingAssistant | null>(null);
-  const [available, setAvailable] = useState<Record<string, boolean>>({});
+  const selectedAssistantRef = useRef<string | null>(null);
+  const availability = useAgentAvailabilityStore((s) => s.checks);
+  const refreshAvailability = useAgentAvailabilityStore((s) => s.refresh);
   const [installPopover, setInstallPopover] = useState<string | null>(null);
-  const [mode, setMode] = useState<SessionMode>(defaultAgentMode);
+  // Explicit picks override the project defaults for this launch only.
+  const [modeOverride, setMode] = useState<SessionMode | null>(null);
+  const [interfaceOverride, setAgentInterface] = useState<AgentInterface | null>(null);
+  const mode = modeOverride ?? defaultAgentMode;
   const [launching, setLaunching] = useState(false);
+  const [installingAdapter, setInstallingAdapter] = useState<string | null>(null);
+  const [adapterError, setAdapterError] = useState<{ assistantId: string; message: string } | null>(null);
 
   const [selectedModel, setSelectedModel] = useState<string | null>(null);
   const [availableModels, setAvailableModels] = useState<string[]>([]);
   const [modelFetchStatus, setModelFetchStatus] = useState<"idle" | "loading" | "loaded" | "error">("idle");
-  const [modelPickerOpen, setModelPickerOpen] = useState(false);
-  const [modelSearch, setModelSearch] = useState("");
-  const modelPickerRef = useRef<HTMLDivElement>(null);
-  const modelSearchRef = useRef<HTMLInputElement>(null);
   const modelRequestRef = useRef(0);
 
   const piConfig = usePiConfigStore((s) => s.config);
@@ -48,29 +77,26 @@ export default function SessionLauncher({ onStartSession }: SessionLauncherProps
   const [piKeyInputs, setPiKeyInputs] = useState({ provider: "", key: "" });
   const [piInfoOpen, setPiInfoOpen] = useState(false);
 
-  // Check which assistants are installed
+  // Keep shared results across launcher mounts; focus catches setup done outside
+  // Shep. Each probe publishes independently, without clearing known results.
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const results: Record<string, boolean> = {};
-      await Promise.all(
-        CODING_ASSISTANTS.map(async (a) => {
-          results[a.id] = await checkCommandExists(a.command).catch(() => false);
-        }),
-      );
-      if (!cancelled) setAvailable(results);
-    })();
-    return () => { cancelled = true; };
-  }, []);
+    const refresh = () => { void refreshAvailability(); };
+    refresh();
+    window.addEventListener("focus", refresh);
+    return () => window.removeEventListener("focus", refresh);
+  }, [refreshAvailability]);
 
   // Close install popover on outside click
   useEffect(() => {
     if (!installPopover) return;
     const handleClick = () => setInstallPopover(null);
+    const handleKeyDown = (event: KeyboardEvent) => { if (event.key === "Escape") setInstallPopover(null); };
+    document.addEventListener("keydown", handleKeyDown);
     const timer = setTimeout(() => document.addEventListener("mousedown", handleClick), 0);
     return () => {
       clearTimeout(timer);
       document.removeEventListener("mousedown", handleClick);
+      document.removeEventListener("keydown", handleKeyDown);
     };
   }, [installPopover]);
 
@@ -85,45 +111,35 @@ export default function SessionLauncher({ onStartSession }: SessionLauncherProps
     };
   }, [piInfoOpen]);
 
-  // Close model picker on outside click
-  useEffect(() => {
-    if (!modelPickerOpen) return;
-    const handleClick = (e: MouseEvent) => {
-      if (modelPickerRef.current && !modelPickerRef.current.contains(e.target as Node)) {
-        setModelPickerOpen(false);
-      }
-    };
-    const timer = setTimeout(() => document.addEventListener("mousedown", handleClick), 0);
-    return () => {
-      clearTimeout(timer);
-      document.removeEventListener("mousedown", handleClick);
-    };
-  }, [modelPickerOpen]);
-
-  const filteredModels = useMemo(() => {
+  const modelChoices = useMemo(() => {
     let models = availableModels;
     if (selectedAssistant?.id === "pi" && selectedPiProvider) {
       models = models.filter((m) => m.startsWith(`${selectedPiProvider}/`));
     }
-    if (!modelSearch) return models;
-    const q = modelSearch.toLowerCase();
-    return models.filter((m) => m.toLowerCase().includes(q));
-  }, [availableModels, modelSearch, selectedAssistant, selectedPiProvider]);
+    return [{ value: "", label: "Default" }, ...models.map((model) => ({ value: model, label: model }))];
+  }, [availableModels, selectedAssistant, selectedPiProvider]);
 
   const supportsModelSelection = (id: string) => id !== "pi" && id !== "opencode";
   const supportsMode = (id: string) => id !== "pi";
-
-  useEffect(() => {
-    setMode(defaultAgentMode);
-  }, [defaultAgentMode]);
+  const terminalCheck = selectedAssistant ? availability[commandAvailabilityKey(selectedAssistant.command)] : undefined;
+  const chatCheck = selectedAssistant?.acp ? availability[chatAvailabilityKey(selectedAssistant.acp)] : undefined;
+  const canChat = chatCheck?.available === true;
+  const canTerminal = terminalCheck?.available === true;
+  const chatUnknown = Boolean(selectedAssistant?.acp && chatCheck?.available === undefined);
+  const agentInterface: AgentInterface = terminalCheck?.available === false && (canChat || selectedAssistant?.acp?.managed) ? "chat"
+    : canChat || chatUnknown ? interfaceOverride ?? defaultAgentInterface : "terminal";
+  const chatUnavailableReason = selectedAssistant?.acp
+    ? chatUnknown ? chatCheck?.error ? "Couldn’t check chat availability" : "Checking chat availability…" : "Chat adapter not installed"
+    : `Chat isn’t available for ${selectedAssistant?.name ?? "this agent"} in Shep yet.`;
 
   const handleSelectAssistant = (assistant: CodingAssistant) => {
     const requestId = modelRequestRef.current + 1;
     modelRequestRef.current = requestId;
     setSelectedAssistant(assistant);
+    selectedAssistantRef.current = assistant.id;
+    setAdapterError(null);
     setSelectedModel(null);
     setSelectedPiProvider(null);
-    setModelPickerOpen(false);
     setAvailableModels([]);
     if (assistant.id === "pi" && !piHasLoaded) void loadPiConfig();
     if (!supportsModelSelection(assistant.id)) {
@@ -195,10 +211,12 @@ export default function SessionLauncher({ onStartSession }: SessionLauncherProps
     if (!selectedAssistant || !activeRepoPath || launching) return;
     setLaunching(true);
 
+    // Chat sessions pick their model in the composer, from the agent's own list.
     const started = await onStartSession(
       selectedAssistant.id,
       mode,
-      selectedModel ?? undefined,
+      agentInterface,
+      agentInterface === "terminal" ? selectedModel ?? undefined : undefined,
     );
     if (!started) {
       setLaunching(false);
@@ -206,18 +224,63 @@ export default function SessionLauncher({ onStartSession }: SessionLauncherProps
   };
 
   const supportsYolo = selectedAssistant?.yoloFlag != null;
+  const projectName = activeRepoPath?.split("/").filter(Boolean).pop() ?? null;
+  const [copied, setCopied] = useState(false);
+
+  const copyInstall = (command: string) => {
+    void navigator.clipboard.writeText(command).then(() => {
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    });
+  };
+
+  const setUpChat = (assistant: CodingAssistant) => {
+    if (!assistant.acp) return;
+    if (assistant.acp.managed) {
+      if (installingAdapter) return;
+      setAdapterError(null);
+      setInstallingAdapter(assistant.id);
+      void installManagedAcpAdapter(assistant.acp.managed).then(() => {
+        useAgentAvailabilityStore.getState().markChatInstalled(assistant.acp!);
+        if (selectedAssistantRef.current === assistant.id) setAgentInterface("chat");
+      }).catch(error => setAdapterError({ assistantId: assistant.id, message: getErrorMessage(error) }))
+        .finally(() => setInstallingAdapter(null));
+      return;
+    }
+    const script = [
+      `echo "Installing ${assistant.name}'s chat adapter"`,
+      `echo "+ ${assistant.acp.install}"`,
+      `${assistant.acp.install} && echo && echo "Done. Open a new tab again and choose Chat."`,
+      'exec "$SHELL" -l',
+    ].join("; ");
+    onRunInTerminal(script, `Set up ${assistant.name}`);
+  };
 
   return (
-    <div className="absolute inset-0 overflow-y-auto px-1 py-4">
-      <h2 className="section-label !p-0 mb-6">Agents</h2>
+    <div className="page page--narrow launcher">
+      <header className="page__heading">
+        {projectName && <div className="page__eyebrow">{projectName}</div>}
+        <h1 className="page__title">{selectedAssistant ? `Start ${selectedAssistant.name}.` : "Start."}</h1>
+        <p className="page__lede">
+          {selectedAssistant
+            ? "Choose how it runs, then start the session. Click the card again to pick something else."
+            : "Start an agent, or open something else for this project."}
+        </p>
+      </header>
 
       {/* Agent Picker */}
-      <div className="mb-6">
-        <label className="section-label !p-0 mb-3 block text-xs opacity-50">Agent</label>
-        <div className="flex flex-wrap gap-2">
+      <div className="page__section">
+        <label className="page__label">Agent</label>
+        <div className="agent-grid" role="group" aria-label="Choose an agent">
           {CODING_ASSISTANTS.map((assistant) => {
             const logoUrl = assistantLogoSrc[assistant.id];
-            const isAvailable = available[assistant.id] !== false;
+            const cli = availability[commandAvailabilityKey(assistant.command)];
+            const chat = assistant.acp ? availability[chatAvailabilityKey(assistant.acp)] : undefined;
+            const isAvailable = cli?.available !== false || Boolean(assistant.acp && chat?.available !== false) || Boolean(assistant.acp?.managed);
+            const checking = cli?.available === undefined || Boolean(assistant.acp && chat?.available === undefined);
+            const availabilityLabel = checking ? cli?.error || chat?.error ? "Couldn’t check availability" : "Checking…"
+              : !isAvailable ? "Set up agent" : chat?.available ? cli?.available ? "Chat & terminal" : "Chat"
+                : cli?.available ? "Terminal" : "Set up chat";
             const logoClassName = [getAssistantLogoClass(assistant.id), !isAvailable ? "logo-unavailable" : null]
               .filter(Boolean)
               .join(" ");
@@ -227,9 +290,15 @@ export default function SessionLauncher({ onStartSession }: SessionLauncherProps
             return (
               <div key={assistant.id} className="relative">
                 <button
-                  className={`option-card ${isSelected ? "selected" : ""} ${!isAvailable ? "opacity-40" : ""}`}
+                  className={`agent-choice ${isSelected ? "selected" : ""} ${!isAvailable ? "unavailable" : ""}`}
+                  aria-pressed={isSelected}
+                  aria-label={`${assistant.name}${!isAvailable ? " · not installed" : ""}`}
                   onClick={() => {
-                    if (isAvailable) {
+                    if (isSelected) {
+                      // A second click backs out, bringing the other choices back.
+                      setSelectedAssistant(null);
+                      selectedAssistantRef.current = null;
+                    } else if (isAvailable) {
                       handleSelectAssistant(assistant);
                       setInstallPopover(null);
                     } else {
@@ -237,31 +306,23 @@ export default function SessionLauncher({ onStartSession }: SessionLauncherProps
                     }
                   }}
                 >
-                  {logoUrl && <img src={logoUrl} alt="" width={18} height={18} className={logoClassName || undefined} />}
-                  <span>{assistant.name}</span>
+                  {logoUrl && <img src={logoUrl} alt="" width={22} height={22} className={logoClassName || undefined} />}
+                  <span className="agent-choice__body">
+                    <span className="agent-choice__name">{assistant.name}</span>
+                    <span className="agent-choice__meta">{availabilityLabel}</span>
+                  </span>
+                  {isSelected && <Check size={15} className="agent-choice__check" />}
                 </button>
                 {showPopover && installUrl && (
                   <div
-                    className="absolute left-0 top-full mt-2 z-50 rounded-lg p-3"
+                    className="popover absolute left-0 top-full mt-2 !p-3 text-xs"
                     onMouseDown={(e) => e.stopPropagation()}
-                    style={{
-                      background: "var(--glass-panel-strong)",
-                      border: "1px solid var(--glass-border-strong)",
-                      backdropFilter: "blur(24px) saturate(155%)",
-                      WebkitBackdropFilter: "blur(24px) saturate(155%)",
-                      boxShadow: "0 14px 36px rgba(0, 0, 0, 0.28)",
-                      minWidth: 200,
-                    }}
+                    style={{ minWidth: 220 }}
                   >
-                    <p className="text-xs mb-2" style={{ color: "var(--text-muted)" }}>
-                      <strong>{assistant.name}</strong> is not installed on this system.
+                    <p className="mb-2" style={{ color: "var(--muted)" }}>
+                      <strong style={{ color: "var(--fg)" }}>{assistant.name}</strong> isn’t installed.
                     </p>
-                    <code
-                      className="block text-xs mt-1 px-2 py-1 rounded select-all cursor-text"
-                      style={{ background: "rgba(255,255,255,0.06)", color: "rgb(122, 162, 247)" }}
-                    >
-                      {installUrl}
-                    </code>
+                    <code className="inline-code select-all">{installUrl}</code>
                   </div>
                 )}
               </div>
@@ -272,7 +333,7 @@ export default function SessionLauncher({ onStartSession }: SessionLauncherProps
 
       {/* Description + docs link for selected assistant */}
       {selectedAssistant && (selectedAssistant.description || selectedAssistant.docsUrl) && (
-        <div className="mb-6 text-xs" style={{ color: "var(--text-muted)" }}>
+        <div className="page__section page__note">
           {selectedAssistant.description && (
             <p className="leading-relaxed">{selectedAssistant.description}</p>
           )}
@@ -282,7 +343,7 @@ export default function SessionLauncher({ onStartSession }: SessionLauncherProps
               target="_blank"
               rel="noreferrer"
               className="mt-1 inline-block underline decoration-dotted"
-              style={{ color: "rgb(122, 162, 247)" }}
+              style={{ color: "var(--accent)" }}
             >
               Docs →
             </a>
@@ -292,9 +353,9 @@ export default function SessionLauncher({ onStartSession }: SessionLauncherProps
 
       {/* Pi provider picker */}
       {selectedAssistant?.id === "pi" && (
-        <div className="mb-6">
+        <div className="page__section">
           <div className="flex items-center gap-1.5 mb-3 relative">
-            <label className="section-label !p-0 block text-xs opacity-50">Provider</label>
+            <label className="page__label !m-0">Provider</label>
             <button
               type="button"
               onClick={() => setPiInfoOpen((o) => !o)}
@@ -305,20 +366,12 @@ export default function SessionLauncher({ onStartSession }: SessionLauncherProps
             </button>
             {piInfoOpen && (
               <div
-                className="absolute left-0 top-full mt-1 z-50 rounded-lg p-3 text-xs leading-relaxed"
-                style={{
-                  background: "var(--glass-panel-strong)",
-                  border: "1px solid var(--glass-border-strong)",
-                  backdropFilter: "blur(24px) saturate(155%)",
-                  WebkitBackdropFilter: "blur(24px) saturate(155%)",
-                  boxShadow: "0 14px 36px rgba(0, 0, 0, 0.28)",
-                  minWidth: 260,
-                  color: "var(--text-muted)",
-                }}
+                className="popover absolute left-0 top-full mt-1 !p-3 text-xs leading-relaxed"
+                style={{ minWidth: 260, color: "var(--muted)" }}
                 onMouseDown={(e) => e.stopPropagation()}
               >
                 <p className="mb-1"><strong style={{ color: "var(--text-primary)" }}>API keys are stored securely in macOS Keychain</strong></p>
-                <p>Provider config is written to <code style={{ color: "rgb(122, 162, 247)" }}>~/.pi/agent/auth.json</code> as a keychain reference that pi resolves at runtime — your key never sits in plaintext on disk.</p>
+                <p>Provider config is written to <code className="inline-code">~/.pi/agent/auth.json</code> as a keychain reference that pi resolves at runtime — your key never sits in plaintext on disk.</p>
               </div>
             )}
           </div>
@@ -365,7 +418,7 @@ export default function SessionLauncher({ onStartSession }: SessionLauncherProps
               placeholder="provider"
               value={piKeyInputs.provider}
               onChange={(e) => setPiKeyInputs((p) => ({ ...p, provider: e.target.value }))}
-              className="usage-provider-row__budget-input"
+              className="field-input"
               style={{ minWidth: 140 }}
             />
             <input
@@ -374,7 +427,7 @@ export default function SessionLauncher({ onStartSession }: SessionLauncherProps
               value={piKeyInputs.key}
               onChange={(e) => setPiKeyInputs((p) => ({ ...p, key: e.target.value }))}
               onKeyDown={(e) => { if (e.key === "Enter") void handleAddPiKey(); }}
-              className="usage-provider-row__budget-input"
+              className="field-input"
               style={{ minWidth: 220, fontFamily: "monospace" }}
             />
             <button
@@ -393,133 +446,158 @@ export default function SessionLauncher({ onStartSession }: SessionLauncherProps
         </div>
       )}
 
-      {/* Mode picker */}
-      {selectedAssistant && supportsMode(selectedAssistant.id) && (
-        <div className="mb-6">
-          <label className="section-label !p-0 mb-3 block text-xs opacity-50">Mode</label>
-          <div className="flex flex-wrap gap-2">
-            <button
-              className={`option-card ${mode === "standard" ? "selected" : ""}`}
-              onClick={() => setMode("standard")}
-            >
-              Standard
-            </button>
-            <button
-              className={`option-card ${mode === "yolo" ? "selected" : ""} ${!supportsYolo ? "opacity-40" : ""}`}
-              onClick={() => { if (supportsYolo) setMode("yolo"); }}
-              title={supportsYolo ? "Auto-accept mode" : `${selectedAssistant.name} does not support auto-accept`}
-            >
-              <HandMetal size={14} />
-              YOLO
-            </button>
-          </div>
+      {/* Interface picker */}
+      {selectedAssistant && (
+        <div className="page__section">
+          <label className="page__label">Interface</label>
+          <OptionGroup<AgentInterface>
+            label="Interface"
+            value={agentInterface}
+            onChange={setAgentInterface}
+            options={[
+              { value: "chat", label: "Chat", disabled: !canChat, title: canChat ? "A conversation with messages, tool calls, and changes" : chatUnavailableReason },
+              { value: "terminal", label: "Terminal", disabled: !canTerminal, title: canTerminal ? undefined : terminalCheck?.available === undefined ? "Checking terminal availability…" : "Install the agent’s CLI to use Terminal" },
+            ]}
+          />
+          <p className="field-note">{!selectedAssistant.acp
+            ? `${chatUnavailableReason} You can use Terminal.`
+            : agentInterface === "chat"
+              ? "A conversation with messages, tool calls, and changes."
+              : "The agent’s own command-line interface, in your workspace."}</p>
+          {selectedAssistant.acp && chatCheck?.available === false && (
+            <div className="callout mt-3">
+              <MessageSquare size={15} />
+              <div className="callout__body">
+                <div>Set up {selectedAssistant.name} to use chat.</div>
+                {selectedAssistant.acp.managed
+                  ? <p className="field-note">Downloads Google’s chat runtime. Sign in with your Google account when you start a chat.</p>
+                  : <code className="inline-code select-all">{selectedAssistant.acp.install}</code>}
+              </div>
+              <div className="callout__actions">
+                {!selectedAssistant.acp.managed && <button
+                  className="icon-btn"
+                  onClick={() => copyInstall(selectedAssistant.acp!.install)}
+                  title="Copy command"
+                  aria-label="Copy install command"
+                >
+                  {copied ? <Check size={15} /> : <Copy size={15} />}
+                </button>}
+                <button className="btn-secondary" disabled={Boolean(installingAdapter)} onClick={() => setUpChat(selectedAssistant)}>
+                  {selectedAssistant.acp.managed ? <Download size={14} /> : <SquareTerminal size={14} />}
+                  {installingAdapter === selectedAssistant.id ? "Installing…" : selectedAssistant.acp.managed ? "Install chat runtime" : "Set up in terminal"}
+                </button>
+              </div>
+            </div>
+          )}
+          {(chatCheck?.error || terminalCheck?.error) && (
+            <div className="callout mt-3" role="alert">
+              <div className="callout__body">Couldn’t check agent availability. {chatCheck?.error ?? terminalCheck?.error}</div>
+              <button className="btn-secondary" onClick={() => void refreshAvailability(true)}>Retry</button>
+            </div>
+          )}
+          {adapterError?.assistantId === selectedAssistant.id && <div className="command-form__error mt-3" role="alert">{adapterError.message}</div>}
         </div>
       )}
 
-      {/* Model selector */}
-      {selectedAssistant && supportsModelSelection(selectedAssistant.id) && (
-        <div className="mb-6">
-          <label className="section-label !p-0 mb-3 block text-xs opacity-50">Model</label>
-          <div className="relative" ref={modelPickerRef}>
-            <button
-              type="button"
-              onClick={() => {
-                setModelPickerOpen((open) => {
-                  const next = !open;
-                  if (next) {
-                    setModelSearch("");
-                    window.setTimeout(() => modelSearchRef.current?.focus(), 0);
-                  }
-                  return next;
-                });
-              }}
-              className="option-card option-card--compact justify-between"
-              aria-busy={modelFetchStatus === "loading"}
-              style={{ minWidth: 240 }}
-            >
-              <span className="truncate">
-                {modelFetchStatus === "loading" ? "Loading..." : selectedModel ?? "Default"}
-              </span>
-              <ChevronDown size={14} className="shrink-0 opacity-60" />
-            </button>
+      {/* Mode picker */}
+      {selectedAssistant && supportsMode(selectedAssistant.id) && (
+        <div className="page__section">
+          <label className="page__label">Permissions</label>
+          <OptionGroup<SessionMode>
+            label="Permissions"
+            value={mode}
+            onChange={setMode}
+            options={[
+              { value: "standard", label: "Standard" },
+              { value: "yolo", label: "YOLO", disabled: !supportsYolo, title: supportsYolo ? "Auto-accept mode" : `${selectedAssistant.name} does not support auto-accept` },
+            ]}
+          />
+          <p className="field-note">{mode === "yolo" ? "Edits files and runs commands without asking." : "Asks before making changes or running commands."}</p>
+        </div>
+      )}
 
-            {modelPickerOpen && (
-              <div className="font-picker-dropdown">
-                <input
-                  ref={modelSearchRef}
-                  type="text"
-                  value={modelSearch}
-                  onChange={(e) => setModelSearch(e.target.value)}
-                  placeholder="Search models..."
-                  className="font-picker-search"
-                  onKeyDown={(e) => {
-                    if (e.key === "Escape") setModelPickerOpen(false);
-                  }}
-                />
-                <div className="font-picker-list">
-                  {/* Default option — always first */}
-                  <button
-                    type="button"
-                    onClick={() => { setSelectedModel(null); setModelPickerOpen(false); }}
-                    className={`font-picker-item ${selectedModel === null ? "font-picker-item--active" : ""}`}
-                  >
-                    <Check
-                      size={14}
-                      className={`shrink-0 ${selectedModel === null ? "opacity-100" : "opacity-0"}`}
-                    />
-                    <span className="font-picker-item__name">Default</span>
-                  </button>
-
-                  {modelFetchStatus === "loading" && (
-                    <div className="font-picker-empty">Loading models...</div>
-                  )}
-                  {modelFetchStatus === "error" && (
-                    <div className="font-picker-empty">Could not load models - using default</div>
-                  )}
-                  {modelFetchStatus === "loaded" && availableModels.length === 0 && !modelSearch && (
-                    <div className="font-picker-empty">No models found - using default</div>
-                  )}
-                  {modelFetchStatus === "loaded" && filteredModels.length === 0 && modelSearch && (
-                    <div className="font-picker-empty">No matching models</div>
-                  )}
-                  {modelFetchStatus === "loaded" && filteredModels.map((model) => {
-                    const active = selectedModel === model;
-                    return (
-                      <button
-                        key={model}
-                        type="button"
-                        onClick={() => { setSelectedModel(model); setModelPickerOpen(false); }}
-                        className={`font-picker-item ${active ? "font-picker-item--active" : ""}`}
-                      >
-                        <Check
-                          size={14}
-                          className={`shrink-0 ${active ? "opacity-100" : "opacity-0"}`}
-                        />
-                        <span className="font-picker-item__name">{model}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-          </div>
+      {/* Model selector (chat sessions choose in the composer) */}
+      {selectedAssistant && agentInterface === "terminal" && supportsModelSelection(selectedAssistant.id) && (
+        <div className="page__section">
+          <label className="page__label">Model</label>
+          <Select
+            className="select--field"
+            value={selectedModel ?? ""}
+            choices={modelChoices}
+            onChange={(value) => setSelectedModel(value || null)}
+            placeholder={modelFetchStatus === "loading" ? "Loading…" : "Default"}
+            searchThreshold={8}
+            emptyLabel={modelFetchStatus === "error" ? "Could not load models" : "No models found"}
+          />
         </div>
       )}
 
       {/* Start Button */}
       {selectedAssistant && (
-        <div>
-          <label className="section-label !p-0 mb-3 block text-xs opacity-50">Start</label>
+        <div className="page__section">
           <button
-            className="btn-cta"
-            disabled={launching}
+            className="btn-primary"
+            disabled={launching || (agentInterface === "chat" ? !canChat : !canTerminal)}
             aria-busy={launching}
             onClick={handleStart}
           >
-            {launching ? "Starting..." : "Start Session"}
+            {launching ? "Starting…" : `Start ${selectedAssistant.name}`}
+            <ArrowRight size={14} />
           </button>
         </div>
       )}
+
+      {!selectedAssistant && <div className="page__section launcher__open">
+        <label className="page__label">Or open</label>
+        <div className="open-grid" role="group" aria-label="Open in this project">
+          {[
+            ...OPEN_ACTIONS.map(({ kind, description }) => ({
+              key: kind,
+              label: tabKindMeta[kind].label,
+              description,
+              icon: tabKindMeta[kind].icon(18),
+              shortcut: tabKindMeta[kind].shortcut,
+              onClick: () => onOpen(kind),
+            })),
+            // These open outside Shep, so the page stays put.
+            {
+              key: "editor",
+              label: "Editor",
+              description: editorLabel ? `Open in ${editorLabel}` : "Choose your editor",
+              icon: <EditorIcon size={18} />,
+              shortcut: "⌘E",
+              onClick: onOpenInEditor,
+            },
+            {
+              key: "finder",
+              label: "Finder",
+              description: "Show the folder",
+              icon: <FolderOpen size={18} />,
+              shortcut: undefined,
+              onClick: () => {
+                if (!activeRepoPath) return;
+                revealInFinder(activeRepoPath).catch((error) => {
+                  useNoticeStore.getState().pushNotice({ tone: "error", title: "Couldn’t open in Finder", message: getErrorMessage(error) });
+                });
+              },
+            },
+          ].map((action) => (
+            <button
+              key={action.key}
+              type="button"
+              className="agent-choice open-choice"
+              onClick={action.onClick}
+              title={action.shortcut ? `${action.label} (${action.shortcut})` : undefined}
+            >
+              <span className="open-choice__icon" aria-hidden="true">{action.icon}</span>
+              <span className="agent-choice__body">
+                <span className="agent-choice__name">{action.label}</span>
+                <span className="agent-choice__meta">{action.description}</span>
+              </span>
+            </button>
+          ))}
+        </div>
+      </div>}
     </div>
   );
 }

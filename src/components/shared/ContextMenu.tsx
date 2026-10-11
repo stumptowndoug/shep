@@ -22,6 +22,15 @@ interface ContextMenuProps {
 
 export default function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
+  const [previousFocus] = useState(() => document.activeElement instanceof HTMLElement ? document.activeElement : null);
+  const focusMenu = useCallback((element: HTMLDivElement | null) => {
+    menuRef.current = element;
+    if (!element) return;
+    element.querySelector<HTMLButtonElement>("button")?.focus();
+    return () => {
+      if (previousFocus?.isConnected && previousFocus.getClientRects().length) previousFocus.focus();
+    };
+  }, [previousFocus]);
 
   useEffect(() => {
     const el = menuRef.current;
@@ -57,11 +66,25 @@ export default function ContextMenu({ x, y, items, onClose }: ContextMenuProps) 
 
   return (
     <div
-      ref={menuRef}
+      ref={focusMenu}
       className="context-menu"
       style={{ left: x, top: y }}
       role="menu"
       aria-label="Context menu"
+      onKeyDown={(event) => {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          event.stopPropagation();
+          onClose();
+        } else if (["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
+          event.preventDefault();
+          const buttons = [...event.currentTarget.querySelectorAll<HTMLButtonElement>(":scope > button")];
+          const current = buttons.indexOf(document.activeElement as HTMLButtonElement);
+          const index = event.key === "Home" ? 0 : event.key === "End" ? buttons.length - 1
+            : (current + (event.key === "ArrowDown" ? 1 : -1) + buttons.length) % buttons.length;
+          buttons[index]?.focus();
+        }
+      }}
     >
       {items.map((item, index) => {
         if (item.separator) {

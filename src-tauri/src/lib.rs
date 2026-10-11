@@ -1,3 +1,5 @@
+mod acp;
+mod acp_runtime;
 mod agent_status;
 mod commands;
 mod fonts;
@@ -15,6 +17,7 @@ mod workspace;
 
 use tauri::{Emitter, Manager, RunEvent, WindowEvent};
 
+use acp::AcpManager;
 use pty::manager::PtyManager;
 use usage::UsageDb;
 use watcher::GitWatcher;
@@ -29,11 +32,23 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .manage(PtyManager::new())
+        .manage(AcpManager::new())
         .manage(WorkspaceManager::new())
         .manage(UsageDb::open().unwrap_or_else(|e| {
             eprintln!("Usage database failed to open ({e}), using in-memory fallback");
-            UsageDb::open_in_memory()
+            let mut db = UsageDb::open_in_memory();
+            db.storage_warning = Some(format!("Session history and usage are temporary and will be lost when Shep closes. Fix the storage problem and restart Shep. {e}"));
+            db
         }))
+        .on_page_load(|webview, payload| {
+            if webview.label() == "main"
+                && matches!(payload.event(), tauri::webview::PageLoadEvent::Started)
+            {
+                // The old page owns ACP protocol state; a replacement page cannot
+                // reconnect those transports. Remove them before it opens new chats.
+                webview.state::<AcpManager>().kill_all();
+            }
+        })
         .setup(|app| {
             // Run migration from old project-based config
             let workspace = app.state::<WorkspaceManager>();
@@ -72,7 +87,8 @@ pub fn run() {
                 if pty.is_shutting_down() {
                     return;
                 }
-                let count = pty.session_count();
+                let acp = window.state::<AcpManager>();
+                let count = pty.session_count() + acp.session_count();
                 if count > 0 {
                     api.prevent_close();
                     let _ = window.emit("quit-requested", count);
@@ -92,6 +108,10 @@ pub fn run() {
             commands::rename_group,
             commands::delete_group,
             commands::move_repo_to_group,
+            commands::set_group_pinned,
+            commands::suggest_project_folders,
+            commands::set_repo_pinned,
+            commands::mark_repo_opened,
             commands::get_editor_settings,
             commands::get_project_settings,
             commands::save_editor_settings,
@@ -103,6 +123,8 @@ pub fn run() {
             commands::list_monospace_families,
             commands::load_font_family,
             commands::open_in_editor,
+            commands::open_file_in_editor,
+            commands::read_markdown_file,
             commands::reveal_in_finder,
             commands::spawn_pty,
             commands::write_pty,
@@ -110,12 +132,18 @@ pub fn run() {
             commands::update_pty_color_theme,
             commands::resize_pty,
             commands::kill_pty,
+            commands::spawn_acp_agent,
+            commands::get_managed_acp_adapter,
+            commands::install_managed_acp_adapter,
+            commands::write_acp_agent,
+            commands::kill_acp_agent,
             commands::resolve_session_title,
             commands::get_agent_runtime_status,
             commands::upsert_session_history,
             commands::record_session_history_activity,
             commands::list_session_history,
             commands::get_pty_session_count,
+            commands::get_storage_warning,
             commands::shutdown_and_quit,
             commands::get_username,
             commands::get_home_directory,
@@ -131,8 +159,6 @@ pub fn run() {
             commands::git_status,
             commands::git_changed_files,
             commands::git_file_diff,
-            commands::git_file_contents,
-            commands::git_list_files,
             commands::git_stage_file,
             commands::git_stage_all,
             commands::git_commit,
@@ -141,6 +167,7 @@ pub fn run() {
             commands::git_switch_branch,
             commands::git_create_branch,
             commands::git_diff_stats,
+            commands::git_changes,
             commands::read_todos,
             commands::toggle_todo,
             commands::add_todo,
@@ -176,15 +203,22 @@ pub fn run() {
         if let RunEvent::ExitRequested { api, .. } = &event {
             let pty = app_handle.state::<PtyManager>();
             if pty.is_shutting_down() {
+                if !pty.can_exit() {
+                    api.prevent_exit();
+                }
                 return;
             }
-            let count = pty.session_count();
+            let acp = app_handle.state::<AcpManager>();
+            let count = pty.session_count() + acp.session_count();
+            api.prevent_exit();
             if count > 0 {
-                api.prevent_exit();
                 let _ = app_handle.emit("quit-requested", count);
             } else {
-                app_handle.state::<GitWatcher>().shutdown();
-                pty.kill_all();
+                // Closed tabs can still have termination workers in flight.
+                let app = app_handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    let _ = commands::shutdown_and_quit(app, None).await;
+                });
             }
         }
     });

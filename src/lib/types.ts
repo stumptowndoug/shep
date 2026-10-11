@@ -4,12 +4,16 @@ export interface RepoInfo {
   path: string;
   name: string;
   group: string | null;
+  pinned: boolean;
+  /** Milliseconds since the Unix epoch, or null if never opened. */
+  last_opened: number | null;
 }
 
 export interface RepoGroup {
   id: string;
   name: string;
   order: number;
+  pinned: boolean;
 }
 
 export interface CommandConfig {
@@ -44,6 +48,7 @@ export interface ProjectSettings {
   autoImportWorktrees: boolean;
   agentLabelMode: AgentLabelMode;
   defaultAgentMode: SessionMode;
+  defaultAgentInterface: AgentInterface;
   showTodos: boolean;
   /** Shape of a lazily created TODO.md. */
   todoFileStyle: TodoFileStyle;
@@ -97,6 +102,8 @@ export interface CommandState {
 }
 
 export type SessionMode = "standard" | "yolo";
+/** How an agent tab talks to its agent: a CLI in a terminal, or ACP chat. */
+export type AgentInterface = "terminal" | "chat";
 export type TerminalLabelSource = "default" | "terminal" | "session" | "user";
 
 // ── Unified tab model ──────────────────────────────────────────────
@@ -112,7 +119,10 @@ interface TabBase {
 
 export interface TerminalTabData extends TabBase {
   kind: "terminal" | "assistant";
+  /** Runtime session id. PTYs and ACP chat agents share one id space. */
   ptyId: number;
+  /** Assistant tabs only: "chat" renders an ACP conversation instead of xterm. */
+  agentInterface: AgentInterface;
   repoPath: string;
   commandName: string | null;
   assistantId: string | null;
@@ -123,6 +133,8 @@ export interface TerminalTabData extends TabBase {
 
 export interface SessionHistoryUpsert {
   provider: string;
+  /** Older history has no interface recorded; new sessions resume where they started. */
+  agentInterface?: AgentInterface | null;
   sessionId: string;
   projectPath: string;
   title: string | null;
@@ -146,14 +158,31 @@ export interface PanelTabData extends TabBase {
 
 export type UnifiedTab = TerminalTabData | PanelTabData;
 
+/** Tabs backed by a running session (PTY or ACP chat) rather than a panel. */
+export function isSessionTab(tab: UnifiedTab): tab is TerminalTabData {
+  return tab.kind === "terminal" || tab.kind === "assistant";
+}
+
+/** A git repo recently used with an agent CLI, offered on first run. */
+export interface FolderSuggestion {
+  path: string;
+  name: string;
+  /** Milliseconds since the Unix epoch. */
+  lastUsed: number;
+  agent: string;
+}
+
+/** Things a project can open in a new tab. */
+export type ProjectActionKind = "assistant" | "terminal" | "commands" | "git" | "todos";
+
 export function panelTabId(kind: PanelTabKind): string {
   return `panel-${kind}`;
 }
 
 export const panelTabDefaults: Record<PanelTabKind, { label: string }> = {
-  git: { label: "Files" },
+  git: { label: "Changes" },
   commands: { label: "Commands" },
-  launcher: { label: "New Agent" },
+  launcher: { label: "New tab" },
   todos: { label: "To-dos" },
 };
 
@@ -190,12 +219,25 @@ export interface AgentStatusObservation {
 
 // ── Coding assistants ───────────────────────────────────────────────
 
+export interface AcpAdapter {
+  command: string;
+  args: string[];
+  /** Shown when the adapter binary is missing. */
+  install: string;
+  /** Advertised authentication method to use before opening a session. */
+  authMethodId?: string;
+  /** Binary runtime installed into Shep's application data directory. */
+  managed?: "antigravity";
+}
+
 export interface CodingAssistant {
   id: string;
   name: string;
   command: string;
   yoloFlag: string | null;
   modelFlag: string;
+  /** Agent Client Protocol adapter, when the agent supports chat. */
+  acp?: AcpAdapter;
   description?: string;
   docsUrl?: string;
 }
@@ -274,6 +316,12 @@ export interface DiffFileStat {
   path: string;
   additions: number;
   deletions: number;
+}
+
+export interface GitChanges {
+  files: ChangedFile[];
+  stats: DiffFileStat[];
+  statsComplete: boolean;
 }
 
 // ── Git changed files ────────────────────────────────────────────────
@@ -458,10 +506,7 @@ export interface UsageBreakdownItem {
   tokensCacheRead: number;
   tokensCacheWrite: number;
   tokensThoughts: number;
-  cost: number | null;
-  costDetail: UsageCost;
   sessions: number | null;
-  trend: number[];
 }
 
 export interface UsageOverview {
@@ -470,7 +515,7 @@ export interface UsageOverview {
   totalCost: number | null;
   totalCostDetail: UsageCost;
   activeProjects: number;
-  activeSessions: number;
+  activeSessions: number | null;
   providers: UsageOverviewProvider[];
   trend: UsageTrendBucket[];
   topModels: UsageBreakdownItem[];

@@ -35,7 +35,7 @@ pub fn setup(app: &AppHandle<Wry>) -> tauri::Result<()> {
     let new_agent = MenuItem::with_id(
         app,
         "new_agent",
-        "New Agent Session",
+        "New Tab",
         true,
         Some("CmdOrCtrl+Shift+T"),
     )?;
@@ -49,7 +49,7 @@ pub fn setup(app: &AppHandle<Wry>) -> tauri::Result<()> {
     let new_git = MenuItem::with_id(
         app,
         "new_git",
-        "New Git Panel",
+        "Show Changes",
         true,
         Some("CmdOrCtrl+G"),
     )?;
@@ -93,8 +93,25 @@ pub fn setup(app: &AppHandle<Wry>) -> tauri::Result<()> {
         Some("CmdOrCtrl+B"),
     )?;
 
+    let switch_project = MenuItem::with_id(
+        app,
+        "switch_project",
+        "Switch Project…",
+        true,
+        Some("CmdOrCtrl+P"),
+    )?;
+    let all_projects = MenuItem::with_id(
+        app,
+        "all_projects",
+        "All Projects",
+        true,
+        Some("CmdOrCtrl+Shift+P"),
+    )?;
+
     let view_menu = SubmenuBuilder::new(app, "View")
         .item(&toggle_sidebar)
+        .item(&switch_project)
+        .item(&all_projects)
         .separator()
         .fullscreen()
         .build()?;

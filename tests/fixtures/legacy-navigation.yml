@@ -1,0 +1,13 @@
+version: 1
+repos:
+  - path: /preview/loose-project
+  - path: /preview/shep
+    group: workspace
+groups:
+  - id: workspace
+    name: Workspace
+    order: 0
+  - id: projects
+    name: Projects
+    order: 1
+    pinned: false

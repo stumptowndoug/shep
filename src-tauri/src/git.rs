@@ -1,6 +1,7 @@
-use std::collections::BTreeSet;
+use std::io::{BufRead, BufReader, Read};
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 #[derive(serde::Serialize, Clone, Default)]
 pub struct GitStatus {
@@ -16,8 +17,16 @@ pub struct GitStatus {
     pub worktree_parent: Option<String>,
 }
 
+/// Git for status and diff reads. Without this, those commands may rewrite the
+/// index, which retriggers the watcher and races agents' `git add` on index.lock.
+fn read_only_git() -> Command {
+    let mut command = Command::new("git");
+    command.env("GIT_OPTIONAL_LOCKS", "0");
+    command
+}
+
 pub fn status(path: &str) -> GitStatus {
-    let output = match Command::new("git")
+    let output = match read_only_git()
         .args(["-C", path, "status", "--porcelain=v2", "--branch"])
         .output()
     {
@@ -350,7 +359,7 @@ pub fn changed_files(path: &str) -> Result<Vec<ChangedFile>, String> {
     // single directory entry when a whole folder is untracked, and that
     // trailing-slash "folder" leaks into our file list. Gitignored files
     // inside the directory are still excluded.
-    let output = Command::new("git")
+    let output = read_only_git()
         .args([
             "-C",
             path,
@@ -479,146 +488,60 @@ fn status_letter(byte: u8) -> String {
     .to_string()
 }
 
-/// Maximum file size we'll return for preview. This is intentionally aligned
-/// with the frontend's practical rendering budget so we don't send giant file
-/// contents over IPC only to freeze the UI trying to paint them.
-const MAX_FILE_PREVIEW_BYTES: u64 = 200 * 1024; // 200 KB
+const MAX_DIFF_BYTES: usize = 200 * 1024;
+const MAX_DIFF_LINES: usize = 4_000;
+const DIFF_TIMEOUT: Duration = Duration::from_secs(5);
 
-fn decode_preview_bytes(bytes: Vec<u8>, file_path: &str) -> Result<String, String> {
-    String::from_utf8(bytes)
-        .map_err(|_| format!("Binary or non-UTF-8 file cannot be previewed: {file_path}"))
-}
-
-/// List all files known to git in this repo — tracked files plus untracked
-/// files that aren't gitignored. Uses the same flags `git status` uses
-/// internally, so the result matches what a user would consider "files in
-/// the project" (no node_modules, target/, etc.). We also include root-level
-/// `.env`, `.env.*`, and `.envrc` files so common local config remains
-/// inspectable even when ignored by git.
-pub fn list_files(path: &str) -> Result<Vec<String>, String> {
-    let output = Command::new("git")
-        .args([
-            "-C",
-            path,
-            "ls-files",
-            "--cached",
-            "--others",
-            "--exclude-standard",
-        ])
-        .output()
+fn bounded_diff(path: &str, args: &[&str]) -> Result<String, String> {
+    let mut child = read_only_git()
+        .args(["-C", path, "diff", "--no-ext-diff", "--no-textconv", "--no-color"])
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn().map_err(|e| e.to_string())?;
+    let stdout = child.stdout.take().ok_or("Git output unavailable")?;
+    let (tx, rx) = std::sync::mpsc::channel();
+    let reader = std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        let result = stdout.take((MAX_DIFF_BYTES + 1) as u64).read_to_end(&mut bytes).map(|_| bytes);
+        let _ = tx.send(result);
+    });
+    let result = rx.recv_timeout(DIFF_TIMEOUT);
+    if !matches!(&result, Ok(Ok(bytes)) if bytes.len() <= MAX_DIFF_BYTES) {
+        let _ = child.kill();
+    }
+    let status = child.wait().map_err(|e| e.to_string());
+    let _ = reader.join();
+    let bytes = result.map_err(|_| "Diff took too long. Open this file in your editor.".to_string())?
         .map_err(|e| e.to_string())?;
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).to_string());
+    if bytes.len() > MAX_DIFF_BYTES {
+        return Err("Diff is too large to preview. Open this file in your editor.".into());
     }
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let mut files = stdout
-        .lines()
-        .map(|s| s.to_string())
-        .collect::<BTreeSet<_>>();
-
-    if let Ok(entries) = std::fs::read_dir(path) {
-        for entry in entries.flatten() {
-            let file_name = entry.file_name();
-            let Some(name) = file_name.to_str() else { continue };
-            if !is_root_env_file(name) {
-                continue;
-            }
-            let Ok(file_type) = entry.file_type() else { continue };
-            if !file_type.is_file() {
-                continue;
-            }
-            files.insert(name.to_string());
-        }
+    // --no-index returns 1 for differences.
+    let code = status?.code();
+    if code != Some(0) && !(code == Some(1) && args.contains(&"--no-index")) {
+        return Err("Git could not read this diff. Refresh Changes or open the file in your editor.".into());
     }
-
-    Ok(files.into_iter().collect())
-}
-
-fn is_root_env_file(name: &str) -> bool {
-    name == ".env" || name == ".envrc" || name.starts_with(".env.")
-}
-
-/// Read a file's contents for preview in the file-viewer mode. `source`
-/// selects which version:
-/// - "working" — read from the working tree (on disk)
-/// - "staged"  — read from the git index (`git show :path`)
-/// - "head"    — read from HEAD (`git show HEAD:path`), used for deleted files
-pub fn file_contents(path: &str, file_path: &str, source: &str) -> Result<String, String> {
-    match source {
-        "working" => {
-            let full_path = std::path::Path::new(path).join(file_path);
-            let metadata = std::fs::metadata(&full_path)
-                .map_err(|e| format!("Cannot read {file_path}: {e}"))?;
-            if metadata.len() > MAX_FILE_PREVIEW_BYTES {
-                return Err(format!(
-                    "File too large to preview ({} bytes, limit {})",
-                    metadata.len(),
-                    MAX_FILE_PREVIEW_BYTES
-                ));
-            }
-            let bytes = std::fs::read(&full_path)
-                .map_err(|e| format!("Cannot read {file_path}: {e}"))?;
-            decode_preview_bytes(bytes, file_path)
-        }
-        "staged" | "head" => {
-            let spec = if source == "staged" {
-                format!(":{file_path}")
-            } else {
-                format!("HEAD:{file_path}")
-            };
-            let output = Command::new("git")
-                .args(["-C", path, "show", &spec])
-                .output()
-                .map_err(|e| e.to_string())?;
-            if !output.status.success() {
-                return Err(String::from_utf8_lossy(&output.stderr).to_string());
-            }
-            if (output.stdout.len() as u64) > MAX_FILE_PREVIEW_BYTES {
-                return Err(format!(
-                    "File too large to preview ({} bytes, limit {})",
-                    output.stdout.len(),
-                    MAX_FILE_PREVIEW_BYTES
-                ));
-            }
-            decode_preview_bytes(output.stdout, file_path)
-        }
-        _ => Err(format!("Unknown source: {source}")),
+    let text = String::from_utf8_lossy(&bytes).to_string();
+    if text.lines().count() > MAX_DIFF_LINES || text.lines().any(|line| line.len() > 4_000) {
+        return Err("Diff is too large to preview. Open this file in your editor.".into());
     }
+    Ok(text)
 }
 
 pub fn file_diff(path: &str, file_path: &str, staged: bool) -> Result<String, String> {
-    let output = if staged {
-        Command::new("git")
-            .args(["-C", path, "diff", "--cached", "--", file_path])
-            .output()
-            .map_err(|e| e.to_string())?
-    } else {
-        // Try normal diff first
-        let result = Command::new("git")
-            .args(["-C", path, "diff", "--", file_path])
-            .output()
-            .map_err(|e| e.to_string())?;
-
-        if result.status.success() && result.stdout.is_empty() {
-            // Might be untracked — use diff against /dev/null
-            Command::new("git")
-                .args([
-                    "-C",
-                    path,
-                    "diff",
-                    "--no-index",
-                    "/dev/null",
-                    file_path,
-                ])
-                .output()
-                .map_err(|e| e.to_string())?
-        } else {
-            result
-        }
-    };
-
-    // --no-index returns exit code 1 for differences, which is normal
-    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    if staged {
+        return bounded_diff(path, &["--cached", "--", file_path]);
+    }
+    let result = bounded_diff(path, &["--", file_path])?;
+    if result.starts_with("diff --cc ") || result.starts_with("diff --combined ") {
+        // The renderer accepts unified patches, not Git's combined conflict format.
+        return bounded_diff(path, &["--ours", "--", file_path]);
+    }
+    if result.is_empty() && changed_files(path)?.iter().any(|file| file.path == file_path && file.area == "untracked") {
+        return bounded_diff(path, &["--no-index", "--", "/dev/null", file_path]);
+    }
+    Ok(result)
 }
 
 // ── Per-file diff stats ──────────────────────────────────────────────
@@ -628,6 +551,14 @@ pub struct DiffFileStat {
     pub path: String,
     pub additions: u32,
     pub deletions: u32,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitChanges {
+    pub files: Vec<ChangedFile>,
+    pub stats: Vec<DiffFileStat>,
+    pub stats_complete: bool,
 }
 
 fn parse_numstat_line(line: &str, fallback_path: Option<&str>) -> Option<DiffFileStat> {
@@ -649,7 +580,12 @@ fn parse_numstat_line(line: &str, fallback_path: Option<&str>) -> Option<DiffFil
 /// --numstat` (all changes vs HEAD) so staged and unstaged changes are combined.
 /// Falls back to `--cached` on repos with no HEAD yet (first commit pending).
 pub fn diff_stats(path: &str) -> Result<Vec<DiffFileStat>, String> {
-    let output = Command::new("git")
+    Ok(changes(path)?.stats)
+}
+
+pub fn changes(path: &str) -> Result<GitChanges, String> {
+    let files = changed_files(path)?;
+    let output = read_only_git()
         .args(["-C", path, "diff", "HEAD", "--numstat"])
         .output()
         .map_err(|e| e.to_string())?;
@@ -657,12 +593,12 @@ pub fn diff_stats(path: &str) -> Result<Vec<DiffFileStat>, String> {
     let stdout = if output.status.success() {
         String::from_utf8_lossy(&output.stdout).to_string()
     } else {
-        let cached = Command::new("git")
+        let cached = read_only_git()
             .args(["-C", path, "diff", "--cached", "--numstat"])
             .output()
             .map_err(|e| e.to_string())?;
         if !cached.status.success() {
-            return Ok(vec![]);
+            return Err("Git could not calculate change totals".into());
         }
         String::from_utf8_lossy(&cached.stdout).to_string()
     };
@@ -672,36 +608,44 @@ pub fn diff_stats(path: &str) -> Result<Vec<DiffFileStat>, String> {
         .filter_map(|line| parse_numstat_line(line, None))
         .collect();
 
-    for file in changed_files(path)?
-        .into_iter()
-        .filter(|file| file.area == "untracked")
-    {
-        let output = Command::new("git")
-            .args([
-                "-C",
-                path,
-                "diff",
-                "--no-index",
-                "--numstat",
-                "/dev/null",
-                &file.path,
-            ])
-            .output()
-            .map_err(|e| e.to_string())?;
-
-        if output.stdout.is_empty() {
-            continue;
+    // Count untracked text directly instead of launching a process for every file.
+    // Bound each scan and the aggregate work; disclose incomplete totals to the UI.
+    let deadline = Instant::now() + Duration::from_secs(1);
+    let mut budget = 32 * 1024 * 1024u64;
+    let mut stats_complete = true;
+    for file in files.iter().filter(|file| file.area == "untracked") {
+        let full_path = Path::new(path).join(&file.path);
+        let count = if Instant::now() < deadline { untracked_lines(&full_path, &mut budget) } else { None };
+        match count {
+            Some(additions) => stats.push(DiffFileStat { path: file.path.clone(), additions, deletions: 0 }),
+            None => stats_complete = false,
         }
-
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        stats.extend(
-            stdout
-                .lines()
-                .filter_map(|line| parse_numstat_line(line, Some(&file.path))),
-        );
     }
 
-    Ok(stats)
+    Ok(GitChanges { files, stats, stats_complete })
+}
+
+fn untracked_lines(path: &Path, budget: &mut u64) -> Option<u32> {
+    let metadata = std::fs::symlink_metadata(path).ok()?;
+    if metadata.file_type().is_symlink() { return Some(1); }
+    if !metadata.is_file() || metadata.len() > 8 * 1024 * 1024 || metadata.len() > *budget { return None; }
+    let mut reader = BufReader::new(std::fs::File::open(path).ok()?.take(metadata.len() + 1));
+    let mut count = 0;
+    let mut last = None;
+    let mut read = 0;
+    loop {
+        let chunk = reader.fill_buf().ok()?;
+        if chunk.is_empty() { break; }
+        if chunk.contains(&0) { return Some(0); }
+        let len = chunk.len();
+        read += len as u64;
+        if read > metadata.len() { return None; }
+        count += chunk.iter().filter(|&&byte| byte == b'\n').count() as u32;
+        last = chunk.last().copied();
+        reader.consume(len);
+    }
+    *budget = budget.saturating_sub(read);
+    Some(count + u32::from(last.is_some() && last != Some(b'\n')))
 }
 
 pub fn stage_file(path: &str, file_path: &str) -> Result<(), String> {
@@ -793,4 +737,83 @@ pub fn create_branch(path: &str, branch_name: &str) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod review_tests {
+    use super::*;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
+
+    struct Repo(PathBuf);
+    impl Repo {
+        fn new() -> Self {
+            let path = std::env::temp_dir().join(format!("shep-git-review-{}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+            std::fs::create_dir(&path).unwrap();
+            let repo = Self(path);
+            repo.git(&["init", "-q", "-b", "main"]);
+            repo
+        }
+        fn path(&self) -> &str { self.0.to_str().unwrap() }
+        fn git(&self, args: &[&str]) {
+            assert!(Command::new("git").args(["-C", self.path(), "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid"])
+                .args(args).env("GIT_CONFIG_GLOBAL", "/dev/null").env("GIT_CONFIG_NOSYSTEM", "1").output().unwrap().status.success());
+        }
+        fn write(&self, file: &str, text: &[u8]) { std::fs::write(self.0.join(file), text).unwrap(); }
+    }
+    impl Drop for Repo { fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.0); } }
+
+    #[test]
+    fn bounded_diffs_cover_tracked_staged_and_untracked_files() {
+        let repo = Repo::new();
+        repo.write("file.txt", b"before\n");
+        repo.git(&["add", "."]);
+        repo.git(&["commit", "-qm", "base"]);
+        repo.write("file.txt", b"after\n");
+        assert!(file_diff(repo.path(), "file.txt", false).unwrap().contains("+after"));
+        repo.git(&["add", "."]);
+        assert!(file_diff(repo.path(), "file.txt", true).unwrap().contains("+after"));
+        assert!(file_diff(repo.path(), "file.txt", false).unwrap().is_empty());
+        repo.write("new.txt", b"new\n");
+        assert!(file_diff(repo.path(), "new.txt", false).unwrap().contains("+new"));
+        repo.write("huge.txt", &vec![b'x'; MAX_DIFF_BYTES + 1]);
+        assert!(file_diff(repo.path(), "huge.txt", false).unwrap_err().contains("too large"));
+        repo.write("many-lines.txt", "x\n".repeat(MAX_DIFF_LINES + 1).as_bytes());
+        assert!(file_diff(repo.path(), "many-lines.txt", false).unwrap_err().contains("too large"));
+    }
+
+    #[test]
+    fn untracked_stats_count_text_and_disclose_scan_limits() {
+        let repo = Repo::new();
+        repo.write("new.txt", b"one\ntwo");
+        repo.write("binary", b"\0binary");
+        let snapshot = changes(repo.path()).unwrap();
+        assert!(snapshot.stats_complete);
+        assert_eq!(snapshot.stats.iter().find(|s| s.path == "new.txt").unwrap().additions, 2);
+        assert_eq!(snapshot.stats.iter().find(|s| s.path == "binary").unwrap().additions, 0);
+        let large = std::fs::File::create(repo.0.join("large")).unwrap();
+        large.set_len(9 * 1024 * 1024).unwrap();
+        assert!(!changes(repo.path()).unwrap().stats_complete);
+    }
+
+    #[test]
+    fn merge_conflicts_return_unified_hunks_with_conflict_markers() {
+        let repo = Repo::new();
+        repo.write("conflict.txt", b"base\n");
+        repo.git(&["add", "."]);
+        repo.git(&["commit", "-qm", "base"]);
+        repo.git(&["checkout", "-qb", "other"]);
+        repo.write("conflict.txt", b"theirs\n");
+        repo.git(&["commit", "-qam", "other"]);
+        repo.git(&["checkout", "-q", "main"]);
+        repo.write("conflict.txt", b"ours\n");
+        repo.git(&["commit", "-qam", "ours"]);
+        let merge = Command::new("git").args(["-C", repo.path(), "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "merge", "other"]).output().unwrap();
+        assert!(!merge.status.success());
+        let diff = file_diff(repo.path(), "conflict.txt", false).unwrap();
+        assert!(diff.contains("@@ -"), "{diff}");
+        assert!(diff.contains("+<<<<<<<"), "{diff}");
+        assert!(!diff.contains("@@@"));
+    }
 }
