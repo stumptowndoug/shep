@@ -35,7 +35,7 @@ pub fn setup(app: &AppHandle<Wry>) -> tauri::Result<()> {
     let new_agent = MenuItem::with_id(
         app,
         "new_agent",
-        "New Agent Session",
+        "New Tab",
         true,
         Some("CmdOrCtrl+Shift+T"),
     )?;

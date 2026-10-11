@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from "react";
-import type { AgentInterface, CodingAssistant, SessionMode } from "../../lib/types";
+import type { AgentInterface, CodingAssistant, ProjectActionKind, SessionMode } from "../../lib/types";
+import tabKindMeta from "../../lib/tabKindMeta";
 import { CODING_ASSISTANTS } from "../sidebar/constants";
 import { checkCommandExists, getModelsForProvider, installManagedAcpAdapter } from "../../lib/tauri";
 import { chatAdapterAvailable } from "../../lib/acp/adapters";
@@ -13,7 +14,17 @@ import OptionGroup from "../shared/OptionGroup";
 import { assistantLogoSrc, getAssistantLogoClass } from "../../lib/assistantLogos";
 import { ASSISTANT_INSTALL_URLS } from "../sidebar/constants";
 
+/** The other things a project can open, below the agents. */
+const OPEN_ACTIONS: { kind: Exclude<ProjectActionKind, "assistant">; description: string }[] = [
+  { kind: "terminal", description: "A shell in this project" },
+  { kind: "commands", description: "Dev servers and scripts" },
+  { kind: "git", description: "Browse and review changes" },
+  { kind: "todos", description: "This project's TODO.md" },
+];
+
 interface SessionLauncherProps {
+  /** Open a non-agent tab (terminal, commands, files, to-dos) in place of this page. */
+  onOpen: (action: Exclude<ProjectActionKind, "assistant">) => void;
   /** Run a setup command (e.g. an adapter install) in a new terminal tab. */
   onRunInTerminal: (script: string, label: string) => void;
   onStartSession: (
@@ -24,7 +35,7 @@ interface SessionLauncherProps {
   ) => Promise<boolean>;
 }
 
-export default function SessionLauncher({ onStartSession, onRunInTerminal }: SessionLauncherProps) {
+export default function SessionLauncher({ onStartSession, onRunInTerminal, onOpen }: SessionLauncherProps) {
   const activeRepoPath = useRepoStore((s) => s.activeRepoPath);
   const defaultAgentMode = useProjectSettingsStore((s) => s.settings.defaultAgentMode);
   const defaultAgentInterface = useProjectSettingsStore((s) => s.settings.defaultAgentInterface);
@@ -245,7 +256,7 @@ export default function SessionLauncher({ onStartSession, onRunInTerminal }: Ses
     const script = [
       `echo "Installing ${assistant.name}'s chat adapter"`,
       `echo "+ ${assistant.acp.install}"`,
-      `${assistant.acp.install} && echo && echo "Done. Open New agent again and choose Chat."`,
+      `${assistant.acp.install} && echo && echo "Done. Open a new tab again and choose Chat."`,
       'exec "$SHELL" -l',
     ].join("; ");
     onRunInTerminal(script, `Set up ${assistant.name}`);
@@ -254,7 +265,7 @@ export default function SessionLauncher({ onStartSession, onRunInTerminal }: Ses
   return (
     <div className="page page--narrow launcher">
       <header className="page__heading">
-        <div className="page__eyebrow">New session{projectName ? ` · ${projectName}` : ""}</div>
+        <div className="page__eyebrow">New tab{projectName ? ` · ${projectName}` : ""}</div>
         <h1 className="page__title">Start an agent.</h1>
         <p className="page__lede">
           Choose your agent, then give it something to work on.
@@ -525,6 +536,25 @@ export default function SessionLauncher({ onStartSession, onRunInTerminal }: Ses
           </button>
         </div>
       )}
+
+      <div className="page__section launcher__open">
+        <label className="page__label">Open</label>
+        <div className="open-grid" role="group" aria-label="Open in this project">
+          {OPEN_ACTIONS.map(({ kind, description }) => {
+            const meta = tabKindMeta[kind];
+            return (
+              <button key={kind} type="button" className="agent-choice open-choice" onClick={() => onOpen(kind)}>
+                <span className="open-choice__icon" aria-hidden="true">{meta.icon(18)}</span>
+                <span className="agent-choice__body">
+                  <span className="agent-choice__name">{meta.label}</span>
+                  <span className="agent-choice__meta">{description}</span>
+                </span>
+                {meta.shortcut && <kbd className="open-choice__kbd">{meta.shortcut}</kbd>}
+              </button>
+            );
+          })}
+        </div>
+      </div>
     </div>
   );
 }

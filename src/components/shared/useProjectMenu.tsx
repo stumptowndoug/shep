@@ -15,7 +15,10 @@ const EMPTY_SKILLS: never[] = [];
 
 /** Project operations owned by AppShell, shared by the sidebar and Projects page. */
 export interface ProjectHandlers {
-  onAddProject: (repoPath: string) => Promise<void>;
+  /** Resolves to the canonical path, or null if it couldn't be added. */
+  onAddProject: (repoPath: string, groupId?: string | null) => Promise<string | null>;
+  /** Choose a folder and add it, optionally straight into a group. */
+  onPickAndAddProject: (groupId?: string | null) => void;
   onRemoveProject: (repoPath: string) => void;
   onOpenInEditor: (repoPath: string) => void;
   onMoveToGroup: (repoPath: string, groupId: string | null) => Promise<void>;
@@ -110,8 +113,7 @@ export function useProjectMenu(repo: RepoInfo, handlers: ProjectHandlers) {
     try {
       if (prompt.kind === "worktree") {
         const created = await gitCreateWorktree(repo.path, value);
-        await handlers.onAddProject(created.path);
-        if (repo.group) await handlers.onMoveToGroup(created.path, repo.group);
+        await handlers.onAddProject(created.path, repo.group);
       } else {
         const group = await useRepoStore.getState().createGroup(value);
         await handlers.onMoveToGroup(repo.path, group.id);

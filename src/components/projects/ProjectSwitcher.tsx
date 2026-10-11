@@ -18,11 +18,13 @@ interface ProjectSwitcherProps {
 }
 
 /** Higher is better; null means no match. */
-function matchScore(query: string, repo: RepoInfo, parentName: string | null): number | null {
+function matchScore(query: string, repo: RepoInfo, parentName: string | null, groupName: string | null): number | null {
   const name = repo.name.toLowerCase();
   const label = parentName ? `${parentName.toLowerCase()} ${name}` : name;
   if (name.startsWith(query)) return 4;
   if (label.includes(query)) return 3;
+  // Typing a group's name brings up everything in it.
+  if (groupName?.toLowerCase().includes(query)) return 2.5;
   let index = 0;
   for (const char of label) {
     if (char === query[index]) index += 1;
@@ -65,7 +67,7 @@ export default function ProjectSwitcher({ activeRepoPath, onSelectRepo, onAddPro
     let ordered: typeof projects;
     if (q) {
       const scored = projects
-        .map((item) => ({ item, score: matchScore(q, item.repo, item.parentName) }))
+        .map((item) => ({ item, score: matchScore(q, item.repo, item.parentName, item.groupName) }))
         .filter((entry): entry is { item: (typeof projects)[number]; score: number } => entry.score !== null);
       scored.sort((a, b) => b.score - a.score || tier(a.item) - tier(b.item) || compareByRecency(a.item.repo, b.item.repo));
       ordered = scored.map((entry) => entry.item);

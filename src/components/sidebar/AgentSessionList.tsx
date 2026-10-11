@@ -96,7 +96,7 @@ export default function AgentSessionList({
   if (sessions.length === 0) return null;
 
   return (
-    <div className="side-sec">
+    <div className="side-sec side-island">
       <SidebarSectionToggle
         label="Agents"
         collapsed={collapsed}

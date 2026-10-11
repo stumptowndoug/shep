@@ -163,6 +163,9 @@ export function isSessionTab(tab: UnifiedTab): tab is TerminalTabData {
   return tab.kind === "terminal" || tab.kind === "assistant";
 }
 
+/** Things a project can open in a new tab. */
+export type ProjectActionKind = "assistant" | "terminal" | "commands" | "git" | "todos";
+
 export function panelTabId(kind: PanelTabKind): string {
   return `panel-${kind}`;
 }
@@ -170,7 +173,7 @@ export function panelTabId(kind: PanelTabKind): string {
 export const panelTabDefaults: Record<PanelTabKind, { label: string }> = {
   git: { label: "Files" },
   commands: { label: "Commands" },
-  launcher: { label: "New Agent" },
+  launcher: { label: "New tab" },
   todos: { label: "To-dos" },
 };
 

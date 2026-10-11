@@ -376,8 +376,8 @@ body.theme-clear .app-shell__frame {
 /* ── Sidebar ── */
 
 .sidebar {
-  /* Shelves (pinned project links, usage and nav) share one top shadow. */
-  --sidebar-shelf-shadow: 0 -10px 24px -18px rgb(0 0 0 / 35%);
+  /* Sections sit on faintly tinted islands instead of borders or shadows. */
+  --sidebar-island: color-mix(in srgb, var(--fg) 3.5%, var(--sidebar-bg, var(--surface-recessed)));
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
@@ -412,18 +412,28 @@ body.theme-clear .app-shell__frame {
 
 .sidebar-bottom {
   position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
   flex-shrink: 0;
-  margin: 0 -8px -8px;
-  padding: 6px 8px 8px;
-  background: var(--sidebar-bg, var(--surface-recessed));
-  box-shadow: var(--sidebar-shelf-shadow);
+  margin-top: 8px;
+}
+
+.side-island {
+  padding: 4px;
+  border-radius: 12px;
+  background: var(--sidebar-island);
+}
+/* e.g. usage with no providers to show */
+.side-island:empty {
+  display: none;
 }
 
 .side-nav--footer {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 4px;
-  padding: 4px 0 0;
+  padding: 0;
 }
 
 .side-nav--footer .nav-item {
@@ -494,14 +504,21 @@ body.theme-clear .app-shell__frame {
 .side-scroll {
   flex: 1;
   min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
   overflow-x: hidden;
   overflow-y: auto;
   margin: 0 -8px;
-  padding: 0 8px;
+  padding: 10px 8px 0;
 }
 
 .side-sec {
-  padding-top: 12px;
+  flex-shrink: 0;
+}
+.side-island .side-sec__header {
+  height: 28px;
+  padding-top: 4px;
 }
 .side-sec__header {
   display: flex;
@@ -1200,6 +1217,13 @@ body.theme-clear .app-shell__frame {
 .agent-choice.unavailable { color: var(--muted); background: var(--surface-recessed); }
 .agent-choice.unavailable > img { opacity: .5; }
 .agent-choice.unavailable:hover { background: var(--surface); }
+/* Launcher's "Open" row: the agent card shape, with a tab-kind icon. */
+.launcher__open { margin-top: 12px; }
+.open-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.open-choice { min-height: 64px; }
+.open-choice__icon { display: grid; place-items: center; flex: none; width: 22px; color: var(--muted); }
+.open-choice:hover .open-choice__icon { color: var(--fg); }
+.open-choice__kbd { margin-left: auto; flex: none; color: var(--faint); font-family: var(--font-sans); font-size: var(--text-2xs); }
 .launcher { --chat-width: 720px; }
 .launcher .page__title { font-size: clamp(1.8rem, 4cqw, 2.7rem); }
 .launcher .page__section { margin-bottom: 24px; }
@@ -1503,6 +1527,30 @@ body.theme-clear .app-shell__frame {
   background: var(--bg);
   box-shadow: inset 0 -1px 0 var(--line);
   color: var(--text-secondary);
+}
+
+/* App-wide tooltip (TooltipLayer replaces native title tooltips). */
+.app-tooltip {
+  position: fixed;
+  z-index: 200;
+  max-width: 320px;
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface-overlay);
+  box-shadow: var(--shadow-lg);
+  color: var(--fg);
+  font: 500 var(--text-xs) / 1.4 var(--font-sans);
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+  pointer-events: none;
+  animation: tooltip-in 80ms ease-out;
+}
+@keyframes tooltip-in {
+  from { opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .app-tooltip { animation: none; }
 }
 
 /* Info tooltip */
@@ -3956,7 +4004,8 @@ body.theme-clear .app-shell__frame {
   .settings-row__label { width: 100%; }
 }
 @container workspace (max-width: 360px) {
-  .agent-grid { grid-template-columns: 1fr; }
+  .agent-grid,
+  .open-grid { grid-template-columns: 1fr; }
   .theme-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .theme-choice__label { font-size: var(--text-2xs); white-space: normal; }
 }
@@ -4071,24 +4120,39 @@ body.theme-clear .app-shell__frame {
 .project-row__pin:hover { background: var(--state-hover); color: var(--fg); }
 .project-row:hover .project-row__pin,
 .project-row__pin:focus-visible { display: grid; }
-.project-list__link { color: var(--faint); }
-.project-list__link .nav-item__kbd { margin-left: auto; }
-.project-list__link:hover .nav-item__kbd { opacity: 1; }
-/* Set apart from the projects above and pinned to the bottom of the scroll
-   area, so a long project list scrolls beneath them. Same shelf treatment as
-   the usage and nav block below. */
-.project-list__links {
+/* Pinned to the bottom of the scroll area, so a long project list scrolls
+   beneath it inside the island. */
+.project-list__tools {
   position: sticky;
   bottom: 0;
   z-index: 1;
   display: flex;
-  flex-direction: column;
-  gap: 1px;
-  margin: 10px -8px 0;
-  padding: 6px 8px;
-  background: var(--sidebar-bg, var(--surface-recessed));
-  box-shadow: var(--sidebar-shelf-shadow);
+  gap: 4px;
+  /* Filled controls need more room below than text rows do to look even. */
+  margin: 8px -4px -4px;
+  padding: 4px 4px 8px;
+  border-radius: 0 0 12px 12px;
+  background: var(--sidebar-island);
 }
+.project-list__find,
+.project-list__tool {
+  display: flex;
+  align-items: center;
+  height: 30px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: var(--state-hover);
+  color: var(--faint);
+  font: 500 var(--text-sm) / 1 var(--font-sans);
+  cursor: pointer;
+  transition: background var(--fast), color var(--fast);
+}
+.project-list__find { flex: 1; min-width: 0; gap: 8px; padding: 0 10px; text-align: left; }
+.project-list__find kbd { margin-left: auto; color: var(--faint); font-family: var(--font-sans); font-size: var(--text-2xs); }
+.project-list__tool { flex: none; justify-content: center; width: 30px; color: var(--muted); }
+.project-list__find:hover,
+.project-list__tool:hover,
+.project-list__tool--on { background: var(--state-active); color: var(--fg); }
 .project-group { display: flex; flex-direction: column; gap: 1px; }
 .project-group__header { display: flex; align-items: center; height: var(--row-h); padding: 0 10px; border-radius: var(--radius-md); }
 .project-group__header:hover { background: var(--state-hover); }

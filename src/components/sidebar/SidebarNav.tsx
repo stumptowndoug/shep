@@ -1,15 +1,17 @@
-import { ChartNoAxesCombined, History, Radio, Settings, SquarePen } from "lucide-react";
+import { ChartNoAxesCombined, History, Radio, Settings } from "lucide-react";
 import { useUIStore } from "../../stores/useUIStore";
 import { useTerminalStore } from "../../stores/useTerminalStore";
 import { panelTabId } from "../../lib/types";
+import tabKindMeta from "../../lib/tabKindMeta";
 
-/** The primary session action stays beside the project navigation. */
+/** Opens the project's launcher: agents first, plus terminal, commands, files, to-dos. */
 export function SidebarNewAgent({ hasProject }: { hasProject: boolean }) {
   const anyOverlay = useUIStore((s) => s.settingsActive || s.usagePanelActive || s.portsPanelActive || s.historyPanelActive || s.projectsPanelActive);
   const launcherActive = useTerminalStore((s) => {
     const project = s.activeProjectPath ? s.projectState[s.activeProjectPath] : null;
     return project?.activeTabId === panelTabId("launcher");
   });
+  const on = launcherActive && !anyOverlay;
   const startAgent = () => {
     useUIStore.getState().deactivateAllOverlays();
     useTerminalStore.getState().addPanelTab("launcher");
@@ -17,10 +19,10 @@ export function SidebarNewAgent({ hasProject }: { hasProject: boolean }) {
 
   return (
     <div className="side-nav side-nav--primary">
-      <button className={`nav-item ${launcherActive && !anyOverlay ? "on" : ""}`} onClick={startAgent} disabled={!hasProject} aria-pressed={launcherActive && !anyOverlay}>
-        <SquarePen size={16} />
-        <span className="nav-item__label">New agent</span>
-        <kbd className="nav-item__kbd">⇧⌘T</kbd>
+      <button className={`nav-item ${on ? "on" : ""}`} onClick={startAgent} disabled={!hasProject} aria-pressed={on}>
+        {tabKindMeta.launcher.icon(16)}
+        <span className="nav-item__label">New tab</span>
+        <kbd className="nav-item__kbd">{tabKindMeta.launcher.shortcut}</kbd>
       </button>
     </div>
   );

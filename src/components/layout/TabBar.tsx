@@ -2,14 +2,13 @@ import { useCallback, useRef, useState } from "react";
 import { useTerminalStore } from "../../stores/useTerminalStore";
 import { useUIStore } from "../../stores/useUIStore";
 import { useShallow } from "zustand/shallow";
-import { X } from "lucide-react";
+import { Plus, X } from "lucide-react";
 import { assistantLogoSrc, getAssistantLogoClass } from "../../lib/assistantLogos";
 import { handleActionKey } from "../../lib/a11y";
 import tabKindMeta from "../../lib/tabKindMeta";
 import { isSessionTab, type UnifiedTab } from "../../lib/types";
 import { useProjectSettingsStore } from "../../stores/useProjectSettingsStore";
 import { agentDisplayLabel } from "../../lib/agentLabels";
-import ProjectActionMenu, { type ProjectActionKind } from "../shared/ProjectActionMenu";
 import GitSummary from "../git/GitSummary";
 
 /** Render the icon for a tab based on its kind */
@@ -26,13 +25,11 @@ function TabIcon({ tab }: { tab: UnifiedTab }) {
 
 interface TabBarProps {
   onClose: (tabId: string) => void;
-  onProjectAction: (action: ProjectActionKind) => void;
   changesActive: boolean;
 }
 
 export default function TabBar({
   onClose,
-  onProjectAction,
   changesActive,
 }: TabBarProps) {
   const { activeProjectPath, projectState } = useTerminalStore(
@@ -210,7 +207,20 @@ export default function TabBar({
           );
         })}
 
-        <ProjectActionMenu variant="tab" onAction={onProjectAction} />
+        <button
+          type="button"
+          className="icon-btn"
+          onClick={() => {
+            useUIStore.getState().deactivateAllOverlays();
+            useTerminalStore.getState().addPanelTab("launcher");
+          }}
+          onPointerDown={(event) => event.stopPropagation()}
+          disabled={!activeProjectPath}
+          title={`New tab (${tabKindMeta.launcher.shortcut})`}
+          aria-label="New tab"
+        >
+          <Plus size={16} />
+        </button>
       </div>
       {projectName && (
         <div className="tab-bar__context">

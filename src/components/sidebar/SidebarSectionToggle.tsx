@@ -5,7 +5,7 @@ interface SidebarSectionToggleProps {
   collapsed: boolean;
   badge?: number | string | null;
   onToggle: () => void;
-  /** Optional "+" that appears on hover, e.g. new agent or add project. */
+  /** Optional "+" that appears on hover, e.g. add project. */
   onAdd?: () => void;
   addLabel?: string;
 }

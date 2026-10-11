@@ -1,22 +1,15 @@
 import { useMemo, useState } from "react";
-import { open } from "@tauri-apps/plugin-dialog";
-import { FolderPlus, Folders, LayoutGrid, Pin, Search } from "lucide-react";
+import { createPortal } from "react-dom";
+import { FolderPlus, Folders, LayoutGrid, Pin, PinOff, Search } from "lucide-react";
+import ContextMenu from "../shared/ContextMenu";
 import type { RepoGroup, RepoInfo } from "../../lib/types";
 import { useGitStore } from "../../stores/useGitStore";
 import { useRepoStore } from "../../stores/useRepoStore";
 import { useTerminalStore } from "../../stores/useTerminalStore";
 import { useUIStore } from "../../stores/useUIStore";
-import { useNoticeStore } from "../../stores/useNoticeStore";
-import { getErrorMessage } from "../../lib/errors";
 import { buildProjectTree, projectLiveState, type ProjectLiveState } from "../../lib/projectTree";
 import ProjectItem from "./ProjectItem";
 import { toggleGroupPin, type ProjectHandlers } from "../shared/useProjectMenu";
-
-/** Ask for a folder to add as a project. Resolves null when cancelled. */
-export async function pickProjectFolder(): Promise<string | null> {
-  const selected = await open({ directory: true, multiple: false, title: "Select project folder" });
-  return typeof selected === "string" ? selected : null;
-}
 
 interface ProjectListProps {
   repos: RepoInfo[];
@@ -82,19 +75,6 @@ export default function ProjectList({ repos, activeRepoPath, handlers, onSelectR
     };
   }, [repos, groups, gitStatuses, projectState, tabActivity, activeRepoPath]);
 
-  const handleAddProject = async () => {
-    try {
-      const folder = await pickProjectFolder();
-      if (folder) await handlers.onAddProject(folder);
-    } catch (error) {
-      useNoticeStore.getState().pushNotice({
-        tone: "error",
-        title: "Couldn't add project",
-        message: getErrorMessage(error),
-      });
-    }
-  };
-
   const toggleGroup = (groupId: string) => {
     setExpandedGroups((previous) => {
       const next = new Set(previous);
@@ -127,7 +107,13 @@ export default function ProjectList({ repos, activeRepoPath, handlers, onSelectR
         const visibleRows = collapsed ? rows.filter((row) => row.repo.path === activeRepoPath) : rows;
         return (
           <div key={group.id} className="project-group">
-            <SidebarGroupHeader group={group} count={rows.length} collapsed={collapsed} onToggle={() => toggleGroup(group.id)} />
+            <SidebarGroupHeader
+              group={group}
+              count={rows.length}
+              collapsed={collapsed}
+              onToggle={() => toggleGroup(group.id)}
+              onAddProject={() => handlers.onPickAndAddProject(group.id)}
+            />
             {visibleRows.length > 0 && <div className="project-group__rows">{visibleRows.map(renderRow)}</div>}
             {!collapsed && rows.length === 0 && <div className="side-empty project-group__empty">No projects yet</div>}
           </div>
@@ -135,36 +121,41 @@ export default function ProjectList({ repos, activeRepoPath, handlers, onSelectR
       })}
       {looseRows.map(renderRow)}
       {repos.length === 0 && <div className="side-empty">No projects yet.</div>}
-      <div className="project-list__links">
+      {/* One compact row: find (⌘P), the full Projects page, and add. */}
+      <div className="project-list__tools">
         {repos.length > 0 && (
           <button
             type="button"
-            className="list-item project-list__link"
+            className="project-list__find"
             onClick={() => useUIStore.getState().setProjectSwitcherOpen(true)}
             aria-haspopup="dialog"
-            title="Switch to any project"
           >
-            <Search size={14} />
+            <Search size={14} aria-hidden="true" />
             <span className="truncate">Find project</span>
-            <kbd className="nav-item__kbd">⌘P</kbd>
+            <kbd>⌘P</kbd>
           </button>
         )}
         {repos.length > 0 && (
           <button
             type="button"
-            className={`list-item project-list__link ${projectsPageActive ? "active" : ""}`}
+            className={`project-list__tool ${projectsPageActive ? "project-list__tool--on" : ""}`}
             onClick={() => useUIStore.getState().toggleProjectsPanel()}
             aria-pressed={projectsPageActive}
-            title="Browse, group, and pin projects"
+            title="All projects (⇧⌘P)"
+            aria-label="All projects"
           >
-            <LayoutGrid size={14} />
-            <span className="truncate">All projects</span>
-            <kbd className="nav-item__kbd">⇧⌘P</kbd>
+            <LayoutGrid size={14} aria-hidden="true" />
           </button>
         )}
-        <button type="button" className="list-item project-list__link" onClick={() => void handleAddProject()}>
-          <FolderPlus size={14} />
-          <span className="truncate">Add project</span>
+        <button
+          type="button"
+          className={repos.length > 0 ? "project-list__tool" : "project-list__find"}
+          onClick={() => handlers.onPickAndAddProject()}
+          title="Add project"
+          aria-label="Add project"
+        >
+          <FolderPlus size={14} aria-hidden="true" />
+          {repos.length === 0 && <span className="truncate">Add project</span>}
         </button>
       </div>
     </div>
@@ -176,14 +167,35 @@ function SidebarGroupHeader({
   count,
   collapsed,
   onToggle,
+  onAddProject,
 }: {
   group: RepoGroup;
   count: number;
   collapsed: boolean;
   onToggle: () => void;
+  onAddProject: () => void;
 }) {
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   return (
-    <div className="project-group__header">
+    <div
+      className="project-group__header"
+      onContextMenu={(event) => {
+        event.preventDefault();
+        setMenu({ x: event.clientX, y: event.clientY });
+      }}
+    >
+      {menu && createPortal(
+        <ContextMenu
+          x={menu.x}
+          y={menu.y}
+          onClose={() => setMenu(null)}
+          items={[
+            { label: "Add Project Here…", icon: <FolderPlus size={14} />, onClick: onAddProject },
+            { label: "Unpin from Sidebar", icon: <PinOff size={14} />, onClick: () => toggleGroupPin(group) },
+          ]}
+        />,
+        document.body,
+      )}
       <button type="button" className="project-group__toggle" onClick={onToggle} aria-expanded={!collapsed}>
         <Folders size={14} className="project-group__icon" />
         <span className="truncate">{group.name}</span>

@@ -97,7 +97,7 @@ export default function Sidebar({
           labelMode={projectSettings.agentLabelMode}
           onSelectSession={onSelectProjectTab}
         />
-        <div className="side-sec">
+        <div className="side-sec side-island">
           <SidebarSectionToggle
             label="Projects"
             collapsed={projectsCollapsed}
@@ -115,8 +115,12 @@ export default function Sidebar({
         </div>
       </div>
       <div className="sidebar-bottom">
-        <SidebarUsage />
-        <SidebarNav />
+        <div className="side-island">
+          <SidebarUsage />
+        </div>
+        <div className="side-island">
+          <SidebarNav />
+        </div>
       </div>
     </aside>
   );

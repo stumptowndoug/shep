@@ -257,7 +257,7 @@ export default function HistoryPanel({
                 const disabledReason = isActive ? null
                   : !supportsSessionResume(session.provider) ? "This provider does not support resume yet"
                   : providerAvailable === undefined ? "Checking whether the agent is installed"
-                  : !canResume ? `Set up ${providerLabel(session.provider)}${session.agentInterface === "chat" ? " chat" : ""} in New agent first`
+                  : !canResume ? `Set up ${providerLabel(session.provider)}${session.agentInterface === "chat" ? " chat" : ""} in a new tab first`
                   : !knownProjects.has(session.projectPath) ? "Add this project to Shep before resuming"
                   : null;
                 const isResuming = resumingKey === key;

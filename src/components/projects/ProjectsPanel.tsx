@@ -22,7 +22,6 @@ interface ProjectsPanelProps {
   activeRepoPath: string | null;
   handlers: ProjectHandlers;
   onSelectRepo: (repoPath: string) => void;
-  onAddProject: () => void;
   onRenameGroup: (groupId: string, newName: string) => void;
   onDeleteGroup: (groupId: string) => void;
 }
@@ -39,7 +38,6 @@ export default function ProjectsPanel({
   activeRepoPath,
   handlers,
   onSelectRepo,
-  onAddProject,
   onRenameGroup,
   onDeleteGroup,
 }: ProjectsPanelProps) {
@@ -149,7 +147,7 @@ export default function ProjectsPanel({
             <Folders size={14} aria-hidden="true" />
             New group
           </button>
-          <button type="button" className="btn-primary" onClick={onAddProject}>
+          <button type="button" className="btn-primary" onClick={() => handlers.onPickAndAddProject()}>
             <FolderPlus size={14} aria-hidden="true" />
             Add project
           </button>
@@ -216,7 +214,7 @@ export default function ProjectsPanel({
           <span className="ports-empty__icon" aria-hidden="true"><Folder size={22} /></span>
           <h2>No projects yet.</h2>
           <p>Add a folder to start running agents and terminals in it.</p>
-          <button type="button" className="btn-primary" onClick={onAddProject}>Add project</button>
+          <button type="button" className="btn-primary" onClick={() => handlers.onPickAndAddProject()}>Add project</button>
         </div>
       )}
 
@@ -257,6 +255,7 @@ export default function ProjectsPanel({
               onToggle={() => toggleSection(section.id)}
               onRename={onRenameGroup}
               onDelete={onDeleteGroup}
+              onAddProject={section.group ? () => handlers.onPickAndAddProject(section.group!.id) : undefined}
             />
             {!closed && (section.nodes.length === 0 ? (
               <div className="project-section__empty">
@@ -292,6 +291,7 @@ function SectionHeading({
   onToggle,
   onRename,
   onDelete,
+  onAddProject,
 }: {
   group: RepoGroup | null;
   label: string;
@@ -300,6 +300,7 @@ function SectionHeading({
   onToggle: () => void;
   onRename: (groupId: string, name: string) => void;
   onDelete: (groupId: string) => void;
+  onAddProject?: () => void;
 }) {
   const [renaming, setRenaming] = useState(false);
   const [value, setValue] = useState(label);
@@ -358,6 +359,11 @@ function SectionHeading({
       )}
       {group && !renaming && (
         <span className="project-section__tools">
+          {onAddProject && (
+            <button type="button" className="icon-btn" onClick={onAddProject} title="Add project to this group" aria-label={`Add project to ${group.name}`}>
+              <FolderPlus size={12} aria-hidden="true" />
+            </button>
+          )}
           <button type="button" className="icon-btn" onClick={startRename} title="Rename group" aria-label={`Rename ${group.name}`}>
             <Pencil size={12} aria-hidden="true" />
           </button>
