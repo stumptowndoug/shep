@@ -69,6 +69,18 @@ export function moveRepoToGroup(repoPath: string, groupId: string | null): Promi
   return invoke("move_repo_to_group", { repoPath, groupId });
 }
 
+export function setGroupPinned(groupId: string, pinned: boolean): Promise<void> {
+  return invoke("set_group_pinned", { groupId, pinned });
+}
+
+export function setRepoPinned(repoPath: string, pinned: boolean): Promise<void> {
+  return invoke("set_repo_pinned", { repoPath, pinned });
+}
+
+export function markRepoOpened(repoPath: string): Promise<number> {
+  return invoke("mark_repo_opened", { repoPath });
+}
+
 export function loadWorkspace(repoPath: string): Promise<WorkspaceConfig> {
   return invoke("load_workspace", { repoPath });
 }

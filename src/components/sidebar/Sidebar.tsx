@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { AgentInterface, RepoInfo, RepoGroup, TabActivity } from "../../lib/types";
+import type { AgentInterface, RepoInfo, TabActivity } from "../../lib/types";
 import { getTabActivityStatus } from "./ActivityIndicator";
 import { useTerminalStore } from "../../stores/useTerminalStore";
 import { useGitStore } from "../../stores/useGitStore";
@@ -10,7 +10,7 @@ import { startWindowDrag } from "../../lib/windowDrag";
 import SidebarUsage from "./SidebarUsage";
 import AgentSessionList, { type AgentSessionItem } from "./AgentSessionList";
 import SidebarSectionToggle from "./SidebarSectionToggle";
-import type { ProjectActionKind } from "../shared/ProjectActionMenu";
+import type { ProjectHandlers } from "../shared/useProjectMenu";
 
 function agentSessionPriority(activity: TabActivity | undefined, agentInterface?: AgentInterface): number {
   if (agentInterface === "chat") {
@@ -27,34 +27,20 @@ function agentSessionPriority(activity: TabActivity | undefined, agentInterface?
 
 interface SidebarProps {
   repos: RepoInfo[];
-  groups: RepoGroup[];
   activeRepoPath: string | null;
   activeTabId: string | null;
+  handlers: ProjectHandlers;
   onSelectRepo: (repoPath: string) => void;
-  onAddProject: (repoPath: string) => Promise<void>;
-  onRemoveProject: (repoPath: string) => void;
-  onOpenInEditor: (repoPath: string) => void;
-  onProjectAction: (repoPath: string, action: ProjectActionKind) => void;
   onSelectProjectTab: (repoPath: string, tabId: string) => void;
-  onRenameGroup: (groupId: string, newName: string) => void;
-  onDeleteGroup: (groupId: string) => void;
-  onMoveToGroup: (repoPath: string, groupId: string | null) => Promise<void>;
 }
 
 export default function Sidebar({
   repos,
-  groups,
   activeRepoPath,
   activeTabId,
+  handlers,
   onSelectRepo,
-  onAddProject,
-  onRemoveProject,
-  onOpenInEditor,
-  onProjectAction,
   onSelectProjectTab,
-  onRenameGroup,
-  onDeleteGroup,
-  onMoveToGroup,
 }: SidebarProps) {
   // Projects always starts expanded on launch; collapsing is per-session only.
   const [projectsCollapsed, setProjectsCollapsed] = useState(false);
@@ -121,16 +107,9 @@ export default function Sidebar({
           {!projectsCollapsed && (
             <ProjectList
               repos={repos}
-              groups={groups}
               activeRepoPath={activeRepoPath}
+              handlers={handlers}
               onSelectRepo={onSelectRepo}
-              onAddProject={onAddProject}
-              onRemoveProject={onRemoveProject}
-              onOpenInEditor={onOpenInEditor}
-              onProjectAction={onProjectAction}
-              onRenameGroup={onRenameGroup}
-              onDeleteGroup={onDeleteGroup}
-              onMoveToGroup={onMoveToGroup}
             />
           )}
         </div>

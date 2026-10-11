@@ -36,6 +36,8 @@ import { initNotifications } from "../../lib/notifications";
 import { getErrorMessage } from "../../lib/errors";
 import { useNoticeStore } from "../../stores/useNoticeStore";
 import type { ProjectActionKind } from "../shared/ProjectActionMenu";
+import type { ProjectHandlers } from "../shared/useProjectMenu";
+import { pickProjectFolder } from "../sidebar/ProjectList";
 
 import { isSessionTab, type AgentInterface, type CommandConfig, type CommandState, type SessionHistoryEntry, type TerminalTabData, type UnifiedTab, type SessionMode, type WorkspaceConfig } from "../../lib/types";
 const LAST_REPO_STORAGE_KEY = "shep:last-repo-path";
@@ -51,6 +53,8 @@ const SessionLauncher = lazy(() => import("../session/SessionLauncher"));
 const UsagePanel = lazy(() => import("../usage/UsagePanel"));
 const PortsPanel = lazy(() => import("../ports/PortsPanel"));
 const HistoryPanel = lazy(() => import("../history/HistoryPanel"));
+const ProjectsPanel = lazy(() => import("../projects/ProjectsPanel"));
+const ProjectSwitcher = lazy(() => import("../projects/ProjectSwitcher"));
 const TodosPanel = lazy(() => import("../todos/TodosPanel"));
 const ChatView = lazy(() => import("../chat/ChatView"));
 
@@ -163,12 +167,14 @@ export default function AppShell() {
   );
 
   const {
-    settingsActive, usagePanelActive, portsPanelActive, historyPanelActive, sidebarVisible,
+    settingsActive, usagePanelActive, portsPanelActive, historyPanelActive, projectsPanelActive, projectSwitcherOpen, sidebarVisible,
   } = useUIStore(useShallow((s) => ({
     settingsActive: s.settingsActive,
     usagePanelActive: s.usagePanelActive,
     portsPanelActive: s.portsPanelActive,
     historyPanelActive: s.historyPanelActive,
+    projectsPanelActive: s.projectsPanelActive,
+    projectSwitcherOpen: s.projectSwitcherOpen,
     sidebarVisible: s.sidebarVisible,
   })));
 
@@ -246,13 +252,17 @@ export default function AppShell() {
 
   const handleSelectRepo = useCallback(
     async (repoPath: string) => {
-      if (repoPath === activeRepoPath) return;
+      if (repoPath === activeRepoPath) {
+        useUIStore.getState().deactivateAllOverlays();
+        return;
+      }
 
       try {
         const isFirstVisit = !useCommandStore.getState().hasProject(repoPath);
 
         useUIStore.getState().deactivateAllOverlays();
         const config = await openRepo(repoPath);
+        void useRepoStore.getState().markOpened(repoPath).catch(() => {});
         restoreAttemptedRef.current = true;
         window.localStorage.setItem(LAST_REPO_STORAGE_KEY, repoPath);
         useTerminalStore.getState().switchProject(repoPath);
@@ -287,6 +297,7 @@ export default function AppShell() {
         // addRepo sets activeRepoPath in the repo store, get the canonical path
         const canonicalPath = useRepoStore.getState().activeRepoPath;
         if (!canonicalPath) return;
+        void useRepoStore.getState().markOpened(canonicalPath).catch(() => {});
         restoreAttemptedRef.current = true;
         window.localStorage.setItem(LAST_REPO_STORAGE_KEY, canonicalPath);
         useTerminalStore.getState().switchProject(canonicalPath);
@@ -303,6 +314,15 @@ export default function AppShell() {
     },
     [addRepo, pushNotice],
   );
+
+  const handlePickAndAddProject = useCallback(async () => {
+    try {
+      const folder = await pickProjectFolder();
+      if (folder) await handleAddProject(folder);
+    } catch (error) {
+      pushNotice({ tone: "error", title: "Couldn’t add project", message: getErrorMessage(error) });
+    }
+  }, [handleAddProject, pushNotice]);
 
   const handleRemoveProject = useCallback(
     async (repoPath: string) => {
@@ -662,6 +682,13 @@ export default function AppShell() {
     }
   }, [pushNotice]);
 
+  const projectHandlers = useMemo<ProjectHandlers>(() => ({
+    onAddProject: handleAddProject,
+    onRemoveProject: handleRemoveProject,
+    onOpenInEditor: (repoPath: string) => void handleOpenInEditor(repoPath),
+    onMoveToGroup: handleMoveToGroup,
+  }), [handleAddProject, handleRemoveProject, handleOpenInEditor, handleMoveToGroup]);
+
   useEffect(() => {
     if (restoreAttemptedRef.current || activeRepoPath || repos.length === 0) return;
 
@@ -718,6 +745,14 @@ export default function AppShell() {
         case "toggle_sidebar":
           useUIStore.getState().toggleSidebar();
           break;
+        case "switch_project": {
+          const ui = useUIStore.getState();
+          ui.setProjectSwitcherOpen(!ui.projectSwitcherOpen);
+          break;
+        }
+        case "all_projects":
+          useUIStore.getState().toggleProjectsPanel();
+          break;
         case "open_in_editor": {
           const repoPath = useTerminalStore.getState().activeProjectPath;
           if (repoPath) handleOpenInEditor(repoPath);
@@ -744,11 +779,20 @@ export default function AppShell() {
     return () => { unlisten.then((f) => f()); };
   }, [handleNewShell, handleNewAssistant, handleOpenInEditor, pushNotice]);
 
-  const showOverlay = settingsActive || usagePanelActive || portsPanelActive || historyPanelActive;
+  const showOverlay = settingsActive || usagePanelActive || portsPanelActive || historyPanelActive || projectsPanelActive;
 
   return (
     <div className="app-shell">
       <NoticeCenter />
+      {projectSwitcherOpen && (
+        <Suspense fallback={null}>
+          <ProjectSwitcher
+            activeRepoPath={activeRepoPath}
+            onSelectRepo={(repoPath) => void handleSelectRepo(repoPath)}
+            onAddProject={() => void handlePickAndAddProject()}
+          />
+        </Suspense>
+      )}
       <div className="app-shell__frame">
         <button
           type="button"
@@ -763,18 +807,11 @@ export default function AppShell() {
         {sidebarVisible && (
           <Sidebar
             repos={repos}
-            groups={groups}
             activeRepoPath={activeRepoPath}
             activeTabId={showOverlay ? null : activeTabId}
+            handlers={projectHandlers}
             onSelectRepo={handleSelectRepo}
-            onAddProject={handleAddProject}
-            onRemoveProject={handleRemoveProject}
-            onOpenInEditor={handleOpenInEditor}
-            onProjectAction={handleProjectAction}
             onSelectProjectTab={handleSelectSidebarProjectTab}
-            onRenameGroup={handleRenameGroup}
-            onDeleteGroup={handleDeleteGroup}
-            onMoveToGroup={handleMoveToGroup}
           />
         )}
 
@@ -805,6 +842,18 @@ export default function AppShell() {
             {portsPanelActive && (
               <Suspense fallback={<PanelLoader />}>
                 <PortsPanel />
+              </Suspense>
+            )}
+            {projectsPanelActive && (
+              <Suspense fallback={<PanelLoader />}>
+                <ProjectsPanel
+                  activeRepoPath={activeRepoPath}
+                  handlers={projectHandlers}
+                  onSelectRepo={handleSelectRepo}
+                  onAddProject={() => void handlePickAndAddProject()}
+                  onRenameGroup={handleRenameGroup}
+                  onDeleteGroup={handleDeleteGroup}
+                />
               </Suspense>
             )}
             {historyPanelActive && (
@@ -857,7 +906,7 @@ export default function AppShell() {
                 <p>
                   {activeRepoPath
                     ? "Start an agent or open a terminal."
-                    : "Add a project from the sidebar to begin."}
+                    : "Add a project to begin."}
                 </p>
                 {activeRepoPath && (
                   <div className="empty-state__actions">

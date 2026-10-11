@@ -40,8 +40,10 @@ const changedFiles = params.get('changes') === 'empty' ? [] : [
   { path: 'src/components/shared/OptionGroup.tsx', status: '?', area: 'untracked', old_path: null },
 ];
 const previewFile = 'export default function App() {\n  return <main>Start an agent.</main>;\n}\n';
-const repos: RepoInfo[] = ['shep', 'springroll', 'springroll-website', 'carrot-frontend', 'carrot-backend', 'design-system'].map((name, i) => ({ name, path: `/preview/${name}`, group: i < 3 ? 'workspace' : 'projects' }));
-const groups = [{id:'workspace',name:'Workspace',order:0},{id:'projects',name:'Projects',order:1}];
+const repos: RepoInfo[] = ['shep', 'springroll', 'springroll-website', 'carrot-frontend', 'carrot-backend', 'design-system', 'dotfiles', 'blog', 'infra', 'scratch'].map((name, i) => ({ name, path: `/preview/${name}`, group: i < 3 ? 'workspace' : i < 6 ? 'projects' : null, pinned: name === 'springroll', last_opened: Date.now() - i * 3_600_000 * 7 }));
+// A discovered worktree of shep, nested under it in the sidebar and on the Projects page.
+repos.push({ name: 'acp-chat', path: '/preview/.shep-worktrees/shep/acp-chat', group: 'workspace', pinned: false, last_opened: null });
+const groups = [{id:'workspace',name:'Workspace',order:0,pinned:params.get('pinGroup') !== 'none'},{id:'projects',name:'Projects',order:1,pinned:true}];
 const cost = { amount: 4.82, kind: 'estimated', basis: 'local-pricing', confidence: 'estimated' };
 const now = Date.now();
 const historyDate = (days: number) => {
@@ -86,15 +88,19 @@ mockIPC((cmd, payload) => {
   switch (cmd) {
     case 'list_repos': return repos.map(repo => ({...repo}));
     case 'list_groups': return groups.map(group => ({...group}));
+    case 'set_group_pinned': { const group = groups.find(g => g.id === args?.groupId); if (group) group.pinned = Boolean(args?.pinned); return null; }
+    case 'set_repo_pinned': { const repo = repos.find(r => r.path === args?.repoPath); if (repo) repo.pinned = Boolean(args?.pinned); return null; }
+    case 'mark_repo_opened': { const repo = repos.find(r => r.path === args?.repoPath); if (repo) repo.last_opened = Date.now(); return repo?.last_opened ?? Date.now(); }
+    case 'move_repo_to_group': { const repo = repos.find(r => r.path === args?.repoPath); if (repo) repo.group = (args?.groupId as string | null) ?? null; return null; }
     case 'create_group': {
-      const group = {id:`group-${groups.length}`,name:String(args?.name),order:groups.length};
+      const group = {id:`group-${groups.length}`,name:String(args?.name),order:groups.length,pinned:true};
       groups.push(group);
       return group;
     }
     case 'register_repo': {
       const path = String(args?.repoPath);
       const name = path.split('/').pop() ?? 'new-project';
-      if (!repos.some(repo => repo.path === path)) repos.push({name,path,group:null});
+      if (!repos.some(repo => repo.path === path)) repos.push({name,path,group:null,pinned:false,last_opened:null});
       return {path,workspace:{...config,name}};
     }
     case 'load_workspace': return config;
@@ -106,7 +112,7 @@ mockIPC((cmd, payload) => {
     case 'get_username': return 'Designer';
     case 'get_computer_name': return 'Local preview';
     case 'get_home_directory': return '/preview';
-    case 'git_status': return {...git,dirty:repoChanges.length > 0,unstaged:repoChanges.filter(file => file.area === 'unstaged').length,untracked:repoChanges.filter(file => file.area === 'untracked').length};
+    case 'git_status': return {...git,worktree_parent:String(args?.path).includes('.shep-worktrees/shep/') ? 'shep' : null,dirty:repoChanges.length > 0,unstaged:repoChanges.filter(file => file.area === 'unstaged').length,untracked:repoChanges.filter(file => file.area === 'untracked').length};
     case 'is_git_repo': return true;
     case 'git_current_branch': return git.branch;
     case 'git_changed_files': return repoChanges;
@@ -173,6 +179,8 @@ if (params.get('view') === 'chat') useTerminalStore.getState().setActiveTab('pre
 if (params.has('chat')) await startChat({assistant:CODING_ASSISTANTS.find(assistant => assistant.id === (params.get('chat') === 'antigravity' ? 'antigravity' : params.get('chat') === 'cursor' ? 'cursor' : params.get('chat')?.startsWith('pi') ? 'pi' : 'claude'))!,repoPath:repos[0].path,mode:params.get('access') === 'ask' ? 'standard' : 'yolo'});
 if (params.get('view') === 'ports') useUIStore.getState().togglePortsPanel();
 if (params.get('view') === 'history') useUIStore.getState().toggleHistoryPanel();
+if (params.get('view') === 'projects') useUIStore.getState().toggleProjectsPanel();
+if (params.get('view') === 'switcher') useUIStore.getState().setProjectSwitcherOpen(true);
 const theme = new URLSearchParams(location.search).get('theme');
 if (theme) useThemeStore.getState().setTheme(theme);
 // Show the native titlebar's footprint so browser checks catch crowded controls.

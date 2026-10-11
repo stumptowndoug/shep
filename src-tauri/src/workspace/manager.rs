@@ -106,4 +106,16 @@ impl WorkspaceManager {
     ) -> Result<(), String> {
         loader::move_repo_to_group(repo_path, group_id)
     }
+
+    pub fn set_group_pinned(&self, group_id: &str, pinned: bool) -> Result<(), String> {
+        loader::set_group_pinned(group_id, pinned)
+    }
+
+    pub fn set_repo_pinned(&self, repo_path: &str, pinned: bool) -> Result<(), String> {
+        loader::set_repo_pinned(repo_path, pinned)
+    }
+
+    pub fn mark_repo_opened(&self, repo_path: &str) -> Result<u64, String> {
+        loader::mark_repo_opened(repo_path)
+    }
 }

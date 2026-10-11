@@ -107,6 +107,10 @@ pub struct KeybindingSettings {
     pub cmd_k_clear: bool,
 }
 
+fn is_true(value: &bool) -> bool {
+    *value
+}
+
 fn default_true() -> bool {
     true
 }
@@ -315,6 +319,11 @@ pub struct RepoEntry {
     pub path: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub group: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub pinned: bool,
+    /// Milliseconds since the Unix epoch when the project was last opened.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_opened: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -323,6 +332,10 @@ pub struct GroupEntry {
     pub name: String,
     #[serde(default)]
     pub order: u32,
+    /// Shown as its own block in the sidebar's Projects section. Groups are
+    /// pinned by default, so only an unpinned group is written out.
+    #[serde(default = "default_true", skip_serializing_if = "is_true")]
+    pub pinned: bool,
 }
 
 // ── Repo info returned to frontend ──────────────────────────────────
@@ -332,6 +345,8 @@ pub struct RepoInfo {
     pub path: String,
     pub name: String,
     pub group: Option<String>,
+    pub pinned: bool,
+    pub last_opened: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -374,6 +389,30 @@ pub struct WorkspaceConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn groups_are_pinned_unless_unpinned() {
+        let group: GroupEntry = serde_yaml::from_str("id: a\nname: A\n").unwrap();
+        assert!(group.pinned);
+        assert!(!serde_yaml::to_string(&group).unwrap().contains("pinned"));
+
+        let unpinned = GroupEntry { pinned: false, ..group };
+        let round_trip: GroupEntry = serde_yaml::from_str(&serde_yaml::to_string(&unpinned).unwrap()).unwrap();
+        assert!(!round_trip.pinned);
+    }
+
+    #[test]
+    fn repo_entry_reads_old_configs_and_omits_unset_fields() {
+        let entry: RepoEntry = serde_yaml::from_str("path: /tmp/app\n").unwrap();
+        assert!(!entry.pinned);
+        assert_eq!(entry.last_opened, None);
+        assert_eq!(serde_yaml::to_string(&entry).unwrap(), "path: /tmp/app\n");
+
+        let pinned = RepoEntry { pinned: true, last_opened: Some(42), ..entry };
+        let round_trip: RepoEntry = serde_yaml::from_str(&serde_yaml::to_string(&pinned).unwrap()).unwrap();
+        assert!(round_trip.pinned);
+        assert_eq!(round_trip.last_opened, Some(42));
+    }
 
     #[test]
     fn project_settings_ignore_removed_changes_sidebar_preference() {

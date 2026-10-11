@@ -11,6 +11,9 @@ import {
   renameGroup as ipcRenameGroup,
   deleteGroup as ipcDeleteGroup,
   moveRepoToGroup as ipcMoveRepoToGroup,
+  setRepoPinned,
+  setGroupPinned as ipcSetGroupPinned,
+  markRepoOpened,
 } from "../lib/tauri";
 import { useProjectSettingsStore } from "./useProjectSettingsStore";
 
@@ -50,6 +53,13 @@ interface RepoStore {
   renameGroup: (groupId: string, newName: string) => Promise<void>;
   deleteGroup: (groupId: string) => Promise<void>;
   moveRepoToGroup: (repoPath: string, groupId: string | null) => Promise<void>;
+  setPinned: (repoPath: string, pinned: boolean) => Promise<void>;
+  setGroupPinned: (groupId: string, pinned: boolean) => Promise<void>;
+  markOpened: (repoPath: string) => Promise<void>;
+}
+
+function patchRepo(repos: RepoInfo[], repoPath: string, patch: Partial<RepoInfo>): RepoInfo[] {
+  return repos.map((repo) => (repo.path === repoPath ? { ...repo, ...patch } : repo));
 }
 
 export const useRepoStore = create<RepoStore>((set, get) => ({
@@ -198,5 +208,32 @@ export const useRepoStore = create<RepoStore>((set, get) => ({
     await ipcMoveRepoToGroup(repoPath, groupId);
     const repos = await listRepos();
     set({ repos });
+  },
+
+  setPinned: async (repoPath: string, pinned: boolean) => {
+    const previous = get().repos;
+    set({ repos: patchRepo(previous, repoPath, { pinned }) });
+    try {
+      await setRepoPinned(repoPath, pinned);
+    } catch (error) {
+      set({ repos: previous });
+      throw error;
+    }
+  },
+
+  setGroupPinned: async (groupId: string, pinned: boolean) => {
+    const previous = get().groups;
+    set({ groups: previous.map((g) => (g.id === groupId ? { ...g, pinned } : g)) });
+    try {
+      await ipcSetGroupPinned(groupId, pinned);
+    } catch (error) {
+      set({ groups: previous });
+      throw error;
+    }
+  },
+
+  markOpened: async (repoPath: string) => {
+    const lastOpened = await markRepoOpened(repoPath);
+    set((state) => ({ repos: patchRepo(state.repos, repoPath, { last_opened: lastOpened }) }));
   },
 }));

@@ -5,7 +5,7 @@ import { panelTabId } from "../../lib/types";
 
 /** The primary session action stays beside the project navigation. */
 export function SidebarNewAgent({ hasProject }: { hasProject: boolean }) {
-  const anyOverlay = useUIStore((s) => s.settingsActive || s.usagePanelActive || s.portsPanelActive || s.historyPanelActive);
+  const anyOverlay = useUIStore((s) => s.settingsActive || s.usagePanelActive || s.portsPanelActive || s.historyPanelActive || s.projectsPanelActive);
   const launcherActive = useTerminalStore((s) => {
     const project = s.activeProjectPath ? s.projectState[s.activeProjectPath] : null;
     return project?.activeTabId === panelTabId("launcher");

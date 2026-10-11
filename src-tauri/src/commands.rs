@@ -250,6 +250,32 @@ pub fn move_repo_to_group(
     workspace.move_repo_to_group(repo_path, group_id)
 }
 
+#[tauri::command]
+pub fn set_group_pinned(
+    group_id: &str,
+    pinned: bool,
+    workspace: State<'_, WorkspaceManager>,
+) -> Result<(), String> {
+    workspace.set_group_pinned(group_id, pinned)
+}
+
+#[tauri::command]
+pub fn set_repo_pinned(
+    repo_path: &str,
+    pinned: bool,
+    workspace: State<'_, WorkspaceManager>,
+) -> Result<(), String> {
+    workspace.set_repo_pinned(repo_path, pinned)
+}
+
+#[tauri::command]
+pub fn mark_repo_opened(
+    repo_path: &str,
+    workspace: State<'_, WorkspaceManager>,
+) -> Result<u64, String> {
+    workspace.mark_repo_opened(repo_path)
+}
+
 // ── PTY commands ────────────────────────────────────────────────────
 
 #[tauri::command]

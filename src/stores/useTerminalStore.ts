@@ -4,7 +4,7 @@ import { isSessionTab, panelTabId, panelTabDefaults } from "../lib/types";
 import { nextAgentDoneState } from "../lib/agentActivity";
 import { useUIStore } from "./useUIStore";
 
-interface ProjectTerminalState {
+export interface ProjectTerminalState {
   tabs: UnifiedTab[];
   activeTabId: string | null;
 }

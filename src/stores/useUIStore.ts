@@ -5,6 +5,8 @@ interface UIStore {
   usagePanelActive: boolean;
   portsPanelActive: boolean;
   historyPanelActive: boolean;
+  projectsPanelActive: boolean;
+  projectSwitcherOpen: boolean;
   sidebarVisible: boolean;
   username: string | null;
   computerName: string | null;
@@ -12,6 +14,8 @@ interface UIStore {
   toggleUsagePanel: () => void;
   togglePortsPanel: () => void;
   toggleHistoryPanel: () => void;
+  toggleProjectsPanel: () => void;
+  setProjectSwitcherOpen: (open: boolean) => void;
   deactivateAllOverlays: () => void;
   toggleSidebar: () => void;
   setUsername: (name: string) => void;
@@ -23,6 +27,7 @@ const deactivateAll = {
   usagePanelActive: false,
   portsPanelActive: false,
   historyPanelActive: false,
+  projectsPanelActive: false,
 };
 
 export const useUIStore = create<UIStore>((set) => ({
@@ -30,6 +35,8 @@ export const useUIStore = create<UIStore>((set) => ({
   usagePanelActive: false,
   portsPanelActive: false,
   historyPanelActive: false,
+  projectsPanelActive: false,
+  projectSwitcherOpen: false,
   sidebarVisible: true,
   username: null,
   computerName: null,
@@ -53,6 +60,12 @@ export const useUIStore = create<UIStore>((set) => ({
       if (s.historyPanelActive) return { historyPanelActive: false };
       return { ...deactivateAll, historyPanelActive: true };
     }),
+  toggleProjectsPanel: () =>
+    set((s) => {
+      if (s.projectsPanelActive) return { projectsPanelActive: false };
+      return { ...deactivateAll, projectsPanelActive: true, projectSwitcherOpen: false };
+    }),
+  setProjectSwitcherOpen: (open: boolean) => set({ projectSwitcherOpen: open }),
   deactivateAllOverlays: () => set(deactivateAll),
   toggleSidebar: () => set((s) => ({ sidebarVisible: !s.sidebarVisible })),
   setUsername: (name: string) => set({ username: name }),

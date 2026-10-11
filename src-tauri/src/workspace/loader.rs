@@ -173,6 +173,8 @@ pub fn list_repos() -> Result<Vec<RepoInfo>, String> {
                 path: entry.path.clone(),
                 name,
                 group: entry.group.clone(),
+                pinned: entry.pinned,
+                last_opened: entry.last_opened,
             }
         })
         .collect();
@@ -196,6 +198,8 @@ pub fn register_repo(repo_path: &str) -> Result<RegisteredRepo, String> {
         config.repos.push(RepoEntry {
             path: canonical_str.clone(),
             group: None,
+            pinned: false,
+            last_opened: None,
         });
         save_global_config(&config)?;
     }
@@ -315,7 +319,12 @@ pub fn migrate_old_projects() -> Result<(), String> {
         }
 
         // Add to global registry
-        global_config.repos.push(RepoEntry { path: cwd, group: None });
+        global_config.repos.push(RepoEntry {
+            path: cwd,
+            group: None,
+            pinned: false,
+            last_opened: None,
+        });
     }
 
     if !global_config.repos.is_empty() {
@@ -356,6 +365,7 @@ pub fn create_group(name: &str) -> Result<GroupEntry, String> {
         id,
         name: trimmed.to_string(),
         order: next_order,
+        pinned: true,
     };
 
     config.groups.push(entry.clone());
@@ -408,6 +418,45 @@ pub fn move_repo_to_group(repo_path: &str, group_id: Option<&str>) -> Result<(),
         .ok_or_else(|| format!("Repo not found: {repo_path}"))?;
     repo.group = group_id.map(|s| s.to_string());
     save_global_config(&config)
+}
+
+pub fn set_group_pinned(group_id: &str, pinned: bool) -> Result<(), String> {
+    let mut config = load_global_config()?;
+    let group = config
+        .groups
+        .iter_mut()
+        .find(|g| g.id == group_id)
+        .ok_or_else(|| format!("Group not found: {group_id}"))?;
+    group.pinned = pinned;
+    save_global_config(&config)
+}
+
+pub fn set_repo_pinned(repo_path: &str, pinned: bool) -> Result<(), String> {
+    let mut config = load_global_config()?;
+    let repo = config
+        .repos
+        .iter_mut()
+        .find(|r| r.path == repo_path)
+        .ok_or_else(|| format!("Repo not found: {repo_path}"))?;
+    repo.pinned = pinned;
+    save_global_config(&config)
+}
+
+/// Record that a project was opened, for recency ordering. Returns the timestamp.
+pub fn mark_repo_opened(repo_path: &str) -> Result<u64, String> {
+    let mut config = load_global_config()?;
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+    let repo = config
+        .repos
+        .iter_mut()
+        .find(|r| r.path == repo_path)
+        .ok_or_else(|| format!("Repo not found: {repo_path}"))?;
+    repo.last_opened = Some(now);
+    save_global_config(&config)?;
+    Ok(now)
 }
 
 fn slug_from_name(name: &str) -> String {

@@ -340,32 +340,44 @@ body.theme-clear .app-shell__frame {
   left: 112px;
 }
 
-.changes-summary {
+.git-summary {
   display: flex;
   align-items: center;
-  flex-shrink: 0;
-  gap: 8px;
+  min-width: 0;
+  gap: 6px;
   height: 28px;
   padding: 0 8px;
   border: none;
   border-radius: var(--radius-md);
   background: transparent;
-  font: inherit;
-  /* Numerals need a small optical reduction beside the lowercase branch label. */
-  font-size: var(--text-xs);
+  color: var(--muted);
+  font: 500 var(--text-sm) / 20px var(--font-sans);
   cursor: pointer;
-  transition: background var(--fast);
+  transition: background var(--fast), color var(--fast);
 }
-.changes-summary:hover,
-.changes-summary[aria-pressed="true"] {
+.git-summary:hover,
+.git-summary[aria-pressed="true"] {
   background: var(--state-hover);
+  color: var(--fg);
 }
-.changes-summary__add { color: var(--diff-add); }
-.changes-summary__del { color: var(--diff-del); }
+.git-summary--plain { cursor: default; }
+.git-summary--plain:hover { background: transparent; color: var(--muted); }
+.git-summary__repo { flex: none; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Neutral icon: the counts already say whether the repo is dirty. */
+.git-summary__icon { flex: none; margin-left: 2px; color: var(--faint); }
+.git-summary__branch { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Sans digits sit at cap height and outweigh the lowercase branch; mono at
+   12px matches its visual size. The wider gap separates "where" from "what changed". */
+.git-summary__add,
+.git-summary__del { flex: none; font-family: var(--font-mono); font-size: var(--text-xs); font-weight: 450; }
+.git-summary__add { margin-left: 4px; color: var(--diff-add); }
+.git-summary__del { margin-left: -2px; color: var(--diff-del); }
 
 /* ── Sidebar ── */
 
 .sidebar {
+  /* Shelves (pinned project links, usage and nav) share one top shadow. */
+  --sidebar-shelf-shadow: 0 -10px 24px -18px rgb(0 0 0 / 35%);
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
@@ -404,7 +416,7 @@ body.theme-clear .app-shell__frame {
   margin: 0 -8px -8px;
   padding: 6px 8px 8px;
   background: var(--sidebar-bg, var(--surface-recessed));
-  box-shadow: 0 -10px 24px -18px rgb(0 0 0 / 35%);
+  box-shadow: var(--sidebar-shelf-shadow);
 }
 
 .side-nav--footer {
@@ -559,17 +571,6 @@ body.theme-clear .app-shell__frame {
   gap: 1px;
   padding-top: 2px;
 }
-.project-list__actions {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 4px;
-  margin-bottom: 6px;
-}
-.project-list__actions .nav-item {
-  gap: 6px;
-  height: 28px;
-  font-size: var(--text-xs);
-}
 .side-children {
   display: flex;
   flex-direction: column;
@@ -633,24 +634,6 @@ body.theme-clear .app-shell__frame {
   flex-shrink: 0;
 }
 
-.group-header {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-height: var(--row-h);
-  padding: 0 10px;
-  border-radius: var(--radius-md);
-  color: var(--muted);
-  font-size: var(--text-sm);
-  font-weight: 550;
-  cursor: pointer;
-  user-select: none;
-  transition: background var(--fast), color var(--fast);
-}
-.group-header:hover {
-  background: var(--state-hover);
-  color: var(--fg);
-}
 
 /* ── Tabs: same pill rows as the sidebar ── */
 
@@ -751,23 +734,9 @@ body.theme-clear .app-shell__frame {
   gap: 6px;
   font: 500 var(--text-sm) / 20px var(--font-sans);
 }
-.tab-bar__breadcrumb {
-  min-width: 0;
-  height: 28px;
-  overflow: hidden;
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  padding: 0 4px 0 8px;
-  color: var(--muted);
-  white-space: nowrap;
-}
-.tab-bar__breadcrumb-on {
-  opacity: 0.7;
-}
 /* Give session labels the space when a workspace has several open tabs. */
-.tab-bar:has([data-tab-index="3"]) .tab-bar__breadcrumb {
-  display: none;
+.tab-bar:has([data-tab-index="3"]) .git-summary__branch {
+  max-width: 120px;
 }
 
 /* ── Buttons: pills ── */
@@ -1316,52 +1285,6 @@ body.theme-clear .app-shell__frame {
 /* Popover list (Select, slash commands, pickers) */
 
 /* Select: quiet pill trigger + popover */
-
-/* ── Group header (sidebar) ─────────────────────────────── */
-
-.group-header__name {
-  font-weight: 600;
-  font-size: var(--text-label);
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--text-muted);
-}
-.group-header__rename-input {
-  background: var(--surface-active);
-  border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
-  border-radius: 4px;
-  padding: 1px 6px;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  color: var(--text-primary);
-  outline: none;
-  min-width: 0;
-  flex: 1;
-}
-.group-empty-hint {
-  padding: 4px 8px 4px 22px;
-  font-size: 11px;
-  color: var(--text-muted);
-  opacity: 0.5;
-  font-style: italic;
-}
-.group-create-form {
-  padding: 0 10px 6px;
-}
-.group-create-form__input {
-  width: 100%;
-  background: var(--surface);
-  border: 1px solid transparent;
-  border-radius: var(--radius-md);
-  padding: 6px 10px;
-  font-size: 12px;
-  color: var(--text-primary);
-  outline: none;
-}
-.group-create-form__input:focus {
-  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
-}
 
 /* Sidebar status dots — unified right-aligned indicator */
 .sidebar-status-dot {
@@ -4016,7 +3939,7 @@ body.theme-clear .app-shell__frame {
 
 @container workspace (max-width: 800px) {
   .page { --page-gutter: 28px; }
-  .tab-bar__breadcrumb { display: none; }
+  .git-summary__branch { max-width: 120px; }
   .callout { flex-wrap: wrap; }
   .callout__actions { margin-left: 27px; }
 }
@@ -4111,4 +4034,226 @@ body.theme-clear .app-shell__frame {
   .usage-stat__label { white-space: nowrap; font-size: 9px; letter-spacing: 0; }
   .usage-list__col-trend, .usage-list__col-metric { display: none; }
   .usage-list__values { flex: none; }
+}
+
+/* ── Projects: sidebar working set ── */
+
+.project-row__icon { opacity: 0.75; }
+.project-row--nested { padding-left: 24px; }
+.project-row__name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.project-row__parent { color: var(--faint); }
+.project-row__count {
+  flex: none;
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  line-height: 17px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.project-row__pin {
+  display: none;
+  place-items: center;
+  flex: none;
+  width: 20px;
+  height: 20px;
+  margin-right: -4px;
+  border: none;
+  border-radius: 5px;
+  background: none;
+  color: var(--faint);
+  cursor: pointer;
+}
+.project-row__pin:hover { background: var(--state-hover); color: var(--fg); }
+.project-row:hover .project-row__pin,
+.project-row__pin:focus-visible { display: grid; }
+.project-list__link { color: var(--faint); }
+.project-list__link .nav-item__kbd { margin-left: auto; }
+.project-list__link:hover .nav-item__kbd { opacity: 1; }
+/* Set apart from the projects above and pinned to the bottom of the scroll
+   area, so a long project list scrolls beneath them. Same shelf treatment as
+   the usage and nav block below. */
+.project-list__links {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 10px -8px 0;
+  padding: 6px 8px;
+  background: var(--sidebar-bg, var(--surface-recessed));
+  box-shadow: var(--sidebar-shelf-shadow);
+}
+.project-group { display: flex; flex-direction: column; gap: 1px; }
+.project-group__header { display: flex; align-items: center; height: var(--row-h); padding: 0 10px; border-radius: var(--radius-md); }
+.project-group__header:hover { background: var(--state-hover); }
+.project-group__toggle { display: flex; flex: 1; align-items: center; gap: 10px; min-width: 0; height: 100%; padding: 0; border: none; background: none; color: var(--faint); font-size: var(--text-2xs); font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; cursor: pointer; }
+.project-group__header:hover .project-group__toggle { color: var(--muted); }
+.project-group__icon { flex: none; color: var(--muted); opacity: 0.75; }
+.project-group__count { color: var(--faint); font-family: var(--font-mono); font-size: var(--text-2xs); font-weight: 400; letter-spacing: 0; }
+.project-group__header .project-row__pin { display: none; }
+.project-group__header:hover .project-row__pin,
+.project-group__header .project-row__pin:focus-visible { display: grid; }
+.project-group__rows { display: flex; flex-direction: column; gap: 1px; padding-left: 12px; }
+.project-group__empty { padding-left: 30px; }
+
+/* ── ⌘P project switcher ── */
+
+.switcher-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: 12vh 16px 16px;
+  background: rgb(0 0 0 / 18%);
+}
+.switcher {
+  display: flex;
+  flex-direction: column;
+  width: min(560px, 100%);
+  max-height: min(520px, 70vh);
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface-overlay);
+  box-shadow: var(--shadow-lg);
+  animation: pop-in var(--med);
+}
+.switcher__search {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 48px;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+}
+.switcher__search input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--fg);
+  font-size: var(--text-base);
+}
+.switcher__search input::placeholder { color: var(--faint); }
+.switcher__kbd { color: var(--faint); font-family: var(--font-sans); font-size: var(--text-2xs); }
+.switcher__list { flex: 1; min-height: 0; margin: 0; padding: 6px; overflow-y: auto; list-style: none; }
+.switcher__item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  padding: 4px 10px;
+  border-radius: var(--radius-md);
+  color: var(--muted);
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+.switcher__item > svg { flex: none; }
+.switcher__item--selected { background: var(--state-hover); color: var(--fg); }
+.switcher__item--action { min-height: 32px; }
+.switcher__item:not(.switcher__item--action) + .switcher__item--action { margin-top: 4px; border-top: 1px solid var(--line); border-radius: 0 0 var(--radius-md) var(--radius-md); }
+.switcher__label { display: grid; flex: 1; min-width: 0; gap: 2px; line-height: 1.2; }
+.switcher__name { overflow: hidden; color: var(--fg); font-weight: 550; text-overflow: ellipsis; white-space: nowrap; }
+.switcher__item--action .switcher__name { flex: 1; color: inherit; font-weight: 500; }
+.switcher__parent { color: var(--faint); font-weight: 400; }
+.switcher__path { overflow: hidden; color: var(--faint); font-size: var(--text-2xs); text-overflow: ellipsis; white-space: nowrap; }
+.switcher__meta { flex: none; color: var(--faint); font-size: var(--text-2xs); }
+.switcher__pin { flex: none; color: var(--faint); }
+
+/* ── Projects page ── */
+
+.projects-page .page__heading--actions { align-items: center; }
+.projects-page__actions { display: flex; gap: 8px; }
+.projects-page__actions button { display: inline-flex; align-items: center; gap: 6px; }
+.projects-page__new-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: var(--ctl-h);
+  margin-bottom: 24px;
+  padding: 0 12px;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--muted);
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+.projects-page__new-group input { flex: 1; min-width: 0; height: 100%; border: 0; outline: none; background: transparent; color: var(--fg); font-size: var(--text-sm); }
+.project-section { border-radius: var(--radius-lg); transition: background var(--fast), outline-color var(--fast); outline: 2px dashed transparent; outline-offset: 6px; }
+.project-section + .project-section { margin-top: 28px; }
+.project-section--drop { outline-color: color-mix(in srgb, var(--accent) 60%, transparent); }
+.project-section__heading { display: flex; align-items: center; gap: 6px; min-height: 28px; margin: 0 0 8px; }
+.project-section__pin { min-width: 24px; height: 24px; opacity: 0; transition: opacity var(--fast); }
+.project-section__heading:hover .project-section__pin,
+.project-section__pin:focus-visible,
+.project-section__pin--on { opacity: 1; }
+.project-section__pin--on { color: var(--fg); }
+.project-section__tools { display: flex; gap: 2px; opacity: 0; transition: opacity var(--fast); }
+.project-section__heading:hover .project-section__tools,
+.project-section__tools:focus-within { opacity: 1; }
+.project-section__tools .icon-btn { min-width: 24px; height: 24px; }
+.project-section__tools .icon-btn[data-danger]:hover { color: var(--danger); background: var(--danger-ground); }
+.project-section__rename {
+  min-width: 0;
+  height: 26px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  outline: 2px solid var(--ring);
+  background: var(--surface);
+  color: var(--fg);
+  font-size: var(--text-xs);
+  font-weight: 650;
+}
+.project-section__empty { padding: 18px 16px; border-radius: var(--radius-lg); background: var(--surface); color: var(--faint); font-size: var(--text-xs); }
+.project-cards { margin: 0; padding: 0; list-style: none; border-radius: var(--radius-lg); background: var(--surface); overflow: hidden; }
+.project-card {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) 110px 66px;
+  align-items: center;
+  column-gap: 16px;
+  min-height: 64px;
+  padding: 12px 16px;
+  cursor: pointer;
+  transition: background var(--fast);
+}
+.project-card + .project-card { border-top: 1px solid var(--line); }
+.project-card:hover { background: var(--surface-hover); }
+.project-card:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
+.project-card--nested { padding-left: 44px; min-height: 52px; }
+.project-card--dragging { opacity: 0.45; }
+.project-card__icon { display: grid; place-items: center; color: var(--muted); }
+.project-card__body { display: grid; gap: 4px; min-width: 0; }
+.project-card__heading { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.project-card__name { min-width: 0; overflow: hidden; color: var(--fg); font-size: var(--text-base); font-weight: 550; text-overflow: ellipsis; white-space: nowrap; }
+.project-card--nested .project-card__name { font-size: var(--text-sm); }
+.project-card__parent { color: var(--faint); font-weight: 400; }
+.project-card__current { flex: none; padding: 0 6px; border-radius: var(--radius-pill); background: var(--surface-strong); color: var(--muted); font-size: var(--text-2xs); line-height: 17px; }
+.project-card__meta { display: flex; align-items: center; gap: 6px; min-width: 0; color: var(--muted); font-size: var(--text-xs); white-space: nowrap; }
+.project-card__meta > span + span::before { content: "·"; margin-right: 6px; }
+.project-card__branch { flex: none; max-width: 40%; overflow: hidden; font-family: var(--font-mono); text-overflow: ellipsis; }
+.project-card__path { min-width: 0; overflow: hidden; color: var(--faint); text-overflow: ellipsis; }
+.project-card__status { color: var(--faint); font-size: var(--text-xs); text-align: right; white-space: nowrap; }
+.project-card__live { display: inline-flex; align-items: center; gap: 6px; color: var(--ok); }
+.project-card__live::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.project-card__actions { display: flex; justify-content: flex-end; gap: 2px; }
+.project-card__pin { opacity: 0; }
+.project-card:hover .project-card__pin,
+.project-card__pin:focus-visible,
+.project-card__pin--on { opacity: 1; }
+.project-card__pin--on { color: var(--fg); }
+@container workspace (max-width: 700px) {
+  .project-card { grid-template-columns: 20px minmax(0, 1fr) 66px; column-gap: 12px; }
+  .project-card__status { display: none; }
 }

@@ -93,8 +93,25 @@ pub fn setup(app: &AppHandle<Wry>) -> tauri::Result<()> {
         Some("CmdOrCtrl+B"),
     )?;
 
+    let switch_project = MenuItem::with_id(
+        app,
+        "switch_project",
+        "Switch Project…",
+        true,
+        Some("CmdOrCtrl+P"),
+    )?;
+    let all_projects = MenuItem::with_id(
+        app,
+        "all_projects",
+        "All Projects",
+        true,
+        Some("CmdOrCtrl+Shift+P"),
+    )?;
+
     let view_menu = SubmenuBuilder::new(app, "View")
         .item(&toggle_sidebar)
+        .item(&switch_project)
+        .item(&all_projects)
         .separator()
         .fullscreen()
         .build()?;

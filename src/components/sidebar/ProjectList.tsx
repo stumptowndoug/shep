@@ -1,15 +1,16 @@
-import { useEffect, useMemo, useState, useCallback, useRef } from "react";
-import type { RepoInfo, RepoGroup } from "../../lib/types";
+import { useMemo, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
-import { FolderPlus, Folders } from "lucide-react";
+import { FolderPlus, Folders, LayoutGrid, Pin, Search } from "lucide-react";
+import type { RepoGroup, RepoInfo } from "../../lib/types";
 import { useGitStore } from "../../stores/useGitStore";
 import { useRepoStore } from "../../stores/useRepoStore";
+import { useTerminalStore } from "../../stores/useTerminalStore";
+import { useUIStore } from "../../stores/useUIStore";
 import { useNoticeStore } from "../../stores/useNoticeStore";
 import { getErrorMessage } from "../../lib/errors";
+import { buildProjectTree, projectLiveState, type ProjectLiveState } from "../../lib/projectTree";
 import ProjectItem from "./ProjectItem";
-import GroupHeader from "./GroupHeader";
-import GitStatusRow from "./GitStatusRow";
-import ProjectActionMenu, { type ProjectActionKind } from "../shared/ProjectActionMenu";
+import { toggleGroupPin, type ProjectHandlers } from "../shared/useProjectMenu";
 
 /** Ask for a folder to add as a project. Resolves null when cancelled. */
 export async function pickProjectFolder(): Promise<string | null> {
@@ -19,98 +20,72 @@ export async function pickProjectFolder(): Promise<string | null> {
 
 interface ProjectListProps {
   repos: RepoInfo[];
-  groups: RepoGroup[];
   activeRepoPath: string | null;
+  handlers: ProjectHandlers;
   onSelectRepo: (repoPath: string) => void;
-  onAddProject: (repoPath: string) => Promise<void>;
-  onRemoveProject: (repoPath: string) => void;
-  onOpenInEditor: (repoPath: string) => void;
-  onProjectAction: (repoPath: string, action: ProjectActionKind) => void;
-  onRenameGroup: (groupId: string, newName: string) => void;
-  onDeleteGroup: (groupId: string) => void;
-  onMoveToGroup: (repoPath: string, groupId: string | null) => Promise<void>;
 }
 
-export default function ProjectList({
-  repos,
-  groups,
-  activeRepoPath,
-  onSelectRepo,
-  onAddProject,
-  onRemoveProject,
-  onOpenInEditor,
-  onProjectAction,
-  onRenameGroup,
-  onDeleteGroup,
-  onMoveToGroup,
-}: ProjectListProps) {
-  const [expandedPaths, setExpandedPaths] = useState<Set<string>>(
-    () => new Set(activeRepoPath ? [activeRepoPath] : []),
-  );
+interface Row {
+  repo: RepoInfo;
+  parentName: string | null;
+  nested: boolean;
+  live: ProjectLiveState | null;
+}
+
+/**
+ * The sidebar's working set: pinned groups (with all their projects), then
+ * loose projects that have open tabs, are pinned, or are active. Everything
+ * else lives on the Projects page and in ⌘P.
+ */
+export default function ProjectList({ repos, activeRepoPath, handlers, onSelectRepo }: ProjectListProps) {
+  const groups = useRepoStore((s) => s.groups);
+  const gitStatuses = useGitStore((s) => s.projectGitStatus);
+  const projectState = useTerminalStore((s) => s.projectState);
+  const tabActivity = useTerminalStore((s) => s.tabActivity);
+  const projectsPageActive = useUIStore((s) => s.projectsPanelActive);
+  // Groups start collapsed; expanding is per-session only.
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(() => new Set());
-  const [creatingGroup, setCreatingGroup] = useState(false);
-  const [newGroupName, setNewGroupName] = useState("");
-  const createGroupSubmittedRef = useRef(false);
-  const pendingMoveRepoPath = useRef<string | null>(null);
 
-  // Auto-expand the active project when activeRepoPath changes externally
-  // (e.g. session restore, programmatic selection). Legitimate useEffect:
-  // syncing local UI state in response to an external prop change.
-  useEffect(() => {
-    if (!activeRepoPath) return;
-    setExpandedPaths((prev) => {
-      if (prev.has(activeRepoPath)) return prev;
-      return new Set(prev).add(activeRepoPath);
-    });
-    // Also expand the parent group if the active repo belongs to one
-    const activeRepo = repos.find((r) => r.path === activeRepoPath);
-    if (activeRepo?.group) {
-      setExpandedGroups((prev) => {
-        if (prev.has(activeRepo.group!)) return prev;
-        return new Set(prev).add(activeRepo.group!);
-      });
-    }
-  }, [activeRepoPath, repos]);
+  const { groupBlocks, looseRows } = useMemo(() => {
+    const pinnedGroups = groups.filter((g) => g.pinned).sort((a, b) => a.order - b.order);
+    const pinnedIds = new Set(pinnedGroups.map((g) => g.id));
+    const grouped = new Map<string, Row[]>(pinnedGroups.map((g) => [g.id, []]));
+    const loose: Row[] = [];
+    const liveFor = (repo: RepoInfo) => projectLiveState(projectState[repo.path], tabActivity);
+    const include = (repo: RepoInfo, live: ProjectLiveState | null) =>
+      repo.pinned || live !== null || repo.path === activeRepoPath;
 
-  const handleProjectClick = (repoPath: string) => {
-    if (repoPath === activeRepoPath) {
-      setExpandedPaths((prev) => {
-        const next = new Set(prev);
-        if (next.has(repoPath)) next.delete(repoPath);
-        else next.add(repoPath);
-        return next;
-      });
-    } else {
-      setExpandedPaths((prev) => {
-        if (prev.has(repoPath)) return prev;
-        return new Set(prev).add(repoPath);
-      });
-      // Auto-expand the group containing the clicked repo
-      const repo = repos.find((r) => r.path === repoPath);
-      if (repo?.group) {
-        setExpandedGroups((prev) => {
-          if (prev.has(repo.group!)) return prev;
-          return new Set(prev).add(repo.group!);
-        });
+    for (const node of buildProjectTree(repos, gitStatuses)) {
+      const parentName = gitStatuses[node.repo.path]?.worktree_parent ?? null;
+      const groupRows = node.repo.group && pinnedIds.has(node.repo.group) ? grouped.get(node.repo.group)! : null;
+      if (groupRows) {
+        // A pinned group shows every project in it, worktrees included.
+        groupRows.push({ repo: node.repo, parentName, nested: false, live: liveFor(node.repo) });
+        for (const worktree of node.worktrees) {
+          groupRows.push({ repo: worktree, parentName: node.repo.name, nested: true, live: liveFor(worktree) });
+        }
+        continue;
       }
-      onSelectRepo(repoPath);
+      const rootLive = liveFor(node.repo);
+      const rootShown = include(node.repo, rootLive);
+      if (rootShown) loose.push({ repo: node.repo, parentName, nested: false, live: rootLive });
+      for (const worktree of node.worktrees) {
+        const live = liveFor(worktree);
+        if (!include(worktree, live)) continue;
+        loose.push({ repo: worktree, parentName: node.repo.name, nested: rootShown, live });
+      }
     }
-  };
 
-  const handleToggleGroup = useCallback((groupId: string) => {
-    setExpandedGroups((prev) => {
-      const next = new Set(prev);
-      if (next.has(groupId)) next.delete(groupId);
-      else next.add(groupId);
-      return next;
-    });
-  }, []);
+    return {
+      groupBlocks: pinnedGroups.map((group) => ({ group, rows: grouped.get(group.id)! })),
+      looseRows: loose,
+    };
+  }, [repos, groups, gitStatuses, projectState, tabActivity, activeRepoPath]);
 
-
-  const handleAddProject = useCallback(async () => {
+  const handleAddProject = async () => {
     try {
       const folder = await pickProjectFolder();
-      if (folder) await onAddProject(folder);
+      if (folder) await handlers.onAddProject(folder);
     } catch (error) {
       useNoticeStore.getState().pushNotice({
         tone: "error",
@@ -118,181 +93,111 @@ export default function ProjectList({
         message: getErrorMessage(error),
       });
     }
-  }, [onAddProject]);
+  };
 
-  const handleStartGroup = useCallback((repoPath: string | null = null) => {
-    pendingMoveRepoPath.current = repoPath;
-    createGroupSubmittedRef.current = false;
-    setNewGroupName("");
-    setCreatingGroup(true);
-  }, []);
+  const toggleGroup = (groupId: string) => {
+    setExpandedGroups((previous) => {
+      const next = new Set(previous);
+      if (next.has(groupId)) next.delete(groupId);
+      else next.add(groupId);
+      return next;
+    });
+  };
 
-  const handleCreateGroupSubmit = useCallback(() => {
-    if (createGroupSubmittedRef.current) return;
-    createGroupSubmittedRef.current = true;
-    const trimmed = newGroupName.trim();
-    const repoToMove = pendingMoveRepoPath.current;
-    pendingMoveRepoPath.current = null;
-    if (trimmed) {
-      useRepoStore.getState().createGroup(trimmed)
-        .then(async (group) => {
-          if (repoToMove) await onMoveToGroup(repoToMove, group.id);
-          setExpandedGroups((prev) => new Set(prev).add(group.id));
-        })
-        .catch((error) => {
-          useNoticeStore.getState().pushNotice({
-            tone: "error",
-            title: "Couldn't create group",
-            message: getErrorMessage(error),
-          });
-        });
-    }
-    setCreatingGroup(false);
-    setNewGroupName("");
-  }, [newGroupName, onMoveToGroup]);
-
-  const gitStatuses = useGitStore((s) => s.projectGitStatus);
-
-  // Build grouped layout
-  const { sortedGroups, groupedRepos, ungroupedRepos } = useMemo(() => {
-    const validGroupIds = new Set(groups.map((g) => g.id));
-    const grouped = new Map<string, RepoInfo[]>();
-    const ungrouped: RepoInfo[] = [];
-
-    for (const repo of repos) {
-      if (repo.group && validGroupIds.has(repo.group)) {
-        const list = grouped.get(repo.group) ?? [];
-        list.push(repo);
-        grouped.set(repo.group, list);
-      } else {
-        ungrouped.push(repo);
-      }
-    }
-
-    // Sort repos within each group (worktree-aware)
-    const sortFn = (a: RepoInfo, b: RepoInfo) => {
-      const aWt = gitStatuses[a.path]?.worktree_parent ?? null;
-      const bWt = gitStatuses[b.path]?.worktree_parent ?? null;
-      const aGroup = aWt ?? a.name;
-      const bGroup = bWt ?? b.name;
-      const groupCompare = aGroup.localeCompare(bGroup);
-      if (groupCompare !== 0) return groupCompare;
-      if (aWt == null && bWt != null) return -1;
-      if (aWt != null && bWt == null) return 1;
-      return a.name.localeCompare(b.name);
-    };
-
-    for (const list of grouped.values()) {
-      list.sort(sortFn);
-    }
-    ungrouped.sort(sortFn);
-
-    const allSorted = [...groups].sort((a, b) => a.order - b.order);
-
-    return { sortedGroups: allSorted, groupedRepos: grouped, ungroupedRepos: ungrouped };
-  }, [repos, groups, gitStatuses]);
-
-  const renderRepoItem = (repo: RepoInfo) => {
-    const isActive = repo.path === activeRepoPath;
-    const isExpanded = isActive && expandedPaths.has(repo.path);
-    const worktreeParent = gitStatuses[repo.path]?.worktree_parent ?? null;
+  const renderRow = (row: Row) => {
     return (
-      <div key={repo.path}>
-        <ProjectItem
-          repo={repo}
-          isActive={isActive}
-          isExpanded={isExpanded}
-          worktreeParent={worktreeParent}
-          groups={groups}
-          onOpenInEditor={() => onOpenInEditor(repo.path)}
-          onRemove={() => onRemoveProject(repo.path)}
-          onClick={() => handleProjectClick(repo.path)}
-          onAddProject={onAddProject}
-          onMoveToGroup={onMoveToGroup}
-          onNewGroupForRepo={handleStartGroup}
-        />
-        {isExpanded && (
-          <div className="side-children">
-            <ProjectActionMenu
-              variant="project"
-              projectName={repo.name}
-              onAction={(action) => onProjectAction(repo.path, action)}
-            />
-            <GitStatusRow repoPath={repo.path} />
-          </div>
-        )}
-      </div>
+      <ProjectItem
+        key={row.repo.path}
+        repo={row.repo}
+        parentName={row.parentName}
+        nested={row.nested}
+        isActive={row.repo.path === activeRepoPath}
+        live={row.live}
+        handlers={handlers}
+        onSelect={() => onSelectRepo(row.repo.path)}
+      />
     );
   };
 
   return (
     <div className="side-list">
-      <div className="project-list__actions" role="group" aria-label="Create projects and groups">
-        <button type="button" className="nav-item" onClick={() => void handleAddProject()} title="Choose a project folder">
-          <FolderPlus size={14} aria-hidden="true" />
-          <span>New Project</span>
-        </button>
-        <button type="button" className="nav-item" onClick={() => handleStartGroup()} aria-expanded={creatingGroup} disabled={creatingGroup}>
-          <Folders size={14} aria-hidden="true" />
-          <span>New Group</span>
-        </button>
-      </div>
-      {creatingGroup && (
-        <form
-          className="group-create-form"
-          onSubmit={(e) => {
-            e.preventDefault();
-            handleCreateGroupSubmit();
-          }}
-        >
-          <input
-            className="group-create-form__input"
-            type="text"
-            placeholder="Group name"
-            aria-label="New group name"
-            title="Enter to create, Esc to cancel"
-            autoFocus
-            value={newGroupName}
-            onChange={(e) => setNewGroupName(e.target.value)}
-            onBlur={handleCreateGroupSubmit}
-            onKeyDown={(e) => {
-              if (e.key === "Escape") {
-                createGroupSubmittedRef.current = true;
-                pendingMoveRepoPath.current = null;
-                setCreatingGroup(false);
-                setNewGroupName("");
-              }
-            }}
-          />
-        </form>
-      )}
-      {sortedGroups.map((group) => {
-        const groupRepos = groupedRepos.get(group.id) ?? [];
-        const isGroupExpanded = expandedGroups.has(group.id);
+      {groupBlocks.map(({ group, rows }) => {
+        const collapsed = !expandedGroups.has(group.id);
+        // Keep the active project visible even when its group is collapsed.
+        const visibleRows = collapsed ? rows.filter((row) => row.repo.path === activeRepoPath) : rows;
         return (
-          <div key={group.id}>
-            <GroupHeader
-              group={group}
-              isExpanded={isGroupExpanded}
-              onToggle={() => handleToggleGroup(group.id)}
-              onRename={onRenameGroup}
-              onDelete={onDeleteGroup}
-            />
-            {isGroupExpanded && (
-              <div className="side-children">
-                {groupRepos.length === 0 ? (
-                  <div className="group-empty-hint">No projects in this group</div>
-                ) : (
-                  groupRepos.map(renderRepoItem)
-                )}
-              </div>
-            )}
+          <div key={group.id} className="project-group">
+            <SidebarGroupHeader group={group} count={rows.length} collapsed={collapsed} onToggle={() => toggleGroup(group.id)} />
+            {visibleRows.length > 0 && <div className="project-group__rows">{visibleRows.map(renderRow)}</div>}
+            {!collapsed && rows.length === 0 && <div className="side-empty project-group__empty">No projects yet</div>}
           </div>
         );
       })}
-
-      {ungroupedRepos.map(renderRepoItem)}
+      {looseRows.map(renderRow)}
       {repos.length === 0 && <div className="side-empty">No projects yet.</div>}
+      <div className="project-list__links">
+        {repos.length > 0 && (
+          <button
+            type="button"
+            className="list-item project-list__link"
+            onClick={() => useUIStore.getState().setProjectSwitcherOpen(true)}
+            aria-haspopup="dialog"
+            title="Switch to any project"
+          >
+            <Search size={14} />
+            <span className="truncate">Find project</span>
+            <kbd className="nav-item__kbd">⌘P</kbd>
+          </button>
+        )}
+        {repos.length > 0 && (
+          <button
+            type="button"
+            className={`list-item project-list__link ${projectsPageActive ? "active" : ""}`}
+            onClick={() => useUIStore.getState().toggleProjectsPanel()}
+            aria-pressed={projectsPageActive}
+            title="Browse, group, and pin projects"
+          >
+            <LayoutGrid size={14} />
+            <span className="truncate">All projects</span>
+            <kbd className="nav-item__kbd">⇧⌘P</kbd>
+          </button>
+        )}
+        <button type="button" className="list-item project-list__link" onClick={() => void handleAddProject()}>
+          <FolderPlus size={14} />
+          <span className="truncate">Add project</span>
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function SidebarGroupHeader({
+  group,
+  count,
+  collapsed,
+  onToggle,
+}: {
+  group: RepoGroup;
+  count: number;
+  collapsed: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <div className="project-group__header">
+      <button type="button" className="project-group__toggle" onClick={onToggle} aria-expanded={!collapsed}>
+        <Folders size={14} className="project-group__icon" />
+        <span className="truncate">{group.name}</span>
+        <span className="project-group__count">{count}</span>
+      </button>
+      <button
+        type="button"
+        className="project-row__pin project-row__pin--on"
+        onClick={() => toggleGroupPin(group)}
+        title="Unpin group from sidebar"
+        aria-label={`Unpin ${group.name} from sidebar`}
+      >
+        <Pin size={12} fill="currentColor" />
+      </button>
     </div>
   );
 }

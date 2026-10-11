@@ -4,12 +4,16 @@ export interface RepoInfo {
   path: string;
   name: string;
   group: string | null;
+  pinned: boolean;
+  /** Milliseconds since the Unix epoch, or null if never opened. */
+  last_opened: number | null;
 }
 
 export interface RepoGroup {
   id: string;
   name: string;
   order: number;
+  pinned: boolean;
 }
 
 export interface CommandConfig {

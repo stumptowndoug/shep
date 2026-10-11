@@ -2,16 +2,15 @@ import { useCallback, useRef, useState } from "react";
 import { useTerminalStore } from "../../stores/useTerminalStore";
 import { useUIStore } from "../../stores/useUIStore";
 import { useShallow } from "zustand/shallow";
-import { GitBranch, X } from "lucide-react";
+import { X } from "lucide-react";
 import { assistantLogoSrc, getAssistantLogoClass } from "../../lib/assistantLogos";
 import { handleActionKey } from "../../lib/a11y";
-import { useGitStore } from "../../stores/useGitStore";
 import tabKindMeta from "../../lib/tabKindMeta";
 import { isSessionTab, type UnifiedTab } from "../../lib/types";
 import { useProjectSettingsStore } from "../../stores/useProjectSettingsStore";
 import { agentDisplayLabel } from "../../lib/agentLabels";
 import ProjectActionMenu, { type ProjectActionKind } from "../shared/ProjectActionMenu";
-import ChangesSummary from "../git/ChangesSummary";
+import GitSummary from "../git/GitSummary";
 
 /** Render the icon for a tab based on its kind */
 function TabIcon({ tab }: { tab: UnifiedTab }) {
@@ -42,13 +41,6 @@ export default function TabBar({
   const projectTerminals = projectState;
   const projectName = activeProjectPath ? activeProjectPath.split("/").pop() : null;
   const agentLabelMode = useProjectSettingsStore((s) => s.settings.agentLabelMode);
-  const gitStatus = useGitStore((s) => activeProjectPath ? s.projectGitStatus[activeProjectPath] : null);
-  const branch = gitStatus?.branch ?? null;
-  const branchIconColor = !gitStatus || !gitStatus.is_git_repo
-    ? undefined
-    : gitStatus.dirty
-      ? "var(--status-attention)"
-      : "var(--status-clean)";
   const tabs = projectTerminals?.tabs ?? [];
   const activeTabId = projectTerminals?.activeTabId ?? null;
   const { setActiveTab, reorderTab, updateTab } = useTerminalStore.getState();
@@ -113,14 +105,15 @@ export default function TabBar({
   }, [computeDropIndex, reorderTab]);
 
   // Only subscribe to global overlay state.
-  const { settingsActive, usagePanelActive, portsPanelActive, historyPanelActive } = useUIStore(useShallow((s) => ({
+  const { settingsActive, usagePanelActive, portsPanelActive, historyPanelActive, projectsPanelActive } = useUIStore(useShallow((s) => ({
     settingsActive: s.settingsActive,
     usagePanelActive: s.usagePanelActive,
     portsPanelActive: s.portsPanelActive,
     historyPanelActive: s.historyPanelActive,
+    projectsPanelActive: s.projectsPanelActive,
   })));
 
-  const anyOverlay = settingsActive || usagePanelActive || portsPanelActive || historyPanelActive;
+  const anyOverlay = settingsActive || usagePanelActive || portsPanelActive || historyPanelActive || projectsPanelActive;
 
   const handleSelectTab = (tabId: string) => {
     useUIStore.getState().deactivateAllOverlays();
@@ -220,18 +213,8 @@ export default function TabBar({
         <ProjectActionMenu variant="tab" onAction={onProjectAction} />
       </div>
       {projectName && (
-        <div className="tab-bar__context" role="group" aria-label="Project changes">
-          <span className="tab-bar__breadcrumb" title={`${projectName}${branch ? ` on ${branch}` : ""}`}>
-            <span className="truncate">{projectName}</span>
-            {branch && (
-              <>
-                <span className="tab-bar__breadcrumb-on">on</span>
-                <GitBranch size={14} style={branchIconColor ? { color: branchIconColor } : undefined} />
-                <span className="truncate">{branch}</span>
-              </>
-            )}
-          </span>
-          <ChangesSummary active={changesActive} />
+        <div className="tab-bar__context">
+          <GitSummary active={changesActive} />
         </div>
       )}
     </div>
