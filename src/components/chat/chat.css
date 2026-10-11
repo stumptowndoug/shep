@@ -369,6 +369,43 @@ summary.chat-tool__row:hover { background: var(--state-hover); }
   overflow-wrap: anywhere;
 }
 .chat-resource svg { flex-shrink: 0; }
+/* Images in agent replies: local files load inline; remote and failed ones stay chips. */
+.chat-markdown .chat-image__img {
+  display: block;
+  max-width: 100%;
+  max-height: 28rem;
+  margin: 8px 0;
+  object-fit: contain;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  cursor: zoom-in;
+}
+.chat-markdown .chat-image {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--muted);
+  font-size: var(--text-sm);
+  text-decoration: none;
+  vertical-align: middle;
+}
+.chat-markdown .chat-image--link { color: var(--accent); }
+.chat-markdown .chat-image--link:hover { background: var(--surface-hover); }
+.chat-image__icon { flex-shrink: 0; }
+.chat-image__label { overflow-wrap: anywhere; }
+.chat-image__note::before { content: "·"; margin-right: 6px; }
+.chat-markdown .chat-image__open {
+  margin-left: 2px;
+  padding: 0 6px;
+  border-radius: var(--radius-sm);
+  color: var(--accent);
+  font: inherit;
+}
+.chat-markdown .chat-image__open:hover { background: var(--surface-hover); }
 .chat-diff__path {
   padding: 8px 12px;
   border-bottom: 1px solid var(--line);

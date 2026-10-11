@@ -165,6 +165,14 @@ mockIPC((cmd, payload) => {
     }
     case 'kill_port': previewPorts = previewPorts.filter(port => port.pid !== args?.pid); return null;
     case 'open_url': document.documentElement.dataset.previewLastOpenedUrl = String(args?.url); return null;
+    case 'reveal_in_finder': document.documentElement.dataset.previewLastRevealed = String(args?.path); return null;
+    case 'read_chat_image': {
+      const path = String(args?.path);
+      if (path.includes('missing')) return Promise.reject('missing');
+      if (path.includes('huge')) return Promise.reject('too-large');
+      // A 1×1 PNG.
+      return Uint8Array.from(atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='), c => c.charCodeAt(0)).buffer;
+    }
     case 'get_pi_config': return {settings:{defaultProvider:null,defaultModel:null},configuredProviders:[]};
     case 'get_all_usage_snapshots': return snapshots;
     case 'list_session_history': {

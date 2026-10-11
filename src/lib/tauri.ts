@@ -155,6 +155,11 @@ export function openInEditor(
   });
 }
 
+/** Raw bytes of an image an agent referenced in chat (local paths resolve against `baseDir`). */
+export function readChatImage(path: string, baseDir: string): Promise<ArrayBuffer> {
+  return invoke("read_chat_image", { path, baseDir });
+}
+
 export function revealInFinder(path: string): Promise<void> {
   return invoke("reveal_in_finder", { path });
 }

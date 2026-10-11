@@ -2,6 +2,7 @@ import { memo, useCallback, useRef, useState } from "react";
 import { ChevronRight, CircleAlert, ShieldAlert, X } from "lucide-react";
 import { ChatItemView } from "./ChatItems";
 import ChatComposer from "./ChatComposer";
+import { ChatProjectPath } from "./chatProjectPath";
 import CursorRequestCard from "./CursorRequestCard";
 import { useChatStore } from "../../stores/useChatStore";
 import { answerPermission, cancelChatStartup, cancelTurn } from "../../lib/acp/chatSessions";
@@ -133,6 +134,7 @@ export default function ChatView({ chatId, assistantId, repoPath, fullAccess, on
   const projectName = repoPath.split("/").filter(Boolean).pop() ?? repoPath;
 
   return (
+    <ChatProjectPath value={repoPath}>
     <div ref={rootRef} className="chat-view">
       <div
         ref={scrollRef}
@@ -211,5 +213,6 @@ export default function ChatView({ chatId, assistantId, repoPath, fullAccess, on
         <ChatComposer chatId={chatId} chat={chat} assistantId={assistantId} agentName={agentName} fullAccess={fullAccess} onOpenTerminal={onOpenTerminal} />
       </div>
     </div>
+    </ChatProjectPath>
   );
 }

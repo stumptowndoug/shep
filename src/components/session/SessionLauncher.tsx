@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import type { AgentInterface, CodingAssistant, ProjectActionKind, SessionMode } from "../../lib/types";
 import tabKindMeta from "../../lib/tabKindMeta";
 import { CODING_ASSISTANTS } from "../sidebar/constants";
-import { getModelsForProvider, installManagedAcpAdapter, revealInFinder } from "../../lib/tauri";
+import { getModelsForProvider, installManagedAcpAdapter, openUrl, revealInFinder } from "../../lib/tauri";
 import { chatAvailabilityKey, commandAvailabilityKey, useAgentAvailabilityStore } from "../../stores/useAgentAvailabilityStore";
 import { getErrorMessage } from "../../lib/errors";
 import { useRepoStore } from "../../stores/useRepoStore";
@@ -345,6 +345,10 @@ export default function SessionLauncher({ onStartSession, onRunInTerminal, onOpe
               href={selectedAssistant.docsUrl}
               target="_blank"
               rel="noreferrer"
+              onClick={(event) => {
+                event.preventDefault();
+                void openUrl(selectedAssistant.docsUrl!);
+              }}
               className="mt-1 inline-block underline decoration-dotted"
               style={{ color: "var(--accent)" }}
             >

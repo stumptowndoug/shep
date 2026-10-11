@@ -1,17 +1,29 @@
-import { Suspense, memo, use, useDeferredValue, useMemo } from "react";
+import { Suspense, memo, use, useCallback, useContext, useDeferredValue, useMemo } from "react";
 import { useThemeStore } from "../../stores/useThemeStore";
 import { getMarkdownRenderer, getPlainMarkdownRenderer } from "../../lib/markdownRenderer";
 import { shikiThemeFor } from "../../lib/shikiHighlighter";
+import { handleChatMarkdownClick, hydrateChatImages } from "./chatMarkdownDom";
+import { ChatProjectPath } from "./chatProjectPath";
+
+/** Rendered markdown. Local images load once the text stops streaming. */
+function MarkdownHtml({ html, loadImages }: { html: string; loadImages: boolean }) {
+  const baseDir = useContext(ChatProjectPath);
+  const ref = useCallback((node: HTMLDivElement | null) => {
+    if (!node || !loadImages || !html.includes("chat-image--local")) return;
+    return hydrateChatImages(node, baseDir);
+  }, [html, loadImages, baseDir]);
+  return <div ref={ref} className="chat-markdown" onClick={(event) => handleChatMarkdownClick(event, baseDir)} dangerouslySetInnerHTML={{ __html: html }} />;
+}
 
 function HighlightedMarkdown({ text, themeName }: { text: string; themeName: string }) {
   const renderer = use(getMarkdownRenderer(themeName));
   const html = useMemo(() => renderer.render(text), [renderer, text]);
-  return <div className="chat-markdown" dangerouslySetInnerHTML={{ __html: html }} />;
+  return <MarkdownHtml html={html} loadImages />;
 }
 
-function PlainMarkdown({ text }: { text: string }) {
+function PlainMarkdown({ text, loadImages }: { text: string; loadImages: boolean }) {
   const html = useMemo(() => getPlainMarkdownRenderer().render(text), [text]);
-  return <div className="chat-markdown" dangerouslySetInnerHTML={{ __html: html }} />;
+  return <MarkdownHtml html={html} loadImages={loadImages} />;
 }
 
 /** Agent markdown with Shiki code blocks; plain until the highlighter loads. */
@@ -29,9 +41,9 @@ export default memo(function ChatMarkdown({ text, streaming = false }: { text: s
       </details>
     </div>;
   }
-  if (streaming) return <PlainMarkdown text={renderedText} />;
+  if (streaming) return <PlainMarkdown text={renderedText} loadImages={false} />;
   return (
-    <Suspense fallback={<PlainMarkdown text={renderedText} />}>
+    <Suspense fallback={<PlainMarkdown text={renderedText} loadImages />}>
       <HighlightedMarkdown text={renderedText} themeName={themeName} />
     </Suspense>
   );
