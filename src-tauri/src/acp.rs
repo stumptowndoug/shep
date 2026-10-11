@@ -51,10 +51,10 @@ struct AcpState {
 }
 
 impl AcpState {
-    fn terminate(&mut self, id: u32) {
+    fn terminate(&mut self, id: u32, reaped: bool) {
         if let Some(process) = self.processes.remove(&id) {
             self.terminations.retain(|worker| !worker.is_finished());
-            self.terminations.push(terminate_group(process.pid));
+            self.terminations.push(terminate_group(process.pid, reaped));
         }
     }
 }
@@ -154,7 +154,8 @@ impl AcpManager {
             } else {
                 exit_code
             };
-            manager.kill(id);
+            // The agent is reaped; clean up only what is left in its group.
+            manager.state.lock().unwrap().terminate(id, true);
             let mut stderr = stderr_tail
                 .lock()
                 .unwrap()
@@ -191,14 +192,14 @@ impl AcpManager {
     }
 
     pub fn kill(&self, id: u32) {
-        self.state.lock().unwrap().terminate(id);
+        self.state.lock().unwrap().terminate(id, false);
     }
 
     pub fn kill_all(&self) {
         let mut state = self.state.lock().unwrap();
         let ids: Vec<_> = state.processes.keys().copied().collect();
         for id in ids {
-            state.terminate(id);
+            state.terminate(id, false);
         }
     }
 
@@ -278,11 +279,17 @@ fn wait_for_exit(child: &mut Child) -> i32 {
 }
 
 /// SIGTERM the agent's process group, then SIGKILL whatever ignores it.
-fn terminate_group(pid: u32) -> std::thread::JoinHandle<()> {
+/// Once the agent is `reaped`, its pid may belong to another process, so only
+/// its group is signalled: the group id stays reserved while members remain.
+fn terminate_group(pid: u32, reaped: bool) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
         #[cfg(unix)]
         {
-            let descendants = crate::pty::session::get_all_descendants(pid as i32);
+            let descendants = if reaped {
+                Vec::new()
+            } else {
+                crate::pty::session::get_all_descendants(pid as i32)
+            };
             let group = -(pid as i32);
             unsafe {
                 libc::kill(group, libc::SIGTERM);

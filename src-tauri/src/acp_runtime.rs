@@ -89,22 +89,72 @@ fn runtime_dir(adapter: &str) -> Result<PathBuf, String> {
         .join(format!("{ANTIGRAVITY_VERSION}-{}", platform_arch()?)))
 }
 
+/// Identity of a file that passed verification. Rewriting, replacing, or
+/// chmod-ing it changes the stamp, so the file is hashed again.
+#[derive(Clone, PartialEq)]
+struct FileStamp {
+    len: u64,
+    modified: Option<SystemTime>,
+    changed: (i64, i64),
+    inode: u64,
+}
+
+/// The runtime is ~400 MB, and availability checks run on every chat start.
+static VERIFIED: Mutex<Vec<(PathBuf, &'static str, FileStamp)>> = Mutex::new(Vec::new());
+
+/// A non-empty, executable regular file's stamp, or None if it can't be run.
+fn runnable_stamp(path: &Path) -> Option<FileStamp> {
+    let meta = fs::symlink_metadata(path).ok()?;
+    if !meta.is_file() || meta.len() == 0 {
+        return None;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        if meta.permissions().mode() & 0o100 == 0 {
+            return None;
+        }
+        Some(FileStamp {
+            len: meta.len(),
+            modified: meta.modified().ok(),
+            changed: (meta.ctime(), meta.ctime_nsec()),
+            inode: meta.ino(),
+        })
+    }
+    #[cfg(not(unix))]
+    Some(FileStamp {
+        len: meta.len(),
+        modified: meta.modified().ok(),
+        changed: (0, 0),
+        inode: 0,
+    })
+}
+
 fn installed(dir: &Path, hashes: &RuntimeHashes) -> bool {
     FILES.iter().zip(hashes.files).all(|(name, expected)| {
-        let Ok(meta) = fs::symlink_metadata(dir.join(name)) else {
+        let path = dir.join(name);
+        let Some(stamp) = runnable_stamp(&path) else {
             return false;
         };
-        if !meta.is_file() || meta.len() == 0 {
+        let cached = VERIFIED.lock().is_ok_and(|verified| {
+            verified
+                .iter()
+                .any(|(p, hash, s)| *p == path && *hash == expected && *s == stamp)
+        });
+        if cached {
+            return true;
+        }
+        if verify_sha256(&path, expected).is_err() {
             return false;
         }
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            if meta.permissions().mode() & 0o100 == 0 {
-                return false;
+        // Only trust the stamp if the file didn't change while it was hashed.
+        if runnable_stamp(&path).as_ref() == Some(&stamp) {
+            if let Ok(mut verified) = VERIFIED.lock() {
+                verified.retain(|(p, _, _)| *p != path);
+                verified.push((path, expected, stamp));
             }
         }
-        verify_sha256(&dir.join(name), expected).is_ok()
+        true
     })
 }
 

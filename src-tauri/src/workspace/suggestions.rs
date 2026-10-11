@@ -188,8 +188,15 @@ fn scan_cwd(reader: impl BufRead, pick: impl Fn(&Value) -> Option<&Value>) -> Op
             .take((MAX_LINE_BYTES + 1) as u64)
             .read_until(b'\n', &mut line)
             .ok()?;
-        if read == 0 || read > MAX_LINE_BYTES {
+        if read == 0 {
             return None;
+        }
+        if read > MAX_LINE_BYTES {
+            // Logs often open with a huge pasted prompt; skip it without buffering it.
+            if line.last() != Some(&b'\n') {
+                reader.skip_until(b'\n').ok()?;
+            }
+            continue;
         }
         let Ok(row) = serde_json::from_slice::<Value>(&line) else {
             continue;
@@ -209,10 +216,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn oversized_log_lines_stop_before_allocating_the_whole_line() {
+    fn oversized_log_lines_are_skipped_within_the_scan_budget() {
         let mut reader = std::io::Cursor::new(vec![b'x'; MAX_LINE_BYTES * 100]);
         assert!(scan_cwd(&mut reader, |row| row.get("cwd")).is_none());
-        assert_eq!(reader.position(), (MAX_LINE_BYTES + 1) as u64);
+        assert!(reader.position() <= MAX_SCAN_BYTES);
+
+        let mut log = vec![b'x'; MAX_LINE_BYTES * 2];
+        log.extend_from_slice(b"\n{\"cwd\":\"/work/app\"}\n");
+        assert_eq!(
+            scan_cwd(std::io::Cursor::new(log), |row| row.get("cwd")).as_deref(),
+            Some("/work/app")
+        );
     }
 
     #[test]

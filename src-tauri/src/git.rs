@@ -17,8 +17,16 @@ pub struct GitStatus {
     pub worktree_parent: Option<String>,
 }
 
+/// Git for status and diff reads. Without this, those commands may rewrite the
+/// index, which retriggers the watcher and races agents' `git add` on index.lock.
+fn read_only_git() -> Command {
+    let mut command = Command::new("git");
+    command.env("GIT_OPTIONAL_LOCKS", "0");
+    command
+}
+
 pub fn status(path: &str) -> GitStatus {
-    let output = match Command::new("git")
+    let output = match read_only_git()
         .args(["-C", path, "status", "--porcelain=v2", "--branch"])
         .output()
     {
@@ -351,7 +359,7 @@ pub fn changed_files(path: &str) -> Result<Vec<ChangedFile>, String> {
     // single directory entry when a whole folder is untracked, and that
     // trailing-slash "folder" leaks into our file list. Gitignored files
     // inside the directory are still excluded.
-    let output = Command::new("git")
+    let output = read_only_git()
         .args([
             "-C",
             path,
@@ -485,7 +493,7 @@ const MAX_DIFF_LINES: usize = 4_000;
 const DIFF_TIMEOUT: Duration = Duration::from_secs(5);
 
 fn bounded_diff(path: &str, args: &[&str]) -> Result<String, String> {
-    let mut child = Command::new("git")
+    let mut child = read_only_git()
         .args(["-C", path, "diff", "--no-ext-diff", "--no-textconv", "--no-color"])
         .args(args)
         .stdout(Stdio::piped())
@@ -577,7 +585,7 @@ pub fn diff_stats(path: &str) -> Result<Vec<DiffFileStat>, String> {
 
 pub fn changes(path: &str) -> Result<GitChanges, String> {
     let files = changed_files(path)?;
-    let output = Command::new("git")
+    let output = read_only_git()
         .args(["-C", path, "diff", "HEAD", "--numstat"])
         .output()
         .map_err(|e| e.to_string())?;
@@ -585,7 +593,7 @@ pub fn changes(path: &str) -> Result<GitChanges, String> {
     let stdout = if output.status.success() {
         String::from_utf8_lossy(&output.stdout).to_string()
     } else {
-        let cached = Command::new("git")
+        let cached = read_only_git()
             .args(["-C", path, "diff", "--cached", "--numstat"])
             .output()
             .map_err(|e| e.to_string())?;
