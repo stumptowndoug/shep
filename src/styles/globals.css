@@ -3334,8 +3334,8 @@ body.theme-clear .app-shell__frame {
 }
 .project-row__pin:hover { background: var(--state-hover); color: var(--fg); }
 .project-row:hover .project-row__pin,
-.project-row:focus-within .project-row__pin,
-.project-row__pin--on,
+.project-row:has(:focus-visible) .project-row__pin,
+.project-row:focus-visible .project-row__pin,
 .project-row__pin:focus-visible { display: grid; }
 .project-row__pin--on,
 .project-row__pin--on:hover { color: inherit; }
@@ -3379,7 +3379,7 @@ body.theme-clear .app-shell__frame {
 .project-group__icon { flex: none; color: var(--muted); opacity: 0.75; }
 .project-group__count { color: var(--faint); font-family: var(--font-mono); font-size: var(--text-2xs); font-weight: 400; letter-spacing: 0; }
 .project-group__header:hover .project-row__pin,
-.project-group__header:focus-within .project-row__pin,
+.project-group__header:has(:focus-visible) .project-row__pin,
 .project-group__header .project-row__pin:focus-visible { display: grid; }
 .project-group__rows { display: flex; flex-direction: column; gap: 1px; padding-left: 12px; }
 .project-group__empty { padding-left: 30px; }
