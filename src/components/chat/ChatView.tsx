@@ -189,7 +189,7 @@ export default function ChatView({ chatId, assistantId, repoPath, fullAccess, on
           </div>
         )}
         {request?.kind === "cursor_request" && <CursorRequestCard key={request.id} chatId={chatId} item={request} />}
-        <ChatComposer chatId={chatId} chat={chat} agentName={agentName} fullAccess={fullAccess} onOpenTerminal={onOpenTerminal} />
+        <ChatComposer chatId={chatId} chat={chat} assistantId={assistantId} agentName={agentName} fullAccess={fullAccess} onOpenTerminal={onOpenTerminal} />
       </div>
     </div>
   );

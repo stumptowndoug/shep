@@ -5,6 +5,7 @@ import ChatSettings from "./ChatSettings";
 import { useChatDraftStore } from "../../stores/useChatDraftStore";
 import type { ChatState } from "../../lib/acp/chatModel";
 import { cancelTurn, sendPrompt, setChatOption } from "../../lib/acp/chatSessions";
+import { assistantLogoSrc, getAssistantLogoClass } from "../../lib/assistantLogos";
 import { chatOptionChoices, chatOptionName, isAccessOption, isFullAccessMode, isModelOption, isReasoningOption } from "../../lib/acp/chatOptions";
 
 const MAX_COMMAND_SUGGESTIONS = 8;
@@ -28,6 +29,7 @@ const MAX_INPUT_HEIGHT = 240;
 interface ChatComposerProps {
   chatId: number;
   chat: ChatState;
+  assistantId: string | null;
   agentName: string;
   fullAccess: boolean;
   /** Open this agent's CLI in a new terminal tab, for commands chat can't run. */
@@ -39,7 +41,8 @@ function fitHeight(textarea: HTMLTextAreaElement) {
   textarea.style.height = `${Math.min(textarea.scrollHeight, MAX_INPUT_HEIGHT)}px`;
 }
 
-export default function ChatComposer({ chatId, chat, agentName, fullAccess, onOpenTerminal }: ChatComposerProps) {
+export default function ChatComposer({ chatId, chat, assistantId, agentName, fullAccess, onOpenTerminal }: ChatComposerProps) {
+  const logo = assistantId ? assistantLogoSrc[assistantId] : undefined;
   const draftKey = chat.draftKey ?? `temporary:${chatId}`;
   const text = useChatDraftStore((state) => state.drafts[draftKey] ?? "");
   const setText = (value: string) => useChatDraftStore.getState().setDraft(draftKey, value);
@@ -185,6 +188,16 @@ export default function ChatComposer({ chatId, chat, agentName, fullAccess, onOp
 
       <div className="chat-composer__footer">
         <div className="chat-composer__controls">
+          {logo && (
+            <img
+              src={logo}
+              alt={agentName}
+              title={agentName}
+              width={14}
+              height={14}
+              className={["chat-composer__agent", getAssistantLogoClass(assistantId!)].filter(Boolean).join(" ")}
+            />
+          )}
           {options.map((option) => (
             <Select
               key={option.id}
