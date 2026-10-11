@@ -80,9 +80,11 @@ interface ChatViewProps {
   assistantId: string | null;
   repoPath: string;
   fullAccess: boolean;
+  /** Open this agent's CLI in a new terminal tab. */
+  onOpenTerminal?: () => void;
 }
 
-export default function ChatView({ chatId, assistantId, repoPath, fullAccess }: ChatViewProps) {
+export default function ChatView({ chatId, assistantId, repoPath, fullAccess, onOpenTerminal }: ChatViewProps) {
   const chat = useChatStore((s) => s.chats[chatId]);
   const assistant = CODING_ASSISTANTS.find((entry) => entry.id === assistantId);
   const agentName = assistant?.name ?? "Agent";
@@ -175,7 +177,7 @@ export default function ChatView({ chatId, assistantId, repoPath, fullAccess }: 
           </div>
         )}
         {request?.kind === "cursor_request" && <CursorRequestCard key={request.id} chatId={chatId} item={request} />}
-        <ChatComposer chatId={chatId} chat={chat} agentName={agentName} fullAccess={fullAccess} />
+        <ChatComposer chatId={chatId} chat={chat} agentName={agentName} fullAccess={fullAccess} onOpenTerminal={onOpenTerminal} />
       </div>
     </div>
   );

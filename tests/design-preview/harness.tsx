@@ -88,6 +88,10 @@ mockIPC((cmd, payload) => {
   switch (cmd) {
     case 'list_repos': return repos.map(repo => ({...repo}));
     case 'list_groups': return groups.map(group => ({...group}));
+    case 'suggest_project_folders': return params.get('suggest') === 'none' ? [] : [
+      {path:'/Users/designer/dev/affix-pipeline',name:'affix-pipeline',lastUsed:Date.now()-2*86400000,agent:'codex'},
+      {path:'/Users/designer/dev/marketing-site',name:'marketing-site',lastUsed:Date.now()-5*3600000,agent:'claude'},
+    ];
     case 'set_group_pinned': { const group = groups.find(g => g.id === args?.groupId); if (group) group.pinned = Boolean(args?.pinned); return null; }
     case 'set_repo_pinned': { const repo = repos.find(r => r.path === args?.repoPath); if (repo) repo.pinned = Boolean(args?.pinned); return null; }
     case 'mark_repo_opened': { const repo = repos.find(r => r.path === args?.repoPath); if (repo) repo.last_opened = Date.now(); return repo?.last_opened ?? Date.now(); }

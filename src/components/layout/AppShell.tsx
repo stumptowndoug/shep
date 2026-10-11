@@ -55,6 +55,7 @@ const PortsPanel = lazy(() => import("../ports/PortsPanel"));
 const HistoryPanel = lazy(() => import("../history/HistoryPanel"));
 const ProjectsPanel = lazy(() => import("../projects/ProjectsPanel"));
 const ProjectSwitcher = lazy(() => import("../projects/ProjectSwitcher"));
+const Welcome = lazy(() => import("../projects/Welcome"));
 const TodosPanel = lazy(() => import("../todos/TodosPanel"));
 const ChatView = lazy(() => import("../chat/ChatView"));
 
@@ -569,6 +570,13 @@ export default function AppShell() {
     [getTerminalDimensions, handleSelectRepo, launchChat, pushNotice, resumeAssistant],
   );
 
+  /** From chat: start the same agent's CLI in a new tab, e.g. for an interactive slash command. */
+  const handleOpenAgentTerminal = useCallback((assistantId: string, mode: SessionMode | null) => {
+    useUIStore.getState().deactivateAllOverlays();
+    const { cols, rows } = getTerminalDimensions();
+    void launchAssistant(assistantId, cols, rows, mode ?? useProjectSettingsStore.getState().settings.defaultAgentMode);
+  }, [getTerminalDimensions, launchAssistant]);
+
   const handleRunInTerminal = useCallback((script: string, label: string) => {
     useUIStore.getState().deactivateAllOverlays();
     const { cols, rows } = getTerminalDimensions();
@@ -913,16 +921,23 @@ export default function AppShell() {
               </Suspense>
             )}
 
-            {/* A project with no tabs lands on its launcher; with no project, offer to add one. */}
+            {/* A project with no tabs lands on its launcher; with no projects at all, welcome. */}
             {!showOverlay && !activeTab && tabs.length === 0 && (activeRepoPath ? (
               <Suspense fallback={<PanelLoader />}>
                 <SessionLauncher onStartSession={handleStartSession} onRunInTerminal={handleRunInTerminal} onOpen={(action) => void handleLauncherOpen(action)} />
+              </Suspense>
+            ) : repos.length === 0 ? (
+              <Suspense fallback={<PanelLoader />}>
+                <Welcome
+                  onAddFolder={(path) => void handleAddProject(path)}
+                  onChooseFolder={() => void handlePickAndAddProject()}
+                />
               </Suspense>
             ) : (
               <div className="empty-state">
                 <img src={shepMark} alt="" className="empty-state__mark" />
                 <h2 className="empty-state__title">No project open</h2>
-                <p>Add a project folder to start running agents in it.</p>
+                <p>Pick a project from the sidebar, or add another.</p>
                 <div className="empty-state__actions">
                   <button className="btn-primary" onClick={() => void handlePickAndAddProject()}>Add project</button>
                 </div>
@@ -946,6 +961,7 @@ export default function AppShell() {
                       assistantId={tab.assistantId}
                       repoPath={tab.repoPath}
                       fullAccess={tab.sessionMode === "yolo"}
+                      onOpenTerminal={tab.assistantId ? () => handleOpenAgentTerminal(tab.assistantId!, tab.sessionMode) : undefined}
                     />
                   </Suspense>
                 ) : (

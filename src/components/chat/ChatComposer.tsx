@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowUp, ListPlus, LoaderCircle, Shield, ShieldCheck, Square } from "lucide-react";
+import { ArrowUp, LoaderCircle, Shield, ShieldCheck, Square, Terminal, X } from "lucide-react";
 import Select from "../shared/Select";
 import ChatSettings from "./ChatSettings";
 import { useChatDraftStore } from "../../stores/useChatDraftStore";
@@ -8,6 +8,21 @@ import { cancelTurn, sendPrompt, setChatOption } from "../../lib/acp/chatSession
 import { chatOptionChoices, chatOptionName, isAccessOption, isFullAccessMode, isModelOption, isReasoningOption } from "../../lib/acp/chatOptions";
 
 const MAX_COMMAND_SUGGESTIONS = 8;
+
+const MAX_COMMAND_DESCRIPTION = 60;
+
+/** Command and MCP tool descriptions can run for paragraphs; show a short first line. */
+function shortDescription(description: string | undefined): string {
+  const firstSentence = (description ?? "").trim().split(/(?<=[.!?])\s|\n/)[0] ?? "";
+  return firstSentence.length > MAX_COMMAND_DESCRIPTION
+    ? `${firstSentence.slice(0, MAX_COMMAND_DESCRIPTION - 1).trimEnd()}…`
+    : firstSentence.replace(/[.]$/, "");
+}
+
+/** The command word of a message like "/config foo", or null. */
+function slashCommandName(text: string): string | null {
+  return /^\/([\w:.-]+)(?:\s|$)/.exec(text.trim())?.[1] ?? null;
+}
 const MAX_INPUT_HEIGHT = 240;
 
 interface ChatComposerProps {
@@ -15,6 +30,8 @@ interface ChatComposerProps {
   chat: ChatState;
   agentName: string;
   fullAccess: boolean;
+  /** Open this agent's CLI in a new terminal tab, for commands chat can't run. */
+  onOpenTerminal?: () => void;
 }
 
 function fitHeight(textarea: HTMLTextAreaElement) {
@@ -22,12 +39,14 @@ function fitHeight(textarea: HTMLTextAreaElement) {
   textarea.style.height = `${Math.min(textarea.scrollHeight, MAX_INPUT_HEIGHT)}px`;
 }
 
-export default function ChatComposer({ chatId, chat, agentName, fullAccess }: ChatComposerProps) {
+export default function ChatComposer({ chatId, chat, agentName, fullAccess, onOpenTerminal }: ChatComposerProps) {
   const draftKey = chat.draftKey ?? `temporary:${chatId}`;
   const text = useChatDraftStore((state) => state.drafts[draftKey] ?? "");
   const setText = (value: string) => useChatDraftStore.getState().setDraft(draftKey, value);
   const [highlight, setHighlight] = useState(0);
   const [changingOption, setChangingOption] = useState<string | null>(null);
+  // A slash command chat doesn't offer: point to the CLI instead of sending.
+  const [cliOnly, setCliOnly] = useState<string | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   useEffect(() => { useChatDraftStore.getState().load(draftKey); }, [draftKey]);
   useEffect(() => { if (inputRef.current) fitHeight(inputRef.current); }, [text, draftKey]);
@@ -54,8 +73,14 @@ export default function ChatComposer({ chatId, chat, agentName, fullAccess }: Ch
       .slice(0, MAX_COMMAND_SUGGESTIONS);
   }, [chat.commands, text]);
 
-  const submit = () => {
+  const submit = (force = false) => {
     if (!text.trim()) return;
+    const command = slashCommandName(text);
+    if (!force && command && chat.commands.length > 0 && !chat.commands.some((entry) => entry.name === command)) {
+      setCliOnly(command);
+      return;
+    }
+    setCliOnly(null);
     if (!sendPrompt(chatId, text)) return;
     setText("");
     if (inputRef.current) inputRef.current.style.height = "auto";
@@ -100,6 +125,23 @@ export default function ChatComposer({ chatId, chat, agentName, fullAccess }: Ch
         : `Ask ${agentName} anything`;
 
   return (
+    <>
+      {cliOnly && (
+        <div className="chat-cli-nudge" role="status">
+          <Terminal size={14} aria-hidden="true" />
+          <span className="chat-cli-nudge__text">
+            <strong>/{cliOnly}</strong> isn’t available in chat. Run it in {agentName} in a terminal; it opens as a new session in this project.
+          </span>
+          {onOpenTerminal && (
+            <button type="button" className="btn-primary" onClick={() => {
+              setCliOnly(null);
+              onOpenTerminal();
+            }}>Open terminal</button>
+          )}
+          <button type="button" className="btn-ghost" onClick={() => submit(true)}>Send anyway</button>
+          <button type="button" className="icon-btn" aria-label="Dismiss" onClick={() => setCliOnly(null)}><X size={13} aria-hidden="true" /></button>
+        </div>
+      )}
     <div className="chat-composer">
       {suggestions.length > 0 && (
         <div className="popover chat-composer__commands" role="listbox">
@@ -115,7 +157,9 @@ export default function ChatComposer({ chatId, chat, agentName, fullAccess }: Ch
               onMouseEnter={() => setHighlight(index)}
             >
               <span className="chat-composer__command-name">/{command.name}</span>
-              <span className="popover__item-label chat-composer__command-desc">{command.description}</span>
+              <span className="popover__item-label chat-composer__command-desc" title={command.description || undefined}>
+                {shortDescription(command.description)}
+              </span>
             </button>
           ))}
         </div>
@@ -132,6 +176,7 @@ export default function ChatComposer({ chatId, chat, agentName, fullAccess }: Ch
         aria-label={`Message ${agentName}`}
         onChange={(event) => {
           setText(event.target.value);
+          setCliOnly(null);
           setHighlight(0);
           fitHeight(event.target);
         }}
@@ -179,18 +224,22 @@ export default function ChatComposer({ chatId, chat, agentName, fullAccess }: Ch
               <Square size={12} fill="currentColor" aria-hidden="true" />
             </button>
           )}
-          <button
-            type="button"
-            className="chat-composer__send"
-            disabled={closed || !text.trim()}
-            title={working ? "Queue follow-up (Enter)" : "Send (Enter)"}
-            aria-label={working ? "Queue follow-up" : "Send message"}
-            onClick={submit}
-          >
-            {working ? <ListPlus size={15} aria-hidden="true" /> : <ArrowUp size={15} aria-hidden="true" />}
-          </button>
+          {/* Mid-turn, Stop stands alone until there's a follow-up to queue. */}
+          {!(working && !text.trim()) && (
+            <button
+              type="button"
+              className="chat-composer__send"
+              disabled={closed || !text.trim()}
+              title={working ? "Queue follow-up (Enter)" : "Send (Enter)"}
+              aria-label={working ? "Queue follow-up" : "Send message"}
+              onClick={() => submit()}
+            >
+              <ArrowUp size={15} aria-hidden="true" />
+            </button>
+          )}
         </div>
       </div>
     </div>
+    </>
   );
 }

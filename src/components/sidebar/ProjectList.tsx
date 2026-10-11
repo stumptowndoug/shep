@@ -120,7 +120,7 @@ export default function ProjectList({ repos, activeRepoPath, handlers, onSelectR
         );
       })}
       {looseRows.map(renderRow)}
-      {repos.length === 0 && <div className="side-empty">No projects yet.</div>}
+      {repos.length === 0 && <div className="side-empty">Add a folder to get started.</div>}
       {/* One compact row: find (⌘P), the full Projects page, and add. */}
       <div className="project-list__tools">
         {repos.length > 0 && (

@@ -430,6 +430,15 @@ summary.chat-tool__row:hover { background: var(--state-hover); }
 .chat-session-notice--error > svg { color: var(--danger); }
 .chat-session-notice .icon-btn { width: 24px; height: 24px; }
 
+/* A slash command chat doesn't offer: point to the CLI instead of sending. */
+.chat-cli-nudge { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 8px 8px 12px; border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent); border-radius: var(--radius-lg); background: var(--accent-tint); color: var(--muted); font-size: var(--text-xs); line-height: 1.5; }
+.chat-cli-nudge > svg { flex: none; color: var(--accent); }
+.chat-cli-nudge__text { flex: 1; min-width: 200px; }
+.chat-cli-nudge__text strong { color: var(--fg); font-family: var(--font-mono); font-weight: 500; }
+.chat-cli-nudge .btn-primary,
+.chat-cli-nudge .btn-ghost { height: 28px; padding: 0 12px; font-size: var(--text-xs); }
+.chat-cli-nudge .icon-btn { width: 24px; height: 24px; }
+
 .chat-notice {
   display: flex;
   align-items: flex-start;

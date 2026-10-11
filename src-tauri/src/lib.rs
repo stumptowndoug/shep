@@ -98,6 +98,7 @@ pub fn run() {
             commands::delete_group,
             commands::move_repo_to_group,
             commands::set_group_pinned,
+            commands::suggest_project_folders,
             commands::set_repo_pinned,
             commands::mark_repo_opened,
             commands::get_editor_settings,

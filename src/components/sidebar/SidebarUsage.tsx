@@ -183,7 +183,8 @@ export default function SidebarUsage() {
 
   const handleMouseLeave = useCallback(() => setTooltip(null), []);
 
-  if (items.length === 0) return null;
+  // Nothing measured yet (e.g. a fresh install): skip the card of "n/a" rows.
+  if (items.every((item) => item.pct == null)) return null;
 
   return (
     <div className="sidebar-usage">

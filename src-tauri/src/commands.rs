@@ -251,6 +251,14 @@ pub fn move_repo_to_group(
 }
 
 #[tauri::command]
+pub async fn suggest_project_folders(limit: Option<usize>) -> Result<Vec<crate::workspace::suggestions::FolderSuggestion>, String> {
+    let limit = limit.unwrap_or(6).clamp(1, 20);
+    tauri::async_runtime::spawn_blocking(move || crate::workspace::suggestions::suggest_project_folders(limit))
+        .await
+        .map_err(|error| format!("Folder suggestions failed: {error}"))?
+}
+
+#[tauri::command]
 pub fn set_group_pinned(
     group_id: &str,
     pinned: bool,

@@ -1,5 +1,5 @@
 import { invoke, Channel } from "@tauri-apps/api/core";
-import type {
+import type { FolderSuggestion,
   RepoInfo,
   RepoGroup,
   RegisteredRepo,
@@ -67,6 +67,10 @@ export function deleteGroup(groupId: string): Promise<void> {
 
 export function moveRepoToGroup(repoPath: string, groupId: string | null): Promise<void> {
   return invoke("move_repo_to_group", { repoPath, groupId });
+}
+
+export function suggestProjectFolders(limit = 6): Promise<FolderSuggestion[]> {
+  return invoke("suggest_project_folders", { limit });
 }
 
 export function setGroupPinned(groupId: string, pinned: boolean): Promise<void> {

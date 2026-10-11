@@ -476,9 +476,14 @@ body.theme-clear .app-shell__frame {
   background: var(--surface-strong);
   color: var(--fg);
 }
-.nav-item:disabled {
+.nav-item:disabled,
+.nav-item[aria-disabled="true"] {
   opacity: 0.45;
   cursor: default;
+}
+.nav-item[aria-disabled="true"]:hover {
+  background: transparent;
+  color: var(--muted);
 }
 .nav-item > svg {
   flex-shrink: 0;
@@ -1217,6 +1222,20 @@ body.theme-clear .app-shell__frame {
 .agent-choice.unavailable { color: var(--muted); background: var(--surface-recessed); }
 .agent-choice.unavailable > img { opacity: .5; }
 .agent-choice.unavailable:hover { background: var(--surface); }
+/* First-run welcome */
+.welcome__mark { width: 44px; height: auto; margin-bottom: 18px; }
+.welcome__list { margin: 0; padding: 0; list-style: none; border-radius: var(--radius-lg); background: var(--surface); overflow: hidden; }
+.welcome__row { display: flex; align-items: center; gap: 12px; min-height: 58px; padding: 10px 12px 10px 16px; }
+.welcome__row + .welcome__row { border-top: 1px solid var(--line); }
+.welcome__row-icon { flex: none; color: var(--muted); }
+.welcome__row-body { display: grid; flex: 1; min-width: 0; gap: 3px; }
+.welcome__row-name { overflow: hidden; color: var(--fg); font-size: var(--text-sm); font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.welcome__row-meta { overflow: hidden; color: var(--faint); font-size: var(--text-xs); text-overflow: ellipsis; white-space: nowrap; }
+.welcome__add,
+.welcome__choose { display: inline-flex; align-items: center; gap: 6px; flex: none; }
+.welcome__agent-list { display: flex; flex-wrap: wrap; gap: 8px; }
+.welcome__agent { display: inline-flex; align-items: center; gap: 8px; height: 30px; padding: 0 12px; border-radius: var(--radius-pill); background: var(--surface); color: var(--fg); font-size: var(--text-sm); font-weight: 550; }
+
 /* Launcher's "Open" row: the agent card shape, with a tab-kind icon. */
 .launcher__open { margin-top: 12px; }
 .open-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }

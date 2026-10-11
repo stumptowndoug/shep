@@ -163,6 +163,15 @@ export function isSessionTab(tab: UnifiedTab): tab is TerminalTabData {
   return tab.kind === "terminal" || tab.kind === "assistant";
 }
 
+/** A git repo recently used with an agent CLI, offered on first run. */
+export interface FolderSuggestion {
+  path: string;
+  name: string;
+  /** Milliseconds since the Unix epoch. */
+  lastUsed: number;
+  agent: string;
+}
+
 /** Things a project can open in a new tab. */
 export type ProjectActionKind = "assistant" | "terminal" | "commands" | "git" | "todos";
 

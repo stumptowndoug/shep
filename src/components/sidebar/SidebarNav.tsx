@@ -19,7 +19,13 @@ export function SidebarNewAgent({ hasProject }: { hasProject: boolean }) {
 
   return (
     <div className="side-nav side-nav--primary">
-      <button className={`nav-item ${on ? "on" : ""}`} onClick={startAgent} disabled={!hasProject} aria-pressed={on}>
+      <button
+        className={`nav-item ${on ? "on" : ""}`}
+        onClick={hasProject ? startAgent : undefined}
+        aria-disabled={!hasProject}
+        aria-pressed={on}
+        title={hasProject ? undefined : "Add a project first"}
+      >
         {tabKindMeta.launcher.icon(16)}
         <span className="nav-item__label">New tab</span>
         <kbd className="nav-item__kbd">{tabKindMeta.launcher.shortcut}</kbd>
