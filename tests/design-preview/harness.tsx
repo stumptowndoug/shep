@@ -11,7 +11,7 @@ import { useThemeStore } from '../../src/stores/useThemeStore';
 import { useChatStore } from '../../src/stores/useChatStore';
 import { useUIStore } from '../../src/stores/useUIStore';
 import { emptyChat } from '../../src/lib/acp/chatModel';
-import type { PortInfo, RepoInfo } from '../../src/lib/types';
+import type { PortInfo, RepoInfo, SessionHistoryEntry } from '../../src/lib/types';
 import '../../src/styles/globals.css';
 
 const params = new URLSearchParams(location.search);
@@ -35,7 +35,23 @@ const repos: RepoInfo[] = ['shep', 'springroll', 'springroll-website', 'carrot-f
 const groups = [{id:'workspace',name:'Workspace',order:0},{id:'projects',name:'Projects',order:1}];
 const cost = { amount: 4.82, kind: 'estimated', basis: 'local-pricing', confidence: 'estimated' };
 const now = Date.now();
-const histories = ['Refine the workspace layout', 'Add keyboard navigation to menus', 'Build the project activity view', 'Investigate slow startup'].map((title, i) => ({ provider: i % 2 ? 'codex' : 'claude', sessionId: `sample-${i}`, projectPath: repos[i % 2].path, title, model: null, startedAt: now - (i + 1) * 3600000, lastActivityAt: now - (i + 1) * 1800000, endedAt: now - i * 1800000 }));
+const historyDate = (days: number) => {
+  const date = new Date(now);
+  date.setDate(date.getDate() - days);
+  return date.getTime();
+};
+const histories: SessionHistoryEntry[] = params.get('history') === 'empty' ? [] : [
+  {title:'Workspace design',provider:'claude',projectPath:repos[0].path,model:'Sonnet',days:0},
+  {title:'Add keyboard navigation to menus',provider:'codex',projectPath:repos[0].path,model:null,days:0},
+  {title:'Build the project activity view',provider:'claude',projectPath:repos[1].path,model:'Sonnet',days:1},
+  {title:'Investigate slow startup',provider:'cursor',projectPath:repos[0].path,model:null,days:1},
+  {title:'Make a very long conversation title fit comfortably alongside project names and model details',provider:'codex',projectPath:'/preview/springroll-website',model:'Reasoning model with a long display name',days:3},
+  {title:'Review the shared navigation',provider:'antigravity',projectPath:repos[1].path,model:null,days:4},
+  {title:'Explore a new approach',provider:'grok',projectPath:repos[0].path,model:null,days:10},
+  {title:null,provider:'claude',projectPath:'/preview/archived-project',model:null,days:14},
+].map(({days,...session},i) => ({...session,sessionId:`sample-${i}`,startedAt:historyDate(days)-3600000,lastActivityAt:historyDate(days),endedAt:i ? historyDate(days) : null}));
+let historyScans = 0;
+let previewPtyId = 1000;
 const snapshots = ['claude', 'codex', 'cursor'].map((provider, i) => ({provider,status:'ok',fetchedAt:new Date().toISOString(),summaryWindows:[{provider,windowId:`${provider}-weekly`,window:'7d',label:'7d',scope:'plan',limit:100,used:24+i*18,sourceType:'provider',confidence:'official',costKind:'included',usedPercent:24+i*18,remainingPercent:76-i*18,resetAt:new Date(now+3*86400000).toISOString(),tokenTotal:null,paceStatus:null}],extraWindows:[],localDetails:null,error:null}));
 const config = { name: 'shep', commands: [], assistants: [] };
 const git = { is_git_repo: true, branch: 'design/springroll', dirty: changedFiles.length > 0, staged: 0, unstaged: changedFiles.filter(file => file.area === 'unstaged').length, untracked: changedFiles.filter(file => file.area === 'untracked').length, ahead: 0, behind: 0, worktree_parent: null };
@@ -100,7 +116,16 @@ mockIPC((cmd, payload) => {
     case 'open_url': document.documentElement.dataset.previewLastOpenedUrl = String(args?.url); return null;
     case 'get_pi_config': return {settings:{defaultProvider:null,defaultModel:null},configuredProviders:[]};
     case 'get_all_usage_snapshots': return snapshots;
-    case 'list_session_history': return histories.filter(item => (!args?.projectPath || item.projectPath === args.projectPath) && (!args?.query || item.title.toLowerCase().includes(String(args.query).toLowerCase())));
+    case 'list_session_history': {
+      historyScans++;
+      if (params.get('history') === 'error' && historyScans === 1) return Promise.reject('Unable to read saved conversations.');
+      return histories.filter(item => (!args?.projectPath || item.projectPath === args.projectPath) &&
+        (!args?.query || [item.title,item.provider,item.projectPath,item.model].join(' ').toLowerCase().includes(String(args.query).toLowerCase()))).slice(0, Number(args?.limit ?? 200));
+    }
+    case 'spawn_pty': {
+      document.documentElement.dataset.previewLastSession = JSON.stringify({command:args?.command,args:args?.args,cwd:args?.cwd});
+      return ++previewPtyId;
+    }
     case 'get_usage_overview': return {window:args?.window ?? '24h',totalTokens:248000,totalCost:4.82,totalCostDetail:cost,activeProjects:2,activeSessions:4,providers:[],trend:Array.from({length:24},(_,i)=>({start:now-(24-i)*3600000,end:now-(23-i)*3600000,label:`${i}:00`,tokens:[0,0,0,1200,2000,800,0,4800,6200,7300,1800,3900][i%12],cost:0.2,costDetail:cost,providers:[]})),topModels:[],topProjects:[]};
     case 'get_memory_stats': return {app_rss_bytes:100000000,children_rss_bytes:0,child_count:0};
     case 'resolve_session_title': case 'get_agent_runtime_status': return null;
@@ -112,7 +137,8 @@ useTerminalStore.getState().switchProject(repos[0].path);
 useUsageSettingsStore.setState({settings:{...useUsageSettingsStore.getState().settings,antigravity:{show:false,budgetMode:'subscription',monthlyBudget:null},grok:{show:false,budgetMode:'subscription',monthlyBudget:null},opencode:{show:false,budgetMode:'custom',monthlyBudget:null}}});
 for (let i = 0; i < 2; i++) {
   const id = 900 + i;
-  useTerminalStore.getState().addTab({id:`preview-${id}`,kind:'assistant',label:i ? 'Keyboard navigation' : 'Workspace design',labelSource:'user',ptyId:id,agentInterface:'chat',repoPath:repos[0].path,commandName:null,assistantId:i ? 'codex' : 'claude',providerSessionId:null,sessionMode:'standard'});
+  useTerminalStore.getState().addTab({id:`preview-${id}`,kind:'assistant',label:i ? 'Keyboard navigation' : 'Workspace design',labelSource:'user',ptyId:id,agentInterface:'chat',repoPath:repos[0].path,commandName:null,assistantId:i ? 'codex' : 'claude',providerSessionId:i ? null : 'sample-0',sessionMode:'standard'});
+  if (!i) useTerminalStore.getState().initActivity(id);
   useChatStore.getState().init(id);
   useChatStore.getState().update(id, () => ({...emptyChat(),status:'ready',commands:[{name:'compact',description:'Summarize this conversation'}],options:[{id:'model',name:'Model',value:'default',source:'model',choices:[{value:'default',name:i ? 'Codex' : 'Claude Code'}]}],turns:[{id:0,prompt:'Bring the workspace closer to Springroll. Keep it calm and easy to scan.',startedAt:now-47000,endedAt:now,stopReason:'end_turn',items:[{kind:'tool',id:'read',title:'Read workspace styles',toolKind:'read',status:'completed',output:'Read src/styles/globals.css',diffs:[]},{kind:'message',id:'answer',messageId:null,text:'The workspace now has a consistent rhythm.\n\n- **Clearer navigation.** Projects and active agents have distinct places in the sidebar.\n- **Room to read.** Pages share a comfortable width, with quieter controls and more consistent spacing.\n- **One visual language.** Light and dark themes use the same surfaces and type hierarchy.\n\nThe next step is to check the smaller window layouts and keyboard interactions.'}]}]}));
 }
@@ -126,6 +152,7 @@ if (previewWidth >= 800 && previewHeight >= 600) {
 }
 if (params.get('view') === 'chat') useTerminalStore.getState().setActiveTab('preview-900');
 if (params.get('view') === 'ports') useUIStore.getState().togglePortsPanel();
+if (params.get('view') === 'history') useUIStore.getState().toggleHistoryPanel();
 const theme = new URLSearchParams(location.search).get('theme');
 if (theme) useThemeStore.getState().setTheme(theme);
 // Show the native titlebar's footprint so browser checks catch crowded controls.
