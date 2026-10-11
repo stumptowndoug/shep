@@ -167,6 +167,52 @@ pub fn open_in_editor(
     open_path_in_editor(repo_path, &editor_id)
 }
 
+const MAX_MARKDOWN_PREVIEW_BYTES: u64 = 512 * 1024;
+
+/// Read a changed Markdown file for the Changes panel's preview. Limited to
+/// Markdown inside the project so this can't become a general file reader.
+#[tauri::command]
+pub fn read_markdown_file(repo_path: &str, file_path: &str) -> Result<String, String> {
+    let lower = file_path.to_ascii_lowercase();
+    if !(lower.ends_with(".md") || lower.ends_with(".markdown")) {
+        return Err("Only Markdown files can be previewed.".to_string());
+    }
+    let repo = Path::new(repo_path)
+        .canonicalize()
+        .map_err(|e| format!("Project not found: {e}"))?;
+    let file = repo
+        .join(file_path)
+        .canonicalize()
+        .map_err(|_| format!("File does not exist: {file_path}"))?;
+    if !file.starts_with(&repo) {
+        return Err("File is outside the project.".to_string());
+    }
+    let size = std::fs::metadata(&file).map_err(|e| e.to_string())?.len();
+    if size > MAX_MARKDOWN_PREVIEW_BYTES {
+        return Err("This file is too large to preview.".to_string());
+    }
+    std::fs::read_to_string(&file).map_err(|_| "This file isn't readable text.".to_string())
+}
+
+/// Open one file in the editor, alongside its project so it lands in that window.
+#[tauri::command]
+pub fn open_file_in_editor(
+    repo_path: &str,
+    file_path: &str,
+    workspace: State<'_, WorkspaceManager>,
+) -> Result<(), String> {
+    let repo = Path::new(repo_path);
+    let file = repo.join(file_path);
+    if !repo.is_dir() || !file.is_file() {
+        return Err(format!("File does not exist: {file_path}"));
+    }
+    let editor_id = workspace
+        .load_editor_settings()?
+        .preferred_editor
+        .ok_or_else(|| "Set a preferred editor in Settings before launching.".to_string())?;
+    open_paths_in_editor(&[repo_path, &file.to_string_lossy()], &editor_id)
+}
+
 #[tauri::command]
 pub fn reveal_in_finder(path: &str) -> Result<(), String> {
     if !Path::new(path).exists() {
@@ -571,16 +617,6 @@ pub async fn git_changed_files(path: String) -> Result<Vec<ChangedFile>, String>
 #[tauri::command]
 pub async fn git_file_diff(path: String, file_path: String, staged: bool) -> Result<String, String> {
     git::file_diff(&path, &file_path, staged)
-}
-
-#[tauri::command]
-pub async fn git_file_contents(path: String, file_path: String, source: String) -> Result<String, String> {
-    git::file_contents(&path, &file_path, &source)
-}
-
-#[tauri::command]
-pub async fn git_list_files(path: String) -> Result<Vec<String>, String> {
-    git::list_files(&path)
 }
 
 #[tauri::command]
@@ -991,13 +1027,18 @@ fn rss_for_pid(pid: i32) -> u64 {
 }
 
 fn open_path_in_editor(repo_path: &str, editor_id: &str) -> Result<(), String> {
+    open_paths_in_editor(&[repo_path], editor_id)
+}
+
+fn open_paths_in_editor(paths: &[&str], editor_id: &str) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
         let app_name = editor_app_name(editor_id)
             .ok_or_else(|| format!("Unsupported editor: {editor_id}"))?;
 
         let status = Command::new("open")
-            .args(["-a", app_name, repo_path])
+            .args(["-a", app_name])
+            .args(paths)
             .status()
             .map_err(|e| format!("Failed to launch {app_name}: {e}"))?;
 
@@ -1013,7 +1054,7 @@ fn open_path_in_editor(repo_path: &str, editor_id: &str) -> Result<(), String> {
 
     #[cfg(not(target_os = "macos"))]
     {
-        let _ = repo_path;
+        let _ = paths;
         let _ = editor_id;
         Err("Open in editor is currently only implemented for macOS.".to_string())
     }

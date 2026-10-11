@@ -136,6 +136,14 @@ export function loadFontFamily(family: string): Promise<FontFaceData[]> {
   return invoke("load_font_family", { family });
 }
 
+export function readMarkdownFile(repoPath: string, filePath: string): Promise<string> {
+  return invoke("read_markdown_file", { repoPath, filePath });
+}
+
+export function openFileInEditor(repoPath: string, filePath: string): Promise<void> {
+  return invoke("open_file_in_editor", { repoPath, filePath });
+}
+
 export function openInEditor(
   repoPath: string,
   editorOverride?: PreferredEditor | null,
@@ -400,23 +408,6 @@ export function gitChangedFiles(path: string): Promise<ChangedFile[]> {
 
 export function gitFileDiff(path: string, filePath: string, staged: boolean): Promise<string> {
   return invoke("git_file_diff", { path, filePath, staged });
-}
-
-/** Read a file's contents for preview in file-viewer mode. `source` is one
- *  of: "working" (from disk), "staged" (from git index), "head" (from HEAD). */
-export function gitFileContents(
-  path: string,
-  filePath: string,
-  source: "working" | "staged" | "head",
-): Promise<string> {
-  return invoke("git_file_contents", { path, filePath, source });
-}
-
-/** List all files known to git — tracked + untracked-but-not-ignored.
- *  Returns repo-relative paths, same set a user would consider "files in
- *  this project" (build artifacts and node_modules are excluded). */
-export function gitListFiles(path: string): Promise<string[]> {
-  return invoke("git_list_files", { path });
 }
 
 export function gitSwitchBranch(path: string, branchName: string): Promise<void> {

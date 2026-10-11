@@ -2,13 +2,17 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import type { AgentInterface, CodingAssistant, ProjectActionKind, SessionMode } from "../../lib/types";
 import tabKindMeta from "../../lib/tabKindMeta";
 import { CODING_ASSISTANTS } from "../sidebar/constants";
-import { checkCommandExists, getModelsForProvider, installManagedAcpAdapter } from "../../lib/tauri";
+import { checkCommandExists, getModelsForProvider, installManagedAcpAdapter, revealInFinder } from "../../lib/tauri";
 import { chatAdapterAvailable } from "../../lib/acp/adapters";
 import { getErrorMessage } from "../../lib/errors";
 import { useRepoStore } from "../../stores/useRepoStore";
 import { usePiConfigStore } from "../../stores/usePiConfigStore";
 import { useProjectSettingsStore } from "../../stores/useProjectSettingsStore";
-import { ArrowRight, Check, Copy, Download, Info, MessageSquare, SquareTerminal, X } from "lucide-react";
+import { ArrowRight, Check, Copy, Download, FolderOpen, Info, MessageSquare, SquareTerminal, X } from "lucide-react";
+import { getEditorLabel } from "../../lib/editors";
+import EditorIcon from "../shared/EditorIcon";
+import { useEditorStore } from "../../stores/useEditorStore";
+import { useNoticeStore } from "../../stores/useNoticeStore";
 import Select from "../shared/Select";
 import OptionGroup from "../shared/OptionGroup";
 import { assistantLogoSrc, getAssistantLogoClass } from "../../lib/assistantLogos";
@@ -16,15 +20,17 @@ import { ASSISTANT_INSTALL_URLS } from "../sidebar/constants";
 
 /** The other things a project can open, below the agents. */
 const OPEN_ACTIONS: { kind: Exclude<ProjectActionKind, "assistant">; description: string }[] = [
-  { kind: "terminal", description: "A shell in this project" },
-  { kind: "commands", description: "Dev servers and scripts" },
-  { kind: "git", description: "Browse and review changes" },
-  { kind: "todos", description: "This project's TODO.md" },
+  { kind: "terminal", description: "A shell here" },
+  { kind: "commands", description: "Servers and scripts" },
+  { kind: "git", description: "Changed files" },
+  { kind: "todos", description: "Project TODO.md" },
 ];
 
 interface SessionLauncherProps {
   /** Open a non-agent tab (terminal, commands, files, to-dos) in place of this page. */
   onOpen: (action: Exclude<ProjectActionKind, "assistant">) => void;
+  /** Open the project in the preferred editor (or ask for one). */
+  onOpenInEditor: () => void;
   /** Run a setup command (e.g. an adapter install) in a new terminal tab. */
   onRunInTerminal: (script: string, label: string) => void;
   onStartSession: (
@@ -35,7 +41,8 @@ interface SessionLauncherProps {
   ) => Promise<boolean>;
 }
 
-export default function SessionLauncher({ onStartSession, onRunInTerminal, onOpen }: SessionLauncherProps) {
+export default function SessionLauncher({ onStartSession, onRunInTerminal, onOpen, onOpenInEditor }: SessionLauncherProps) {
+  const editorLabel = getEditorLabel(useEditorStore((s) => s.settings.preferredEditor));
   const activeRepoPath = useRepoStore((s) => s.activeRepoPath);
   const defaultAgentMode = useProjectSettingsStore((s) => s.settings.defaultAgentMode);
   const defaultAgentInterface = useProjectSettingsStore((s) => s.settings.defaultAgentInterface);
@@ -265,10 +272,12 @@ export default function SessionLauncher({ onStartSession, onRunInTerminal, onOpe
   return (
     <div className="page page--narrow launcher">
       <header className="page__heading">
-        <div className="page__eyebrow">New tab{projectName ? ` · ${projectName}` : ""}</div>
-        <h1 className="page__title">Start an agent.</h1>
+        {projectName && <div className="page__eyebrow">{projectName}</div>}
+        <h1 className="page__title">{selectedAssistant ? `Start ${selectedAssistant.name}.` : "Start."}</h1>
         <p className="page__lede">
-          Choose your agent, then give it something to work on.
+          {selectedAssistant
+            ? "Choose how it runs, then start the session. Click the card again to pick something else."
+            : "Start an agent, or open something else for this project."}
         </p>
       </header>
 
@@ -292,7 +301,11 @@ export default function SessionLauncher({ onStartSession, onRunInTerminal, onOpe
                   aria-pressed={isSelected}
                   aria-label={`${assistant.name}${!isAvailable ? " · not installed" : ""}`}
                   onClick={() => {
-                    if (isAvailable) {
+                    if (isSelected) {
+                      // A second click backs out, bringing the other choices back.
+                      setSelectedAssistant(null);
+                      selectedAssistantRef.current = null;
+                    } else if (isAvailable) {
                       handleSelectAssistant(assistant);
                       setInstallPopover(null);
                     } else {
@@ -537,24 +550,57 @@ export default function SessionLauncher({ onStartSession, onRunInTerminal, onOpe
         </div>
       )}
 
-      <div className="page__section launcher__open">
-        <label className="page__label">Open</label>
+      {!selectedAssistant && <div className="page__section launcher__open">
+        <label className="page__label">Or open</label>
         <div className="open-grid" role="group" aria-label="Open in this project">
-          {OPEN_ACTIONS.map(({ kind, description }) => {
-            const meta = tabKindMeta[kind];
-            return (
-              <button key={kind} type="button" className="agent-choice open-choice" onClick={() => onOpen(kind)}>
-                <span className="open-choice__icon" aria-hidden="true">{meta.icon(18)}</span>
-                <span className="agent-choice__body">
-                  <span className="agent-choice__name">{meta.label}</span>
-                  <span className="agent-choice__meta">{description}</span>
-                </span>
-                {meta.shortcut && <kbd className="open-choice__kbd">{meta.shortcut}</kbd>}
-              </button>
-            );
-          })}
+          {[
+            ...OPEN_ACTIONS.map(({ kind, description }) => ({
+              key: kind,
+              label: tabKindMeta[kind].label,
+              description,
+              icon: tabKindMeta[kind].icon(18),
+              shortcut: tabKindMeta[kind].shortcut,
+              onClick: () => onOpen(kind),
+            })),
+            // These open outside Shep, so the page stays put.
+            {
+              key: "editor",
+              label: "Editor",
+              description: editorLabel ? `Open in ${editorLabel}` : "Choose your editor",
+              icon: <EditorIcon size={18} />,
+              shortcut: "⌘E",
+              onClick: onOpenInEditor,
+            },
+            {
+              key: "finder",
+              label: "Finder",
+              description: "Show the folder",
+              icon: <FolderOpen size={18} />,
+              shortcut: undefined,
+              onClick: () => {
+                if (!activeRepoPath) return;
+                revealInFinder(activeRepoPath).catch((error) => {
+                  useNoticeStore.getState().pushNotice({ tone: "error", title: "Couldn’t open in Finder", message: getErrorMessage(error) });
+                });
+              },
+            },
+          ].map((action) => (
+            <button
+              key={action.key}
+              type="button"
+              className="agent-choice open-choice"
+              onClick={action.onClick}
+              title={action.shortcut ? `${action.label} (${action.shortcut})` : undefined}
+            >
+              <span className="open-choice__icon" aria-hidden="true">{action.icon}</span>
+              <span className="agent-choice__body">
+                <span className="agent-choice__name">{action.label}</span>
+                <span className="agent-choice__meta">{action.description}</span>
+              </span>
+            </button>
+          ))}
         </div>
-      </div>
+      </div>}
     </div>
   );
 }

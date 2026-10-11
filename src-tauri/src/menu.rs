@@ -49,7 +49,7 @@ pub fn setup(app: &AppHandle<Wry>) -> tauri::Result<()> {
     let new_git = MenuItem::with_id(
         app,
         "new_git",
-        "New Git Panel",
+        "Show Changes",
         true,
         Some("CmdOrCtrl+G"),
     )?;

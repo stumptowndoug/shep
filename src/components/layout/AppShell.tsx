@@ -912,7 +912,7 @@ export default function AppShell() {
             )}
             {!showOverlay && activeTab?.kind === "launcher" && (
               <Suspense fallback={<PanelLoader />}>
-                <SessionLauncher onStartSession={handleStartSession} onRunInTerminal={handleRunInTerminal} onOpen={(action) => void handleLauncherOpen(action)} />
+                <SessionLauncher onStartSession={handleStartSession} onRunInTerminal={handleRunInTerminal} onOpen={(action) => void handleLauncherOpen(action)} onOpenInEditor={() => { if (activeRepoPath) void handleOpenInEditor(activeRepoPath); }} />
               </Suspense>
             )}
             {!showOverlay && activeTab?.kind === "todos" && (
@@ -924,7 +924,7 @@ export default function AppShell() {
             {/* A project with no tabs lands on its launcher; with no projects at all, welcome. */}
             {!showOverlay && !activeTab && tabs.length === 0 && (activeRepoPath ? (
               <Suspense fallback={<PanelLoader />}>
-                <SessionLauncher onStartSession={handleStartSession} onRunInTerminal={handleRunInTerminal} onOpen={(action) => void handleLauncherOpen(action)} />
+                <SessionLauncher onStartSession={handleStartSession} onRunInTerminal={handleRunInTerminal} onOpen={(action) => void handleLauncherOpen(action)} onOpenInEditor={() => { if (activeRepoPath) void handleOpenInEditor(activeRepoPath); }} />
               </Suspense>
             ) : repos.length === 0 ? (
               <Suspense fallback={<PanelLoader />}>

@@ -3,7 +3,6 @@ import { GitBranch } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
 import { useTerminalStore } from "../../stores/useTerminalStore";
 import { useGitStore } from "../../stores/useGitStore";
-import { useGitPanelStore } from "../../stores/useGitPanelStore";
 import { gitChangedFiles, gitDiffStats } from "../../lib/tauri";
 import { summarizeChanges } from "../../lib/gitChangeSummary";
 import type { ChangedFile } from "../../lib/types";
@@ -19,7 +18,7 @@ interface ChangesData {
   summary: ReturnType<typeof summarizeChanges>;
 }
 
-/** Repo, branch, and diff totals as one button; opens the Git panel. */
+/** Repo, branch, and diff totals as one button; opens the Changes panel. */
 export default function GitSummary({ active }: { active: boolean }) {
   const repoPath = useTerminalStore((s) => s.activeProjectPath);
   const status = useGitStore((s) => (repoPath ? s.projectGitStatus[repoPath] : undefined));
@@ -71,37 +70,21 @@ export default function GitSummary({ active }: { active: boolean }) {
     ? `${files.length} ${files.length === 1 ? "file" : "files"} changed`
     : "No changes";
 
-  // With changes, land on a diff (the last one viewed, else the first);
-  // otherwise just open the repository's files.
-  const openPanel = () => {
-    const state = useGitPanelStore.getState();
-    const panel = state.perRepo[repoPath];
-    const selected = files.find((file) => file.path === panel?.repoSelectedPath) ?? files[0];
-    const preferredArea = selected ? panel?.repoPreferredDiffArea[selected.path] : undefined;
-    const file = selected
-      ? current?.files.find((entry) => entry.path === selected.path && entry.area === preferredArea) ?? selected
-      : null;
-    if (file && (file.area === "staged" || file.area === "unstaged" || file.area === "untracked")) {
-      state.setRepoSelection(repoPath, file.path);
-      state.setRepoPreferredDiffArea(repoPath, file.path, file.area);
-      state.setViewerMode(repoPath, "diff");
-    } else {
-      state.setViewerMode(repoPath, "file");
-    }
-    useTerminalStore.getState().addPanelTab("git");
-  };
+  // The Changes panel opens on the first changed file.
+  const openPanel = () => useTerminalStore.getState().addPanelTab("git");
 
   return (
     <button
       type="button"
       className="git-summary"
       title={`${repoName} on ${branch}\n${fileLabel}${files.length > 0 ? ` · ${additions.toLocaleString()} additions, ${deletions.toLocaleString()} deletions` : ""}`}
-      aria-label={`Open Git panel: ${repoName} on ${branch}, ${fileLabel}${files.length > 0 ? `, ${additions} additions and ${deletions} deletions` : ""}`}
+      aria-label={`Show changes: ${repoName} on ${branch}, ${fileLabel}${files.length > 0 ? `, ${additions} additions and ${deletions} deletions` : ""}`}
       aria-pressed={active}
       onClick={openPanel}
     >
+      <GitBranch size={13} className="git-summary__icon" aria-hidden="true" />
       <span className="git-summary__repo">{repoName}</span>
-      <GitBranch size={14} className="git-summary__icon" aria-hidden="true" />
+      <span className="git-summary__sep" aria-hidden="true">›</span>
       <span className="git-summary__branch">{branch}</span>
       {files.length > 0 && (
         <>

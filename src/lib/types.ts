@@ -180,7 +180,7 @@ export function panelTabId(kind: PanelTabKind): string {
 }
 
 export const panelTabDefaults: Record<PanelTabKind, { label: string }> = {
-  git: { label: "Files" },
+  git: { label: "Changes" },
   commands: { label: "Commands" },
   launcher: { label: "New tab" },
   todos: { label: "To-dos" },

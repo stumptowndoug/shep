@@ -55,8 +55,3 @@ export function getPlainMarkdownRenderer(): MarkdownIt {
   }
   return plainRenderer;
 }
-
-export function isMarkdownFile(filePath: string): boolean {
-  const base = filePath.split("/").pop()?.toLowerCase() ?? "";
-  return base.endsWith(".md") || base.endsWith(".markdown");
-}

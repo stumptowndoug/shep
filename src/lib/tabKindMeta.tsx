@@ -1,4 +1,4 @@
-import { FolderTree, Terminal, SquarePen, SquarePlus, List, ListTodo } from "lucide-react";
+import { FileDiff, Terminal, SquarePen, SquarePlus, List, ListTodo } from "lucide-react";
 import type { TabKind } from "./types";
 
 export interface TabKindMeta {
@@ -23,8 +23,8 @@ const meta: Record<TabKind, TabKindMeta> = {
     shortcut: "⇧⌘C",
   },
   git: {
-    label: "Files",
-    icon: (size) => <FolderTree size={size} />,
+    label: "Changes",
+    icon: (size) => <FileDiff size={size} />,
     shortcut: "⌘G",
   },
   launcher: {
