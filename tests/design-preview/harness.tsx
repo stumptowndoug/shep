@@ -64,6 +64,20 @@ const histories: SessionHistoryEntry[] = params.get('history') === 'empty' ? [] 
 let historyScans = 0;
 let previewPtyId = 1000;
 const snapshots = ['claude', 'codex', 'cursor'].map((provider, i) => ({provider,status:'ok',fetchedAt:new Date().toISOString(),summaryWindows:[{provider,windowId:`${provider}-weekly`,window:'7d',label:'7d',scope:'plan',limit:100,used:24+i*18,sourceType:'provider',confidence:'official',costKind:'included',usedPercent:24+i*18,remainingPercent:76-i*18,resetAt:new Date(now+3*86400000).toISOString(),tokenTotal:null,paceStatus:null}],extraWindows:[],localDetails:null,error:null}));
+// Labels as agents really log them: Claude by encoded path, Codex by folder name.
+const usageItem = (provider: string, label: string, tokens: number, sessions: number | null = null) => ({provider,label,tokens,tokensInput:Math.round(tokens*0.04),tokensOutput:Math.round(tokens*0.02),tokensCacheRead:Math.round(tokens*0.9),tokensCacheWrite:Math.round(tokens*0.04),tokensThoughts:0,cost:null,costDetail:cost,sessions,trend:[]});
+const usageOverview = (window: string) => {
+  const scale = {'24h':0.05,'7d':0.3,'30d':1,'365d':4}[window] ?? 1;
+  const count = {'24h':24,'7d':7,'30d':30,'365d':365}[window] ?? 24;
+  const hourly = window === '24h';
+  const topModels = [['claude','claude-opus-5-5',1240],['antigravity','Gemini 3.7 Flash (Low)',220],['claude','claude-sonnet-5',130],['codex','gpt-6-astra',73],['claude','claude-fable-5-1',67],['codex','gpt-5.6-sol',54],['antigravity','unknown',19],['codex','gpt-6.1-sol',7.5],['antigravity','Gemini 3.7 Flash (Low',0.6],['antigravity','Gemini 3.7 Fl',0.5],['pi','~deepseek/deepseek-flash-latest',0.4],['pi','moonshotai/kimi-k3',0.2],['claude','<synthetic>',0]].map(([p,l,t]) => usageItem(p as string,l as string,Math.round((t as number)*1e6*scale)));
+  const topProjects = [['claude','-preview-shep',514,19],['claude','-preview-carrot-frontend',489,14],['antigravity','unknown',241,40],['claude','-preview-springroll',213,7],['codex','shep',108,18],['claude','-preview--shep-worktrees-shep-acp-chat',60,1],['codex','springroll',14,6],['codex','carrot-frontend',12,4],['claude','subagents',5.6,16],['codex','let-s-set-up-a-scheduled',0.6,1],['claude','-private-tmp-claude-501--preview-springroll-scratchpad',0.09,7],['codex','dev',0.19,1],['pi','carrot-frontend',0.05,1]].map(([p,l,t,n]) => usageItem(p as string,l as string,Math.round((t as number)*1e6*scale),n as number));
+  const providers = [['claude',1437],['antigravity',241],['codex',134],['pi',0.6]].map(([p,t]) => ({...usageItem(p as string,'',Math.round((t as number)*1e6*scale)),sharePercent:0}));
+  const totalTokens = providers.reduce((sum, p) => sum + p.tokens, 0);
+  const unit = hourly ? 3600000 : 86400000;
+  const trend = Array.from({length:count},(_,i)=>({start:now-(count-i)*unit,end:now-(count-1-i)*unit,label:'',tokens:Math.round(Math.max(0,Math.sin(i*1.7)+Math.sin(i*0.37)*0.8+0.4)*totalTokens/count),cost:null,costDetail:cost,providers:[]}));
+  return {window,totalTokens,totalCost:null,totalCostDetail:cost,activeProjects:6,activeSessions:Math.round(80*scale)+1,providers,trend,topModels,topProjects};
+};
 const config = { name: 'shep', commands: [], assistants: [] };
 const git = { is_git_repo: true, branch: 'design/springroll', dirty: changedFiles.length > 0, staged: 0, unstaged: changedFiles.filter(file => file.area === 'unstaged').length, untracked: changedFiles.filter(file => file.area === 'untracked').length, ahead: 0, behind: 0, worktree_parent: null };
 mockWindows('main');
@@ -153,7 +167,7 @@ mockIPC((cmd, payload) => {
       document.documentElement.dataset.previewLastSession = JSON.stringify({command:args?.command,args:args?.args,cwd:args?.cwd});
       return ++previewPtyId;
     }
-    case 'get_usage_overview': return {window:args?.window ?? '24h',totalTokens:248000,totalCost:4.82,totalCostDetail:cost,activeProjects:2,activeSessions:4,providers:[],trend:Array.from({length:24},(_,i)=>({start:now-(24-i)*3600000,end:now-(23-i)*3600000,label:`${i}:00`,tokens:[0,0,0,1200,2000,800,0,4800,6200,7300,1800,3900][i%12],cost:0.2,costDetail:cost,providers:[]})),topModels:[],topProjects:[]};
+    case 'get_usage_overview': return usageOverview(String(args?.window ?? '24h'));
     case 'get_memory_stats': return {app_rss_bytes:100000000,children_rss_bytes:0,child_count:0};
     case 'resolve_session_title': case 'get_agent_runtime_status': return null;
     default: return [];
@@ -183,6 +197,7 @@ if (previewWidth >= 800 && previewHeight >= 600) {
 if (params.get('view') === 'chat') useTerminalStore.getState().setActiveTab('preview-900');
 if (params.has('chat')) await startChat({assistant:CODING_ASSISTANTS.find(assistant => assistant.id === (params.get('chat') === 'antigravity' ? 'antigravity' : params.get('chat') === 'cursor' ? 'cursor' : params.get('chat')?.startsWith('pi') ? 'pi' : 'claude'))!,repoPath:repos[0].path,mode:params.get('access') === 'ask' ? 'standard' : 'yolo'});
 if (params.get('view') === 'ports') useUIStore.getState().togglePortsPanel();
+if (params.get('view') === 'usage') useUIStore.getState().toggleUsagePanel();
 if (params.get('view') === 'history') useUIStore.getState().toggleHistoryPanel();
 if (params.get('view') === 'projects') useUIStore.getState().toggleProjectsPanel();
 if (params.get('view') === 'switcher') useUIStore.getState().setProjectSwitcherOpen(true);

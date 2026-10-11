@@ -1,19 +1,13 @@
-import { useCallback, useEffect, useState } from "react";
-import { RefreshCcw } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { Folder, RefreshCcw } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
 import { getUsageOverview, refreshUsageData } from "../../lib/tauri";
-import type {
-  UsageCost,
-  UsageBreakdownItem,
-  UsageOverview,
-  UsageProvider,
-  UsageTrendBucket,
-  UsageSettings,
-  ProviderUsageSnapshot,
-} from "../../lib/types";
+import type { UsageOverview, UsageProvider, UsageTrendBucket, UsageSettings, ProviderUsageSnapshot } from "../../lib/types";
 import { assistantLogoSrc, getAssistantLogoClass } from "../../lib/assistantLogos";
 import { useUsageStore, type TimeWindow } from "../../stores/useUsageStore";
 import { useUsageSettingsStore } from "../../stores/useUsageSettingsStore";
+import { useRepoStore } from "../../stores/useRepoStore";
+import { useGitStore } from "../../stores/useGitStore";
 import {
   ALL_USAGE_PROVIDERS,
   TONE_COLORS,
@@ -30,696 +24,358 @@ import {
   hasVisibleUsageLimits,
   type PaceStatus,
 } from "./usageHelpers";
+import { groupModels, matchProjects, type UsageTotals } from "./usageLabels";
 
 const TIME_WINDOWS: { key: TimeWindow; label: string }[] = [
-  { key: "24h", label: "24 hour" },
-  { key: "7d", label: "7 day" },
-  { key: "30d", label: "30 day" },
-  { key: "365d", label: "1 year" },
+  { key: "24h", label: "24h" },
+  { key: "7d", label: "7d" },
+  { key: "30d", label: "30d" },
+  { key: "365d", label: "1y" },
 ];
 
-function presentCost(value: number | null): string {
-  return value != null ? formatCost(value) : "—";
+const WINDOW_PHRASE: Record<TimeWindow, string> = {
+  "24h": "in the last 24 hours",
+  "7d": "in the last 7 days",
+  "30d": "in the last 30 days",
+  "365d": "in the last year",
+};
+
+/** Provider window labels ("5h", "7d", "24h pro") as words. */
+function limitLabel(label: string): string {
+  const [span, ...rest] = label.trim().split(/\s+/);
+  const word = ({ "5h": "5-hour", "24h": "Daily", "7d": "Weekly", "30d": "Monthly" } as Record<string, string>)[span];
+  return word ? [word, ...rest].join(" ") : label;
 }
 
-function costKindLabel(costDetail: UsageCost): string {
-  switch (costDetail.kind) {
-    case "recorded":
-      return "Recorded";
-    case "estimated":
-      return "List-price";
-    case "included":
-      return "Included";
-    case "free":
-      return "Free";
-    case "mixed":
-      return "Mixed";
-    case "unknown":
-      return "Unknown";
-  }
+const plural = (count: number, word: string) => `${count.toLocaleString()} ${word}${count === 1 ? "" : "s"}`;
+
+function ProviderLogo({ provider }: { provider: UsageProvider }) {
+  const src = assistantLogoSrc[provider];
+  return src
+    ? <img src={src} alt="" className={`usage-logo ${getAssistantLogoClass(provider) ?? ""}`} />
+    : <span className="usage-logo" aria-hidden="true" />;
 }
 
-function costKindMeta(costDetail: UsageCost): string {
-  const label = costKindLabel(costDetail);
-  return costDetail.confidence === "official" ? `${label} · official` : label;
-}
+const breakdownTitle = (totals: UsageTotals) =>
+  `Input ${formatTokenCount(totals.input)} · Output ${formatTokenCount(totals.output)} · Cache ${formatTokenCount(totals.cache)}`;
 
-function formatHourLabel(date: Date): string {
-  return date.toLocaleTimeString([], { hour: "numeric" });
-}
+// ── Activity chart ───────────────────────────────────────
 
-interface TooltipData {
-  label: string;
-  tokens: string;
-  cost: string | null;
-}
-
-function useChartTooltip() {
-  const [tip, setTip] = useState<TooltipData | null>(null);
-
-  const show = useCallback((_e: React.MouseEvent, label: string, tokens: number, cost: number | null) => {
-    setTip({
-      label,
-      tokens: formatTokenCount(tokens),
-      cost: cost != null ? formatCost(cost) : null,
-    });
-  }, []);
-
-  const hide = useCallback(() => setTip(null), []);
-
-  return { tip, show, hide };
-}
-
-function ChartTooltip({ tip }: { tip: TooltipData }) {
-  return (
-    <div className="usage-tooltip">
-      <span className="usage-tooltip__label">{tip.label}</span>
-      <span className="usage-tooltip__sep">/</span>
-      <span className="usage-tooltip__value">{tip.tokens}</span>
-      {tip.cost && (
-        <>
-          <span className="usage-tooltip__sep">/</span>
-          <span className="usage-tooltip__cost">{tip.cost}</span>
-        </>
-      )}
-    </div>
-  );
-}
-
-function Stat({
-  label,
-  value,
-  meta,
-}: {
-  label: string;
-  value: string;
-  meta?: string;
-}) {
-  return (
-    <div className="usage-stat">
-      <span className="usage-stat__label">{label}</span>
-      <strong className="usage-stat__value">{value}</strong>
-      {meta && <span className="usage-stat__meta">{meta}</span>}
-    </div>
-  );
-}
-
-function buildLocalDates(window: TimeWindow, count: number): Date[] {
-  const now = new Date();
-
-  if (window === "24h") {
-    const base = new Date(now);
-    base.setMinutes(0, 0, 0);
-    return Array.from({ length: count }, (_, index) => {
-      const date = new Date(base);
-      date.setHours(base.getHours() - (count - 1 - index));
-      return date;
-    });
-  }
-
-  const base = new Date(now);
-  base.setHours(0, 0, 0, 0);
+function bucketDates(window: TimeWindow, count: number): Date[] {
+  const base = new Date();
+  if (window === "24h") base.setMinutes(0, 0, 0);
+  else base.setHours(0, 0, 0, 0);
   return Array.from({ length: count }, (_, index) => {
     const date = new Date(base);
-    date.setDate(base.getDate() - (count - 1 - index));
+    if (window === "24h") date.setHours(base.getHours() - (count - 1 - index));
+    else date.setDate(base.getDate() - (count - 1 - index));
     return date;
   });
 }
 
-function buildHeatmapMonthLabels(dates: Date[]) {
-  const leadingEmpty = dates[0]?.getDay() ?? 0;
-  const weekCount = Math.ceil((leadingEmpty + dates.length) / 7);
-  const seen = new Set<string>();
-
-  return Array.from({ length: weekCount }, (_, weekIndex) => {
-    const weekStart = weekIndex * 7 - leadingEmpty;
-    const weekDates = dates.filter((_, dateIndex) => dateIndex >= weekStart && dateIndex < weekStart + 7);
-    // Only label the week containing the 1st of the month
-    const firstOfMonth = weekDates.find((date) => date.getDate() === 1);
-    const labelDate = firstOfMonth ?? (weekIndex === 0 ? weekDates[0] : undefined);
-    if (!labelDate) return "";
-    const key = `${labelDate.getFullYear()}-${labelDate.getMonth()}`;
-    if (seen.has(key)) return "";
-    seen.add(key);
-    return labelDate.toLocaleDateString([], { month: "short" });
-  });
+function cellFill(tokens: number, max: number): string {
+  if (tokens === 0) return "var(--usage-empty)";
+  const intensity = Math.max(tokens / max, 0.12);
+  return `color-mix(in srgb, var(--accent) ${Math.round(18 + intensity * 72)}%, transparent)`;
 }
 
-function ActivityBarChart({
-  trend,
-  window,
-}: {
-  trend: UsageTrendBucket[];
-  window: TimeWindow;
-}) {
-  const maxTokens = Math.max(...trend.map((bucket) => bucket.tokens), 1);
-  const bucketCount = trend.length;
-  const dates = buildLocalDates(window, bucketCount);
-  const { tip, show, hide } = useChartTooltip();
+function ActivityChart({ trend, window, onHover }: { trend: UsageTrendBucket[]; window: TimeWindow; onHover: (text: string | null) => void }) {
+  const setHover = onHover;
+  const dates = bucketDates(window, trend.length);
+  const max = Math.max(...trend.map((bucket) => bucket.tokens), 1);
+  const describe = (index: number) => {
+    const date = dates[index];
+    const when = window === "24h"
+      ? date.toLocaleString([], { weekday: "short", hour: "numeric" })
+      : date.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
+    return `${when} · ${formatTokenCount(trend[index].tokens)} tokens`;
+  };
+
+  if (window === "365d") {
+    const leading = dates[0]?.getDay() ?? 0;
+    const months = Array.from({ length: Math.ceil((leading + dates.length) / 7) }, (_, week) => {
+      const first = dates.slice(Math.max(week * 7 - leading, 0), week * 7 - leading + 7).find((date) => date.getDate() === 1);
+      return first ? first.toLocaleDateString([], { month: "short" }) : "";
+    });
+    return (
+      <div className="usage-heatmap">
+        <div className="usage-heatmap__scroll">
+          <div className="usage-heatmap__months" aria-hidden="true">
+            {months.map((label, index) => <span key={index}>{label}</span>)}
+          </div>
+          <div className="usage-heatmap__grid" aria-hidden="true">
+            {Array.from({ length: leading }, (_, index) => <span key={`pad-${index}`} />)}
+            {trend.map((bucket, index) => (
+              <span
+                key={bucket.start}
+                className="usage-heatmap__cell"
+                style={{ background: cellFill(bucket.tokens, max) }}
+                onMouseEnter={() => setHover(describe(index))}
+                onMouseLeave={() => setHover(null)}
+              />
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="usage-chart">
-      <div className={`usage-chart__bars ${trend.length > 12 ? "usage-chart__bars--dense" : ""}`} aria-hidden="true">
-        {trend.map((bucket, index) => {
-          const date = dates[index];
-          const intensity = bucket.tokens === 0 ? 0 : Math.max(bucket.tokens / maxTokens, 0.12);
-          const height = bucket.tokens === 0 ? 8 : Math.max((bucket.tokens / maxTokens) * 100, 10);
-          const dateLabel = window === "24h"
-            ? date.toLocaleString([], { month: "short", day: "numeric", hour: "numeric" })
-            : date.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
-          return (
-            <div key={`${bucket.start}-${bucket.end}`} className="usage-chart__bar-wrap">
-              <div className="usage-chart__bar-area">
-                <div
-                  className="usage-chart__bar"
-                  style={{
-                    height: `${height}%`,
-                    background: bucket.tokens === 0
-                      ? "color-mix(in srgb, var(--text-primary), transparent 96%)"
-                      : `linear-gradient(180deg,
-                          color-mix(in srgb, var(--text-primary), transparent ${92 - intensity * 14}%),
-                          color-mix(in srgb, var(--status-running), transparent ${88 - intensity * 48}%)
-                        )`,
-                  }}
-                  onMouseEnter={(e) => show(e, dateLabel, bucket.tokens, bucket.cost)}
-                  onMouseMove={(e) => show(e, dateLabel, bucket.tokens, bucket.cost)}
-                  onMouseLeave={hide}
-                />
-              </div>
-              <span className="usage-chart__label">
-                {window === "24h"
-                  ? formatHourLabel(date)
-                  : date.toLocaleDateString([], { weekday: "short", day: "numeric" })}
-              </span>
+      <div className="usage-chart__bars" aria-hidden="true">
+        {trend.map((bucket, index) => (
+          <div
+            key={bucket.start}
+            className="usage-chart__col"
+            onMouseEnter={() => setHover(describe(index))}
+            onMouseLeave={() => setHover(null)}
+          >
+            <div className="usage-chart__track">
+              <div
+                className="usage-chart__bar"
+                style={{
+                  height: bucket.tokens === 0 ? 3 : `${Math.max((bucket.tokens / max) * 100, 4)}%`,
+                  background: cellFill(bucket.tokens, max),
+                }}
+              />
             </div>
+            <span className="usage-chart__tick">
+              {window === "24h"
+                ? index % 4 === 0 ? dates[index].toLocaleTimeString([], { hour: "numeric" }) : ""
+                : window === "30d"
+                  ? index % 5 === 0 ? dates[index].toLocaleDateString([], { month: "short", day: "numeric" }) : ""
+                  : dates[index].toLocaleDateString([], { weekday: "short" })}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── Limits ───────────────────────────────────────────────
+
+interface LimitItem {
+  id: string;
+  provider: UsageProvider;
+  label: string;
+  pct: number | null;
+  /** Shown instead of the bar while a provider loads or fails. */
+  status?: string;
+  detail: string;
+  pace: { status: PaceStatus; elapsedPct: number } | null;
+}
+
+function collectLimits(snapshots: Record<string, ProviderUsageSnapshot>, settings: UsageSettings): LimitItem[] {
+  const now = new Date();
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  const nextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+  const elapsedMonthPct = ((now.getTime() - monthStart.getTime()) / (nextMonth.getTime() - monthStart.getTime())) * 100;
+  const items: LimitItem[] = [];
+
+  for (const provider of ALL_USAGE_PROVIDERS) {
+    const config = settings[provider];
+    const snap = snapshots[provider];
+    if (!config.show) continue;
+
+    // A monthly budget is a limit the user set themselves.
+    if (config.budgetMode === "custom") {
+      if (config.monthlyBudget == null || config.monthlyBudget <= 0) continue;
+      const spent = snap?.localDetails?.costMonth ?? 0;
+      const pct = (spent / config.monthlyBudget) * 100;
+      const delta = pct - elapsedMonthPct;
+      items.push({
+        id: `budget-${provider}`,
+        provider,
+        label: "Monthly budget",
+        pct,
+        detail: `${formatCost(spent)} of ${formatCost(config.monthlyBudget)}`,
+        pace: { status: delta <= -10 ? "under" : delta >= 10 ? "over" : "on", elapsedPct: elapsedMonthPct },
+      });
+      continue;
+    }
+
+    if (!hasVisibleUsageLimits(provider, settings)) continue;
+    const reported = (snap?.summaryWindows ?? []).filter((w) => w.sourceType === "provider" && w.usedPercent != null);
+    const windows = reported.filter((w) => shouldShowUsageWindow(provider, w.window, settings, w.windowId));
+    if (windows.length === 0) {
+      if (reported.length === 0) {
+        items.push({ id: `pending-${provider}`, provider, label: "", pct: null, status: snap?.error ?? "Checking…", detail: "", pace: null });
+      }
+      continue;
+    }
+    for (const w of windows) {
+      items.push({
+        id: w.windowId,
+        provider,
+        label: limitLabel(w.label),
+        pct: w.usedPercent,
+        detail: w.resetAt ? `Resets in ${formatReset(w.resetAt)}` : "",
+        pace: computePace(w),
+      });
+    }
+  }
+  return items.sort((a, b) => (b.pct ?? -1) - (a.pct ?? -1));
+}
+
+function LimitsSection({ items }: { items: LimitItem[] }) {
+  if (items.length === 0) return null;
+  return (
+    <section className="page__section">
+      <div className="usage-label"><span>Limits</span></div>
+      <ul className="usage-list">
+        {items.map((item) => {
+          const tone = barTone(item.pace, item.pct);
+          return (
+            <li key={item.id} className="usage-limit">
+              <span className="usage-row__name">
+                <ProviderLogo provider={item.provider} />
+                <span className="usage-row__label">{getProviderLabel(item.provider)}</span>
+                {item.label && <span className="usage-row__sub">{item.label}</span>}
+              </span>
+              {item.status ? (
+                <span className="usage-limit__status">{item.status}</span>
+              ) : (
+                <>
+                  <span
+                    className="usage-limit__bar"
+                    style={{ background: TONE_TRACK[tone] }}
+                    title={item.pace ? `${formatPercent(item.pace.elapsedPct)} of the window has passed; ${paceLabel(item.pace.status)}` : undefined}
+                  >
+                    <span className="usage-limit__fill" style={{ width: `${Math.min(item.pct ?? 0, 100)}%`, background: TONE_COLORS[tone] }} />
+                    {item.pace && <span className="usage-limit__pace" style={{ left: `${Math.min(item.pace.elapsedPct, 100)}%` }} />}
+                  </span>
+                  <span className="usage-row__value">{formatPercent(item.pct)}</span>
+                  <span className="usage-limit__detail">{item.detail}</span>
+                </>
+              )}
+            </li>
           );
         })}
-      </div>
-      <div className="usage-chart__footer">
-        <div className="usage-chart__footer-left">
-          {tip && <ChartTooltip tip={tip} />}
-        </div>
-        <div className="usage-chart__legend">
-          <span>Less</span>
-          <div className="usage-chart__legend-scale">
-            <span className="usage-chart__legend-bar" />
-            <span className="usage-chart__legend-bar usage-chart__legend-bar--mid" />
-            <span className="usage-chart__legend-bar usage-chart__legend-bar--high" />
-          </div>
-          <span>More</span>
-        </div>
-      </div>
-    </div>
+      </ul>
+    </section>
   );
 }
 
-function ActivityHeatmap({
-  trend,
-  window,
-}: {
-  trend: UsageTrendBucket[];
-  window: TimeWindow;
-}) {
-  const dates = buildLocalDates(window, trend.length);
-  const maxTokens = Math.max(...trend.map((bucket) => bucket.tokens), 1);
-  const leadingEmpty = dates[0]?.getDay() ?? 0;
-  const monthLabels = buildHeatmapMonthLabels(dates);
-  const isYear = window === "365d";
-  const cellSize = isYear ? 13 : 14;
-  const cellGap = isYear ? 3 : 4;
-  const { tip, show, hide } = useChartTooltip();
+// ── Breakdowns ───────────────────────────────────────────
 
-  return (
-    <div className={`usage-heatmap ${isYear ? "usage-heatmap--year" : ""}`}>
-      <div className="usage-heatmap__scroll">
-        <div
-          className="usage-heatmap__month-row"
-          style={{
-            gridTemplateColumns: `repeat(${monthLabels.length}, ${cellSize}px)`,
-            gap: `${cellGap}px`,
-          }}
-          aria-hidden="true"
-        >
-          {monthLabels.map((label, index) => (
-            <span key={`month-${index}`} className="usage-heatmap__month-label">
-              {label}
-            </span>
-          ))}
-        </div>
-
-        <div className="usage-heatmap__frame">
-          <div
-            className="usage-heatmap__weekday-col"
-            style={{ gridTemplateRows: `repeat(7, ${cellSize}px)`, gap: `${cellGap}px` }}
-            aria-hidden="true"
-          >
-            <span />
-            <span>Mon</span>
-            <span />
-            <span>Wed</span>
-            <span />
-            <span>Fri</span>
-            <span />
-          </div>
-          <div
-            className="usage-heatmap__grid"
-            style={{
-              gridTemplateRows: `repeat(7, ${cellSize}px)`,
-              gridAutoColumns: `${cellSize}px`,
-              gridAutoFlow: "column",
-              gap: `${cellGap}px`,
-            }}
-            aria-hidden="true"
-          >
-            {Array.from({ length: leadingEmpty }).map((_, index) => (
-              <span key={`empty-${index}`} className="usage-heatmap__empty" />
-            ))}
-            {trend.map((bucket, index) => {
-              const intensity = bucket.tokens === 0 ? 0 : Math.max(bucket.tokens / maxTokens, 0.12);
-              const date = dates[index];
-              const dateLabel = date.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric", year: "numeric" });
-              return (
-                <span
-                  key={`${bucket.start}-${bucket.end}`}
-                  className="usage-heatmap__cell"
-                  style={{
-                    width: cellSize,
-                    height: cellSize,
-                    background: bucket.tokens === 0
-                      ? "color-mix(in srgb, var(--text-primary), transparent 96%)"
-                      : `linear-gradient(180deg,
-                          color-mix(in srgb, var(--text-primary), transparent ${92 - intensity * 14}%),
-                          color-mix(in srgb, var(--status-running), transparent ${88 - intensity * 48}%)
-                        )`,
-                  }}
-                  onMouseEnter={(e) => show(e, dateLabel, bucket.tokens, bucket.cost)}
-                  onMouseMove={(e) => show(e, dateLabel, bucket.tokens, bucket.cost)}
-                  onMouseLeave={hide}
-                />
-              );
-            })}
-          </div>
-        </div>
-      </div>
-      <div className="usage-chart__footer">
-        <div className="usage-chart__footer-left">
-          {tip && <ChartTooltip tip={tip} />}
-        </div>
-        <div className="usage-chart__legend">
-          <span>Less</span>
-          <div className="usage-chart__legend-scale">
-            <span className="usage-chart__legend-bar" />
-            <span className="usage-chart__legend-bar usage-chart__legend-bar--mid" />
-            <span className="usage-chart__legend-bar usage-chart__legend-bar--high" />
-          </div>
-          <span>More</span>
-        </div>
-      </div>
-    </div>
-  );
+interface ShareRowData extends UsageTotals {
+  key: string;
+  icon: ReactNode;
+  name: string;
+  sub?: ReactNode;
+  muted?: boolean;
 }
 
-function Sparkline({
-  values,
-}: {
-  values: number[];
-}) {
-  const width = 110;
-  const height = 22;
-  const max = Math.max(...values, 1);
-  const points = values.map((value, index) => {
-    const x = values.length === 1 ? width : (index / (values.length - 1)) * width;
-    const y = height - (value / max) * (height - 4) - 2;
-    return `${x},${y}`;
-  }).join(" ");
-
+/** Agents, models, and projects share one row: name, relative bar, share, tokens. */
+function ShareList({ label, rows, total, empty }: { label: string; rows: ShareRowData[]; total: number; empty: string }) {
+  const max = Math.max(...rows.filter((row) => !row.muted).map((row) => row.tokens), 1);
   return (
-    <svg className="usage-sparkline" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" aria-hidden="true">
-      <polyline
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinejoin="round"
-        strokeLinecap="round"
-        points={points}
-      />
-    </svg>
-  );
-}
-
-function UsageListHeader({
-  title = "Name",
-  withSparklines = false,
-}: {
-  title?: string;
-  withSparklines?: boolean;
-}) {
-  return (
-    <div className="usage-list__row usage-list__row--header" aria-hidden="true">
-      <div className="usage-list__heading">{title}</div>
-      <div className="usage-list__values">
-        <div className="usage-list__col-trend">
-          {withSparklines && <span className="usage-list__heading">Trend</span>}
-        </div>
-        <span className="usage-list__heading usage-list__col-metric">Est. Cost</span>
-        <span className="usage-list__heading usage-list__col-metric">Input</span>
-        <span className="usage-list__heading usage-list__col-metric">Output</span>
-        <span className="usage-list__heading usage-list__col-metric">Cache</span>
-        <span className="usage-list__heading usage-list__col-total">Total</span>
-      </div>
-    </div>
-  );
-}
-
-function TokenMetricColumns({
-  cost,
-  input,
-  output,
-  cacheRead,
-  cacheWrite,
-  total,
-}: {
-  cost: number | null;
-  input: number;
-  output: number;
-  cacheRead: number;
-  cacheWrite: number;
-  total: number;
-}) {
-  const cache = cacheRead + cacheWrite;
-  return (
-    <>
-      <span className="usage-list__metric usage-list__col-metric">{presentCost(cost)}</span>
-      <span className="usage-list__metric usage-list__col-metric">{formatTokenCount(input)}</span>
-      <span className="usage-list__metric usage-list__col-metric">{formatTokenCount(output)}</span>
-      <span className="usage-list__metric usage-list__col-metric">{formatTokenCount(cache)}</span>
-      <strong className="usage-list__metric usage-list__metric--primary usage-list__col-total">{formatTokenCount(total)}</strong>
-    </>
-  );
-}
-
-function BreakdownList({
-  title,
-  emptyLabel,
-  items,
-  showSessions = false,
-  withSparklines = false,
-}: {
-  title: string;
-  emptyLabel: string;
-  items: UsageBreakdownItem[];
-  showSessions?: boolean;
-  withSparklines?: boolean;
-}) {
-  const sortedItems = [...items].sort((a, b) => b.tokens - a.tokens);
-  const headerTitle = title.endsWith(" Breakdown") ? title.replace(" Breakdown", "") : title;
-  const singularTitle = headerTitle.endsWith("s") ? headerTitle.slice(0, -1) : headerTitle;
-
-  return (
-    <section className="usage-section">
-      {sortedItems.length > 0 ? (
-        <div className="usage-list">
-          <UsageListHeader title={singularTitle} withSparklines={withSparklines} />
-          {sortedItems.map((item) => (
-            <div key={`${item.provider}-${item.label}`} className="usage-list__row">
-              <div className="usage-list__info">
-                <span className="usage-list__label">{item.label}</span>
-                <span className="usage-list__meta">
-                  {getProviderLabel(item.provider)}
-                  {showSessions && item.sessions != null ? ` • ${item.sessions} sessions` : ""}
-                  {` • ${costKindMeta(item.costDetail)}`}
-                </span>
-              </div>
-              <div className="usage-list__values">
-                <div className="usage-list__col-trend">
-                  {withSparklines && <Sparkline values={item.trend} />}
-                </div>
-                <TokenMetricColumns
-                  cost={item.cost}
-                  input={item.tokensInput}
-                  output={item.tokensOutput}
-                  cacheRead={item.tokensCacheRead}
-                  cacheWrite={item.tokensCacheWrite}
-                  total={item.tokens}
-                />
-              </div>
-            </div>
-          ))}
-        </div>
+    <section className="page__section">
+      <div className="usage-label"><span>{label}</span></div>
+      {rows.length === 0 ? (
+        <p className="usage-empty">{empty}</p>
       ) : (
-        <div className="usage-empty">{emptyLabel}</div>
+        <ul className="usage-list">
+          {rows.map((row) => (
+            <li key={row.key} className={`usage-row ${row.muted ? "usage-row--muted" : ""}`} title={breakdownTitle(row)}>
+              <span className="usage-row__name">
+                {row.icon}
+                <span className="usage-row__label">{row.name}</span>
+                {row.sub && <span className="usage-row__sub">{row.sub}</span>}
+              </span>
+              <span className="usage-row__bar" aria-hidden="true">
+                {!row.muted && <span style={{ width: `${Math.max((row.tokens / max) * 100, 1)}%` }} />}
+              </span>
+              <span className="usage-row__share">{total > 0 ? formatPercent((row.tokens / total) * 100) : ""}</span>
+              <span className="usage-row__value">{formatTokenCount(row.tokens)}</span>
+            </li>
+          ))}
+        </ul>
       )}
     </section>
   );
 }
 
-const PACE_LABEL_COLORS: Record<string, string> = {
-  under: "var(--status-added)",
-  on: "var(--text-muted)",
-  over: "var(--status-crashed)",
-};
+function Overview({ overview, snapshots }: { overview: UsageOverview; snapshots: Record<string, ProviderUsageSnapshot> }) {
+  const settings = useUsageSettingsStore((s) => s.settings);
+  const repos = useRepoStore((s) => s.repos);
+  const gitStatuses = useGitStore((s) => s.projectGitStatus);
+  const window = overview.window as TimeWindow;
+  const limits = collectLimits(snapshots, settings);
+  // Hovering the chart shows that hour or day in place of the window total.
+  const [hover, setHover] = useState<string | null>(null);
+  const total = overview.totalTokens;
 
-function UtilizationSection({
-  snapshots,
-  settings,
-}: {
-  snapshots: Record<string, ProviderUsageSnapshot>;
-  settings: UsageSettings;
-}) {
-  const now = new Date();
-  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-  const nextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
-  const elapsedMonthPct = Math.min(Math.max(((now.getTime() - monthStart.getTime()) / (nextMonth.getTime() - monthStart.getTime())) * 100, 0), 100);
+  const agents = useMemo<ShareRowData[]>(() =>
+    [...overview.providers]
+      .filter((provider) => provider.tokens > 0)
+      .sort((a, b) => b.tokens - a.tokens)
+      .map((provider) => ({
+        key: provider.provider,
+        icon: <ProviderLogo provider={provider.provider} />,
+        name: getProviderLabel(provider.provider),
+        tokens: provider.tokens,
+        input: provider.tokensInput,
+        output: provider.tokensOutput,
+        cache: provider.tokensCacheRead + provider.tokensCacheWrite,
+      })),
+  [overview.providers]);
 
-  // 1. Collect and standardize all items
-  const items: Array<{
-    id: string;
-    provider: UsageProvider;
-    label: string;
-    pct: number | null;
-    sublabel: string;
-    pace: { status: PaceStatus; elapsedPct: number } | null;
-    meta?: string;
-  }> = [];
+  const models = useMemo<ShareRowData[]>(() =>
+    groupModels(overview.topModels).map((model) => ({ ...model, icon: <ProviderLogo provider={model.provider} /> })),
+  [overview.topModels]);
 
-  // Add Budgets
-  ALL_USAGE_PROVIDERS.forEach((p) => {
-    const config = settings[p];
-    const snap = snapshots[p];
-    if (!config.show || config.budgetMode !== "custom" || config.monthlyBudget == null || config.monthlyBudget <= 0) return;
-
-    const budget = config.monthlyBudget;
-    const currentMonthCost = snap?.localDetails?.costMonth ?? 0;
-    const usedPct = (currentMonthCost / budget) * 100;
-    const delta = usedPct - elapsedMonthPct;
-    const paceStatus: PaceStatus = delta <= -10 ? "under" : delta >= 10 ? "over" : "on";
-
-    items.push({
-      id: `budget-${p}`,
-      provider: p,
-      label: "Monthly Budget",
-      pct: usedPct,
-      sublabel: `${presentCost(currentMonthCost)} spent of ${presentCost(budget)}`,
-      pace: { status: paceStatus, elapsedPct: elapsedMonthPct },
-    });
-  });
-
-  // Subscription limits are provider-defined and independent of the local
-  // analytics window selected above.
-  ALL_USAGE_PROVIDERS.forEach((provider) => {
-    const config = settings[provider];
-    const snap = snapshots[provider];
-    if (!config.show || config.budgetMode !== "subscription") return;
-    if (!hasVisibleUsageLimits(provider, settings)) return;
-    const windows = (snap?.summaryWindows ?? [])
-      .filter((sw) =>
-        sw.usedPercent != null
-        && sw.sourceType === "provider"
-        && shouldShowUsageWindow(provider, sw.window, settings, sw.windowId)
-      );
-
-    if (windows.length === 0) {
-      if (snap?.summaryWindows.some((w) => w.sourceType === "provider" && w.usedPercent != null)) return;
-      items.push({
-        id: `pending-${provider}`,
-        provider,
-        label: "",
-        pct: null,
-        sublabel: snap?.error ?? "Loading usage…",
-        pace: null,
+  const projects = useMemo<ShareRowData[]>(() => {
+    const { rows, other } = matchProjects(overview.topProjects, repos, gitStatuses);
+    const list: ShareRowData[] = rows.map((row) => ({
+      ...row,
+      key: row.repo.path,
+      icon: <Folder size={15} className="usage-row__icon" aria-hidden="true" />,
+      name: row.repo.name,
+      sub: (
+        <span className="usage-row__agents">
+          {row.providers.map((provider) => <ProviderLogo key={provider} provider={provider} />)}
+        </span>
+      ),
+    }));
+    if (other.tokens > 0) {
+      list.push({
+        ...other,
+        key: "other",
+        icon: <Folder size={15} className="usage-row__icon" aria-hidden="true" />,
+        name: "Other folders",
+        sub: other.folders > 0 ? plural(other.folders, "folder") : undefined,
+        muted: true,
       });
-      return;
     }
-
-    windows.forEach((w) => {
-      const pace = computePace(w);
-      items.push({
-        id: w.windowId,
-        provider,
-        label: w.label,
-        pct: w.usedPercent!,
-        sublabel: w.remainingPercent != null ? `${formatPercent(w.remainingPercent)} remaining` : "",
-        pace,
-        meta: w.resetAt ? `resets in ${formatReset(w.resetAt)}` : undefined,
-      });
-    });
-  });
-
-  if (items.length === 0) return null;
-
-  // 2. Sort by utilization percentage descending
-  const sortedItems = [...items].sort((a, b) => (b.pct ?? -1) - (a.pct ?? -1));
-
-  return (
-    <div className="usage-limits">
-      <div className="usage-section__header !mb-4">
-        <h3 className="section-label !p-0">Utilization</h3>
-      </div>
-      {sortedItems.map((item) => {
-        const tone = barTone(item.pace, item.pct);
-        const logoSrc = assistantLogoSrc[item.provider];
-
-        return (
-          <div key={item.id} className="usage-limit">
-            <div className="usage-limit__header">
-              <span className="usage-limit__provider">
-                {logoSrc && <img src={logoSrc} alt="" className={`usage-list__icon ${getAssistantLogoClass(item.provider) ?? ""}`} />}
-                {getProviderLabel(item.provider)}{item.label ? ` · ${item.label}` : ""}
-              </span>
-              <span className="usage-limit__pct">{formatPercent(item.pct)}</span>
-            </div>
-            <div className="usage-limit__bar">
-              <div className="usage-limit__bar-track" style={{ background: TONE_TRACK[tone] }} />
-              <div
-                className="usage-limit__bar-fill"
-                style={{
-                  width: `${Math.min(item.pct ?? 0, 100)}%`,
-                  background: TONE_COLORS[tone],
-                }}
-              />
-              {item.pace && (
-                <div
-                  className="usage-limit__bar-pace"
-                  style={{ left: `${Math.min(item.pace.elapsedPct, 100)}%` }}
-                />
-              )}
-            </div>
-            <div className="usage-limit__meta">
-              <span>{item.sublabel}</span>
-              {item.pace && (
-                <span style={{ color: PACE_LABEL_COLORS[item.pace.status] }}>{paceLabel(item.pace.status)}</span>
-              )}
-              {item.meta && <span>{item.meta}</span>}
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-function OverviewPanel({ overview, snapshots }: { overview: UsageOverview; snapshots: Record<string, ProviderUsageSnapshot> }) {
-  const usageSettings = useUsageSettingsStore((s) => s.settings);
-  const chart = overview.window === "30d" || overview.window === "365d"
-    ? <ActivityHeatmap trend={overview.trend} window={overview.window as TimeWindow} />
-    : <ActivityBarChart trend={overview.trend} window={overview.window as TimeWindow} />;
-
-  // Sort providers by tokens descending
-  const sortedProviders = [...overview.providers].sort((a, b) => b.tokens - a.tokens);
-
-  const totalInput = overview.providers.reduce((sum, p) => sum + p.tokensInput, 0);
-  const totalOutput = overview.providers.reduce((sum, p) => sum + p.tokensOutput, 0);
-  const totalCache = overview.providers.reduce((sum, p) => sum + p.tokensCacheRead + p.tokensCacheWrite, 0);
+    return list;
+  }, [overview.topProjects, repos, gitStatuses]);
 
   return (
     <>
-      <section className="usage-section">
-        <div className="usage-section__header">
-          <h3 className="section-label !p-0">Activity</h3>
+      <LimitsSection items={limits} />
+
+      <section className="page__section">
+        <div className="usage-label">
+          <span>Activity</span>
+          <span className="usage-label__value">
+            {hover ?? `${formatTokenCount(total)} tokens · ${plural(overview.activeSessions, "session")}`}
+          </span>
         </div>
-        <div className="usage-activity">
-          <div className="usage-activity__summary">
-            <div className="usage-stats">
-              <Stat label="Est. Cost" value={presentCost(overview.totalCost)} meta={costKindMeta(overview.totalCostDetail)} />
-              <Stat label="Input" value={formatTokenCount(totalInput)} />
-              <Stat label="Output" value={formatTokenCount(totalOutput)} />
-              <Stat label="Cache" value={formatTokenCount(totalCache)} />
-              <Stat label="Total" value={formatTokenCount(overview.totalTokens)} />
-            </div>
-          </div>
-          <div className="usage-activity__chart">
-            {chart}
-          </div>
+        <div className="usage-card">
+          <ActivityChart trend={overview.trend} window={window} onHover={setHover} />
         </div>
       </section>
 
-      <section className="usage-section">
-        <div className="usage-list">
-          <UsageListHeader title="Provider" withSparklines />
-          {sortedProviders.map((provider) => {
-            const logoSrc = assistantLogoSrc[provider.provider];
-            return (
-              <div key={provider.provider} className="usage-list__row">
-                <div className="usage-list__info">
-                  <span className="usage-list__label usage-list__label--provider">
-                    {logoSrc ? <img src={logoSrc} alt="" className={`usage-list__icon ${getAssistantLogoClass(provider.provider) ?? ""}`} /> : null}
-                    {getProviderLabel(provider.provider)}
-                  </span>
-                  <span className="usage-list__meta">
-                    {formatPercent(provider.sharePercent)} of total • {costKindMeta(provider.costDetail)}
-                  </span>
-                </div>
-                <div className="usage-list__values">
-                  <div className="usage-list__col-trend">
-                    <Sparkline values={provider.trend} />
-                  </div>
-                  <TokenMetricColumns
-                    cost={provider.cost}
-                    input={provider.tokensInput}
-                    output={provider.tokensOutput}
-                    cacheRead={provider.tokensCacheRead}
-                    cacheWrite={provider.tokensCacheWrite}
-                    total={provider.tokens}
-                  />
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </section>
+      <ShareList label="Agents" rows={agents} total={total} empty={`No agent activity ${WINDOW_PHRASE[window]}.`} />
+      <ShareList label="Models" rows={models} total={total} empty={`No model activity ${WINDOW_PHRASE[window]}.`} />
+      <ShareList label="Projects" rows={projects} total={total} empty={`No project activity ${WINDOW_PHRASE[window]}.`} />
 
-      <section className="usage-section">
-        <UtilizationSection
-          snapshots={snapshots}
-          settings={usageSettings}
-        />
-      </section>
-
-      <BreakdownList
-        title="Model Breakdown"
-        emptyLabel="No model activity yet for this window."
-        items={overview.topModels}
-        withSparklines
-      />
-
-      <BreakdownList
-        title="Project Breakdown"
-        emptyLabel="No project activity yet for this window."
-        items={overview.topProjects}
-        showSessions
-        withSparklines
-      />
-
-      <section className="usage-section">
-        <div className="usage-section__header">
-          <h3 className="section-label !p-0">Methodology</h3>
-        </div>
-        <ul className="usage-methodology">
-          <li>Usage totals and breakdowns on this screen are based on locally observed activity from this machine, except Cursor, which uses Cursor's billing aggregates for the selected window.</li>
-          <li>Cursor does not expose per-project or per-session usage, so it will not appear in the project list or activity heatmap.</li>
-          <li>Provider percentages shown in the sidebar summary come from provider-reported usage windows when available, so they are not always directly comparable to the local totals shown here.</li>
-          <li>In practice, that means the sidebar percentage and this detail view can differ because they are measuring related but not identical sources.</li>
-        </ul>
-      </section>
+      <p className="page__note usage-footnote">
+        Token counts come from your agents’ session logs on this Mac; Cursor reports its own totals and has no project
+        detail. Limits come from each provider, so they won’t always line up with these counts.
+      </p>
     </>
   );
 }
@@ -734,79 +390,71 @@ export default function UsagePanel() {
   const [overview, setOverview] = useState<UsageOverview | null>(null);
   const [overviewLoading, setOverviewLoading] = useState(false);
 
-  const fetchOverview = useCallback(async () => {
+  const loadOverview = useCallback(async (key: TimeWindow) => {
     setOverviewLoading(true);
     try {
-      setOverview(await getUsageOverview(window));
+      setOverview(await getUsageOverview(key));
     } finally {
       setOverviewLoading(false);
     }
-  }, [window]);
+  }, []);
 
   // Fetch overview on initial mount
   useEffect(() => {
-    void fetchOverview();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    void loadOverview(useUsageStore.getState().window);
+  }, [loadOverview]);
 
   // Auto-refresh when background ingest completes
   useEffect(() => {
     const unlisten = listen("usage-ingest-complete", () => {
-      void fetchOverview();
+      void loadOverview(useUsageStore.getState().window);
     });
     return () => { unlisten.then((f) => f()); };
-  }, [fetchOverview]);
+  }, [loadOverview]);
 
-  const handleRefresh = useCallback(async () => {
+  const handleRefresh = async () => {
     await refreshUsageData();
     void fetchSnapshots();
-    void fetchOverview();
-  }, [fetchOverview, fetchSnapshots]);
+    void loadOverview(window);
+  };
 
   const isBusy = loading || overviewLoading;
 
   return (
-    <div className="page">
-      <header className="page__heading">
-        <h1 className="page__title">Usage.</h1>
-      </header>
-      <div className="usage-window-tabs-row">
-        <div className="usage-window-tabs">
-          {TIME_WINDOWS.map((timeWindow) => (
-            <button
-              key={timeWindow.key}
-              type="button"
-              className={`usage-window-tab ${window === timeWindow.key ? "usage-window-tab--active" : ""}`}
-              aria-pressed={window === timeWindow.key}
-              onClick={() => {
-                setWindow(timeWindow.key);
-                // fetchOverview depends on window via its useCallback dep —
-                // but the store hasn't flushed yet, so build a fresh fetcher inline.
-                setOverviewLoading(true);
-                getUsageOverview(timeWindow.key).then(setOverview).finally(() => setOverviewLoading(false));
-              }}
-            >
-              {timeWindow.label}
-            </button>
-          ))}
+    <div className="page usage-page">
+      <header className="page__heading page__heading--actions">
+        <div>
+          <h1 className="page__title">Usage.</h1>
+          <p className="page__lede">How much your agents have worked {WINDOW_PHRASE[window]}, and how close you are to each plan’s limits.</p>
         </div>
-        <button
-          type="button"
-          className="icon-btn"
-          onClick={handleRefresh}
-          aria-label="Refresh usage"
-        >
-          <RefreshCcw size={14} className={isBusy ? "animate-spin" : ""} />
-        </button>
-      </div>
+        <div className="usage-page__actions">
+          <div className="page-tabs usage-page__windows" role="group" aria-label="Time window">
+            {TIME_WINDOWS.map((option) => (
+              <button
+                key={option.key}
+                type="button"
+                className={window === option.key ? "on" : ""}
+                aria-pressed={window === option.key}
+                onClick={() => {
+                  setWindow(option.key);
+                  void loadOverview(option.key);
+                }}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+          <button type="button" className="icon-btn" onClick={handleRefresh} title="Refresh" aria-label="Refresh usage">
+            <RefreshCcw size={14} className={isBusy ? "animate-spin" : ""} />
+          </button>
+        </div>
+      </header>
 
-      <div className="usage-panel">
-        {overview ? (
-          <OverviewPanel overview={overview} snapshots={snapshots} />
-        ) : (
-          <div className="usage-empty">Loading usage overview…</div>
-        )}
-      </div>
+      {overview ? (
+        <Overview overview={overview} snapshots={snapshots} />
+      ) : (
+        <p className="usage-empty">Loading usage…</p>
+      )}
     </div>
   );
 }
