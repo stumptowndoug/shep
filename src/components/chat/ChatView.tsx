@@ -6,7 +6,7 @@ import CursorRequestCard from "./CursorRequestCard";
 import { useChatStore } from "../../stores/useChatStore";
 import { answerPermission, cancelChatStartup } from "../../lib/acp/chatSessions";
 import { openUrl } from "../../lib/tauri";
-import { pendingRequest, type ChatTurn } from "../../lib/acp/chatModel";
+import { pendingRequest, RECENT_TURN_LIMIT, type ChatTurn } from "../../lib/acp/chatModel";
 import { splitTurn, turnStopMessage } from "../../lib/acp/chatPresentation";
 import { assistantLogoSrc, getAssistantLogoClass } from "../../lib/assistantLogos";
 import { CODING_ASSISTANTS } from "../sidebar/constants";
@@ -17,7 +17,7 @@ const APPROVAL_ORDER = ["reject_always", "reject_once", "allow_always", "allow_o
 
 /** Distance from the bottom (px) within which new output keeps the view pinned. */
 const STICK_THRESHOLD = 48;
-const TURN_PAGE_SIZE = 50;
+const TURN_PAGE_SIZE = RECENT_TURN_LIMIT;
 
 function ChatSignIn({ chatId, url }: { chatId: number; url?: string }) {
   const [error, setError] = useState(false);

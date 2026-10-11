@@ -5,6 +5,8 @@ import type { CursorOutcome, CursorRequest } from "./cursorProtocol.ts";
 
 export type ToolStatus = "pending" | "in_progress" | "completed" | "failed";
 
+export const RECENT_TURN_LIMIT = 50;
+
 export interface ToolDiff {
   path: string;
   oldText: string | null;
@@ -37,6 +39,7 @@ export type ChatItem =
       output: string;
       diffs: ToolDiff[];
       omittedDiffs?: number;
+      outputTrimmed?: boolean;
     }
   | { kind: "plan"; id: string; entries: PlanEntry[] }
   | { kind: "cursor_request"; id: string; request: CursorRequest; outcome: CursorOutcome | null }
@@ -57,6 +60,8 @@ export interface ChatTurn {
   endedAt: number | null;
   stopReason: string | null;
   error?: string | null;
+  /** Old display payloads have been released; late updates must not restore them. */
+  detailsTrimmed?: boolean;
 }
 
 /** A session setting the agent lets the user change (model, mode, effort). */
@@ -111,6 +116,27 @@ export function emptyChat(): ChatState {
 
 // ── Turns ────────────────────────────────────────────────────────────
 
+/** Keep conversation text, but release heavy display content in older completed turns. */
+export function trimOldTurnDetails(state: ChatState): ChatState {
+  const boundary = state.turns.length - RECENT_TURN_LIMIT;
+  if (boundary <= 0) return state;
+  let changed = false;
+  const turns = state.turns.map((turn, index) => {
+    if (index >= boundary || turn.endedAt === null || turn.detailsTrimmed) return turn;
+    changed = true;
+    return { ...turn, detailsTrimmed: true, items: turn.items.map((item): ChatItem => {
+      if (item.kind === "tool" && (item.output || item.diffs.length || item.omittedDiffs)) {
+        return { ...item, output: "", diffs: [], omittedDiffs: undefined, outputTrimmed: true };
+      }
+      if (item.kind === "media" && item.content.type === "image") {
+        return { kind: "notice", id: item.id, text: "Image trimmed from older history to reduce memory use." };
+      }
+      return item;
+    }) };
+  });
+  return changed ? { ...state, turns } : state;
+}
+
 export function startTurn(state: ChatState, prompt: string | null): ChatState {
   const turn: ChatTurn = {
     id: state.turns.length,
@@ -120,7 +146,7 @@ export function startTurn(state: ChatState, prompt: string | null): ChatState {
     endedAt: null,
     stopReason: null,
   };
-  return { ...state, turns: [...state.turns, turn] };
+  return trimOldTurnDetails({ ...state, turns: [...state.turns, turn] });
 }
 
 export function endTurn(state: ChatState, stopReason: string, error?: string | null): ChatState {
@@ -134,7 +160,7 @@ function replaceLastTurn(state: ChatState, turn: ChatTurn): ChatState {
 }
 
 /** Late updates amend their completed turn; only explicit prompts open another turn. */
-function updateItems(state: ChatState, fn: (items: ChatItem[]) => ChatItem[], existingItemId?: string): ChatState {
+function updateItems(state: ChatState, fn: (items: ChatItem[], turn: ChatTurn) => ChatItem[], existingItemId?: string): ChatState {
   const base = state.turns.length ? state : startTurn(state, null);
   let index = base.turns.length - 1;
   if (existingItemId) {
@@ -142,7 +168,7 @@ function updateItems(state: ChatState, fn: (items: ChatItem[]) => ChatItem[], ex
       if (base.turns[i].items.some(item => item.id === existingItemId)) { index = i; break; }
     }
   }
-  return { ...base, turns: base.turns.map((turn, i) => i === index ? { ...turn, items: fn(turn.items) } : turn) };
+  return { ...base, turns: base.turns.map((turn, i) => i === index ? { ...turn, items: fn(turn.items, turn) } : turn) };
 }
 
 let itemCounter = 0;
@@ -324,12 +350,12 @@ function toolTitle(update: SessionUpdate, previous: string | undefined, kind: st
 function upsertTool(state: ChatState, update: SessionUpdate): ChatState {
   const id = `tool-${update.toolCallId}`;
   const content = update.content as ToolCallContent[] | undefined;
-  return updateItems(state, (items) => {
+  return updateItems(state, (items, turn) => {
     const index = items.findIndex((item) => item.id === id);
     const existing = index === -1 ? null : items[index];
     const previous = existing?.kind === "tool" ? existing : null;
-    const output = toolOutput(content) || rawToolOutput(update.rawOutput);
-    const diffs = toolDiffs(content);
+    const output = turn.detailsTrimmed ? "" : toolOutput(content) || rawToolOutput(update.rawOutput);
+    const diffs = turn.detailsTrimmed ? [] : toolDiffs(content);
     const kind = toolKind(update, previous?.toolKind);
     const next: ChatItem = {
       kind: "tool",
@@ -337,9 +363,10 @@ function upsertTool(state: ChatState, update: SessionUpdate): ChatState {
       title: toolTitle(update, previous?.title, kind) ?? "Tool call",
       toolKind: kind,
       status: update.status ?? previous?.status ?? "pending",
-      output: output || (previous?.output ?? ""),
-      diffs: diffs.length ? diffs : previous?.diffs ?? [],
-      omittedDiffs: diffs.length ? Math.max(0, (content?.filter((entry) => entry.type === "diff" && entry.path).length ?? 0) - MAX_TOOL_DIFFS) : previous?.omittedDiffs,
+      output: turn.detailsTrimmed ? "" : output || (previous?.output ?? ""),
+      diffs: turn.detailsTrimmed ? [] : diffs.length ? diffs : previous?.diffs ?? [],
+      omittedDiffs: turn.detailsTrimmed ? undefined : diffs.length ? Math.max(0, (content?.filter((entry) => entry.type === "diff" && entry.path).length ?? 0) - MAX_TOOL_DIFFS) : previous?.omittedDiffs,
+      outputTrimmed: previous?.outputTrimmed || (turn.detailsTrimmed && Boolean(content?.length || update.rawOutput != null)),
     };
     if (index === -1) return [...items, next];
     const copy = [...items];

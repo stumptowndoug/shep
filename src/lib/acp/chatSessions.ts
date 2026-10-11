@@ -26,11 +26,13 @@ import { isAccessOption, isFullAccessMode, isModelOption } from "./chatOptions";
 import { applyCursorNotification, parseCursorRequest, validCursorOutcome, type CursorOutcome } from "./cursorProtocol";
 import { chatAdapterCommand } from "./adapters";
 import { antigravitySignInUrl } from "./antigravityProtocol";
+import { createStreamBatch } from "./streamBatch";
 
 const TITLE_MAX_CHARS = 60;
 const STARTUP_TIMEOUT_MS = 60_000;
 const SIGN_IN_TIMEOUT_MS = 5 * 60_000;
-const CANCEL_TIMEOUT_MS = 5_000;
+// Agents finish the running tool call before acknowledging a cancel; that can take a while.
+const CANCEL_TIMEOUT_MS = 30_000;
 
 interface LiveChat {
   connection: AcpConnection;
@@ -47,6 +49,8 @@ interface LiveChat {
   cancelling?: boolean;
   cancelTimer?: number;
   startupMessage: string | null;
+  /** Absent only on connections retained from an older dev build during HMR. */
+  stream?: ReturnType<typeof createStreamBatch>;
 }
 
 // React refresh keeps chat tabs mounted; retain their live connections too.
@@ -72,6 +76,9 @@ export async function startChat(options: StartChatOptions): Promise<number> {
 
   const runtime = await chatAdapterCommand(adapter);
   let chatId = -1;
+  const stream = createStreamBatch((updates) => {
+    useChatStore.getState().update(chatId, chat => updates.reduce(applySessionUpdate, chat));
+  });
   const connection = await AcpConnection.spawn(runtime.command, runtime.args, repoPath, {
     onRequest: (method, params) => handleRequest(chatId, method, params),
     onNotification: (method, params) => {
@@ -79,17 +86,24 @@ export async function startChat(options: StartChatOptions): Promise<number> {
         const update = (params as { update?: Parameters<typeof applySessionUpdate>[1] }).update;
         if (update) {
           const session = live.get(chatId);
+          if (!session) return;
           if (session?.startupMessage && update.sessionUpdate === "agent_message_chunk" &&
             update.content?.type === "text" && update.content.text === session.startupMessage) {
             session.startupMessage = null;
             return;
           }
+          if ((update.sessionUpdate === "agent_message_chunk" || update.sessionUpdate === "agent_thought_chunk") && update.content?.type === "text") {
+            stream.enqueue({ sessionUpdate: update.sessionUpdate, messageId: update.messageId, content: { type: "text", text: update.content.text ?? "" } });
+            return;
+          }
+          stream.flush();
           const previous = useChatStore.getState().chats[chatId]?.options.find(isAccessOption)?.value;
           useChatStore.getState().update(chatId, (chat) => applySessionUpdate(chat, update));
           const access = useChatStore.getState().chats[chatId]?.options.find(isAccessOption);
           if (access && previous !== access.value) syncAccessPolicy(chatId, access.value);
         }
       } else if (assistant.id === "cursor" && method.startsWith("cursor/")) {
+        stream.flush();
         if (!live.get(chatId)?.cancelling) useChatStore.getState().update(chatId, chat => applyCursorNotification(chat, method, params));
       }
     },
@@ -119,6 +133,7 @@ export async function startChat(options: StartChatOptions): Promise<number> {
     permissions: new Map(),
     interactions: new Map(),
     startupMessage: null,
+    stream,
   });
   useChatStore.getState().init(chatId);
   const draftKey = chatDraftKey(assistant.id, repoPath, resume?.sessionId ?? `pending:${crypto.randomUUID()}`);
@@ -187,6 +202,7 @@ export function sendPrompt(chatId: number, text: string): boolean {
 export function cancelTurn(chatId: number) {
   const session = live.get(chatId);
   if (!session?.sessionId) return;
+  session.stream?.flush();
   cancelPendingRequests(session);
   useChatStore.getState().update(chatId, (state) => ({ ...state, queued: [] }));
   setAgentState(chatId, "idle", "Stopped");
@@ -283,6 +299,7 @@ function syncAccessPolicy(chatId: number, value: string) {
 export async function closeChat(chatId: number) {
   const session = live.get(chatId);
   live.delete(chatId);
+  session?.stream?.discard();
   useChatStore.getState().remove(chatId);
   useTerminalStore.getState().removeActivity(chatId);
   if (session) {
@@ -345,6 +362,7 @@ async function openSession(chatId: number, options: StartChatOptions, resetStart
       mcpServers: [],
     });
     // History replays as user/agent chunks; close the last replayed turn.
+    session.stream?.flush();
     useChatStore.getState().update(chatId, (chat) => endTurn(chat, "end_turn"));
   } else {
     if (options.resume) {
@@ -356,6 +374,8 @@ async function openSession(chatId: number, options: StartChatOptions, resetStart
     session.sessionId = info.sessionId ?? null;
   }
   if (!live.has(chatId)) return;
+
+  session.stream?.flush();
 
   if (session.sessionId) {
     const draftKey = chatDraftKey(session.assistant.id, repoPath, session.sessionId);
@@ -408,6 +428,7 @@ async function enableFullAccess(chatId: number) {
 async function runTurn(chatId: number, prompt: string) {
   const session = live.get(chatId);
   if (!session?.sessionId) return;
+  session.stream?.flush();
   session.cancelling = false;
   const store = useChatStore.getState();
   store.update(chatId, (chat) => ({ ...startTurn(chat, prompt), status: "working" }));
@@ -437,6 +458,7 @@ async function runTurn(chatId: number, prompt: string) {
   }
   if (!live.has(chatId)) return;
 
+  session.stream?.flush();
   cancelPendingRequests(session);
   store.update(chatId, (chat) => endTurn(chat, stopReason, turnError));
   void recordHistoryActivity(session, false);
@@ -459,6 +481,7 @@ function setReady(chatId: number, error?: string) {
 async function handleRequest(chatId: number, method: string, params: unknown) {
   const session = live.get(chatId);
   if (!session || session.cancelling) return { outcome: { outcome: "cancelled" } };
+  session.stream?.flush();
   // Cursor also sends its fire-and-forget extensions as JSON-RPC requests in
   // some CLI versions. Acknowledge them without asking the user or doing work.
   if (session.assistant.id === "cursor" && ["cursor/update_todos", "cursor/task", "cursor/generate_image"].includes(method)) {
@@ -523,6 +546,7 @@ function refreshWaitingState(chatId: number) {
 function handleExit(chatId: number, code: number, stderr: string) {
   const session = live.get(chatId);
   if (!session) return;
+  session.stream?.flush();
   live.delete(chatId);
   cancelPendingRequests(session);
   const detail = stderr.trim().split("\n")
@@ -533,6 +557,7 @@ function handleExit(chatId: number, code: number, stderr: string) {
 }
 
 function failChat(chatId: number, error: string | null, exitCode = 1) {
+  live.get(chatId)?.stream?.flush();
   useChatStore.getState().update(chatId, (chat) => ({
     ...endTurn(chat, "error"),
     status: "exited",

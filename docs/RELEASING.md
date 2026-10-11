@@ -77,14 +77,22 @@ Run `pnpm exec vite --host 127.0.0.1 --port 5176 --strictPort`, then in another
 terminal run `node scripts/profile-chat-memory.mjs`. It uses the browser fixture
 with mocked native calls, appends up to 2,000 turns with distinct 23 KB tool
 outputs, verifies that only 50 turns render, and closes the tab through the real
-UI. It repeats three times and prints JavaScript heap samples after garbage
+UI. It also checks that only the recent 50 turns retain tool output. It repeats
+three times and prints JavaScript heap samples after garbage
 collection. No live agents or user history are accessed.
 
-On 2026-10-11, the development fixture used about 29 MiB initially, 42 MiB at
-500 turns, 54 MiB at 1,000 turns, and 78 MiB at 2,000 turns. After the third close
-it returned to about 30 MiB, within 1.6 MiB of the initial sample. The full turn
-payloads did not accumulate after closing tabs in this check. Open conversations
-still retain their entire history in memory; storage-backed paging remains open.
+On 2026-10-11, before old payloads were trimmed, the development fixture used
+about 29 MiB initially and 78 MiB at 2,000 turns. With old tool output, diffs,
+and images trimmed, it used about 32 MiB at 500 turns, 33–34 MiB at 1,000 turns,
+and 35 MiB at 2,000 turns. After the third close it returned to about 30.5 MiB,
+within 1.6 MiB of its initial sample. Closed chats did not retain full payloads
+in these checks. Message text and tool summaries still accumulate; this is not
+a fixed memory cap, and a single recent turn can contain many tool results.
+
+Trimming changes Shep's in-memory display only. Earlier message text remains
+available, but old tool output, diffs, and image data are discarded with a visible
+notice. There is no local transcript database or guaranteed reload of those
+details: provider history and replay support vary.
 
 These are Chromium JavaScript heap measurements. They do not measure native
 allocations, WebKit/GPU processes, or live providers, and do not replace the

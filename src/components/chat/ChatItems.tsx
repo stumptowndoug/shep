@@ -105,7 +105,7 @@ function ToolRow({ item }: { item: ItemOf<"tool"> }) {
   const earlier = Math.max(0, lines.length - TOOL_OUTPUT_LINES);
   const output = (showEarlier ? lines : lines.slice(-TOOL_OUTPUT_LINES)).join("\n");
   const isCommand = item.toolKind === "execute";
-  const hasBody = Boolean(output) || item.diffs.length > 0;
+  const hasBody = Boolean(output) || item.diffs.length > 0 || item.outputTrimmed;
   const stats = item.diffs.some((diff) => !diff.truncated) ? diffStats(item.diffs) : null;
   const className = `chat-tool ${live ? "chat-tool--live" : ""} ${failed ? "chat-tool--failed" : ""}`;
   const summary = (
@@ -127,6 +127,7 @@ function ToolRow({ item }: { item: ItemOf<"tool"> }) {
     <details className={className} open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
       <summary className="chat-tool__row">{summary}</summary>
       {open && <div className="chat-tool__body">
+        {item.outputTrimmed && <div className="chat-diff__omitted">Tool output and diffs trimmed from older history to reduce memory use.</div>}
         {output && (
           <div className="chat-terminal">
             {isCommand && <div className="chat-terminal__cmd">{target}</div>}

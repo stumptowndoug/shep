@@ -15,9 +15,12 @@ packaged upgrade, provider, and long-session verification are still required.
 - Save configuration atomically with a previous-copy backup. Warn persistently
   when history cannot be saved to disk.
 - Bound chat cancellation, handle late updates without duplicate tools, and
-  avoid rich rendering for very large responses. Render the latest 50 turns by
-  default, with earlier turns and tool details available on demand. Full
-  conversation storage remains in memory; longer-session profiling is pending.
+  avoid rich rendering for very large responses. Batch streamed text for display
+  and defer syntax highlighting until the turn finishes. Render the latest 50
+  turns by default; retain older message text and tool summaries while trimming
+  older tool output, diffs, and images from memory. Trimmed details show a notice
+  and cannot be restored by scrolling back in Shep. Packaged long-session
+  profiling is still pending.
 - Preserve model/project usage totals, reject stale reporting responses, and
   include archived usage. New archive writes retain session identity and commit
   atomically. Older totals already overwritten by previous versions cannot be

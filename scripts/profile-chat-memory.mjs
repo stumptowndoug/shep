@@ -38,7 +38,8 @@ try {
     for (const count of [500, 1000, 2000]) {
       await page.evaluate(async ({ count, cycle }) => {
         const { useChatStore } = await import("/src/stores/useChatStore.ts");
-        useChatStore.getState().update(900, chat => ({ ...chat, status: "ready", turns: [
+        const { trimOldTurnDetails } = await import("/src/lib/acp/chatModel.ts");
+        useChatStore.getState().update(900, chat => trimOldTurnDetails({ ...chat, status: "ready", turns: [
           ...chat.turns,
           ...Array.from({ length: count - chat.turns.length }, (_, index) => {
             const id = index + chat.turns.length;
@@ -51,6 +52,9 @@ try {
             ] };
           }),
         ] }));
+        const turns = useChatStore.getState().chats[900].turns;
+        const outputs = turns.flatMap(turn => turn.items).filter(item => item.kind === "tool" && item.output);
+        if (turns.length !== count || outputs.length !== 50) throw new Error("History text or payload retention changed unexpectedly.");
       }, { count, cycle });
       await expect(page.locator(".chat-view:visible .chat-turn")).toHaveCount(50);
       await measure(`cycle${cycle}-${count}turns`);

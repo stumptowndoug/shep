@@ -11,7 +11,73 @@ import {
   removeStartupMessage,
   resolvePermission,
   startTurn,
+  trimOldTurnDetails,
 } from "../src/lib/acp/chatModel.ts";
+
+test("only heavy content outside the recent 50 completed turns is trimmed", () => {
+  let chat = emptyChat();
+  for (let i = 0; i < 50; i++) {
+    chat = startTurn(chat, `prompt ${i}`);
+    chat = applySessionUpdate(chat, { sessionUpdate: "tool_call", toolCallId: String(i), title: "file.ts", kind: "edit", status: "completed", rawOutput: "old tool output",
+      content: [{ type: "diff", path: "file.ts", oldText: "before", newText: "after" }] });
+    chat = applySessionUpdate(chat, { sessionUpdate: "agent_message_chunk", content: { type: "image", mimeType: "image/png", data: "YWJj" } });
+    chat = applySessionUpdate(chat, { sessionUpdate: "agent_message_chunk", content: { type: "resource_link", uri: "https://example.com/file", name: "Source" } });
+    chat = applySessionUpdate(chat, { sessionUpdate: "agent_message_chunk", content: { type: "text", text: `answer ${i}` } });
+    chat = endTurn(chat, "end_turn");
+  }
+  const original = chat;
+  chat = startTurn(chat, "current prompt");
+  const [old] = chat.turns;
+  assert.equal(old.prompt, "prompt 0");
+  assert.equal(old.endedAt, original.turns[0].endedAt);
+  assert.equal(old.stopReason, "end_turn");
+  assert.equal(old.detailsTrimmed, true);
+  const tool = old.items[0];
+  assert.equal(tool.kind, "tool");
+  if (tool.kind !== "tool") return;
+  assert.equal(tool.title, "file.ts");
+  assert.equal(tool.status, "completed");
+  assert.equal(tool.output, "");
+  assert.deepEqual(tool.diffs, []);
+  assert.equal(tool.outputTrimmed, true);
+  assert.equal(old.items[1].kind, "notice");
+  assert.equal(old.items[2], original.turns[0].items[2]);
+  assert.equal(old.items[3], original.turns[0].items[3]);
+  assert.equal(chat.turns[1], original.turns[1]);
+  assert.equal(chat.turns[49], original.turns[49]);
+  assert.equal(trimOldTurnDetails(chat), chat);
+  assert.equal(original.turns[0].items[1].kind, "media");
+
+  chat = applySessionUpdate(chat, { sessionUpdate: "tool_call_update", toolCallId: "0", status: "failed", rawOutput: "late heavy output",
+    content: [{ type: "diff", path: "file.ts", oldText: "late before", newText: "late after" }] });
+  const late = chat.turns[0].items[0];
+  assert.equal(late.kind === "tool" && late.status, "failed");
+  assert.equal(late.kind === "tool" && late.output, "");
+  assert.deepEqual(late.kind === "tool" && late.diffs, []);
+  assert.equal(chat.turns[50].items.length, 0);
+});
+
+test("history replay trims old payloads while preserving every prompt and answer", () => {
+  let chat = emptyChat();
+  for (let i = 0; i < 75; i++) {
+    chat = applySessionUpdate(chat, { sessionUpdate: "user_message_chunk", content: { type: "text", text: `prompt ${i}` } });
+    chat = applySessionUpdate(chat, { sessionUpdate: "tool_call", toolCallId: String(i), status: "completed", rawOutput: "output" });
+    chat = applySessionUpdate(chat, { sessionUpdate: "agent_message_chunk", content: { type: "text", text: `answer ${i}` } });
+  }
+  chat = endTurn(chat, "end_turn");
+  assert.equal(chat.turns.length, 75);
+  for (const [i, turn] of chat.turns.entries()) {
+    assert.equal(turn.prompt, `prompt ${i}`);
+    assert.equal(turn.items[1].kind === "message" && turn.items[1].text, `answer ${i}`);
+    assert.equal(turn.items[0].kind === "tool" && turn.items[0].output, i < 25 ? "" : "output");
+  }
+});
+
+test("retention never strips an unfinished turn", () => {
+  const live = applySessionUpdate(startTurn(emptyChat(), "working"), { sessionUpdate: "tool_call", toolCallId: "active", status: "in_progress", rawOutput: "live output" });
+  const chat = { ...live, turns: [live.turns[0], ...Array.from({ length: 50 }, (_, i) => ({ ...live.turns[0], id: i + 1, endedAt: 2 }))] };
+  assert.equal(trimOldTurnDetails(chat), chat);
+});
 
 // Abridged from a real `opencode acp` turn.
 const OPENCODE_TURN = [

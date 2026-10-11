@@ -210,7 +210,7 @@ function Harness() {
       let expireCancel: (() => void) | undefined;
       const scheduleCancel = window.setTimeout;
       window.setTimeout = ((handler: TimerHandler, delay?: number, ...args: unknown[]) => {
-        if (delay === 5000 && typeof handler === "function") { expireCancel = handler as () => void; return 0; }
+        if (delay === 30_000 && typeof handler === "function") { expireCancel = handler as () => void; return 0; }
         return scheduleCancel(handler, delay, ...args);
       }) as typeof window.setTimeout;
       try { cancelTurn(stuck); } finally { window.setTimeout = scheduleCancel; }

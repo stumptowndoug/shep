@@ -18,7 +18,8 @@ function PlainMarkdown({ text }: { text: string }) {
 export default memo(function ChatMarkdown({ text, streaming = false }: { text: string; streaming?: boolean }) {
   const theme = useThemeStore((s) => s.theme);
   const themeName = shikiThemeFor(theme);
-  const renderedText = useDeferredValue(text);
+  const deferredText = useDeferredValue(text);
+  const renderedText = streaming ? deferredText : text;
   // Rich rendering must have a fixed budget even when an agent sends a huge response.
   if (renderedText.length > 24_000) {
     return <div className="chat-markdown">
