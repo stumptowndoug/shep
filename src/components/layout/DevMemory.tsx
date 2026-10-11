@@ -38,11 +38,11 @@ export default function DevMemory() {
   return (
     <div
       className="flex items-center gap-2 shrink-0 text-[10px] pl-3 border-l border-[var(--glass-border)] opacity-50 select-none font-mono"
-      title={`Shep: ${formatMB(app)} MB\nCLI tools: ${formatMB(children)} MB`}
+      title={`Rust backend: ${formatMB(app)} MB\nTerminal and ACP process trees: ${formatMB(children)} MB\nWebKit and GPU memory are not included.`}
     >
-      <span>shep {formatMB(app)}M</span>
+      <span>backend {formatMB(app)}M</span>
       <span className="opacity-40">|</span>
-      <span>cli {formatMB(children)}M</span>
+      <span>agents {formatMB(children)}M</span>
     </div>
   );
 }

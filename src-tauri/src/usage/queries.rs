@@ -916,37 +916,93 @@ fn windowed_cost_for_project_detail(conn: &Connection, provider: &str, since: i6
     costs.finish()
 }
 
-pub fn usage_overview(conn: &Connection, window: &str) -> Option<UsageOverview> {
-    let now = now_epoch_seconds() as i64;
-    let (cutoff, bucket_count, mode) = match window {
-        "24h" => (now - 86_400, 24_i64, BucketMode::Hourly),
-        "7d" => (now - 604_800, 7_i64, BucketMode::Daily),
-        "30d" => (now - 2_592_000, 30_i64, BucketMode::Daily),
-        "365d" => (now - 31_536_000, 365_i64, BucketMode::Daily),
-        _ => return None,
-    };
+// All overview sections use the same window and the same raw/archived rows.
+// Legacy archives lack session IDs; new archives preserve them for exact counts.
+const OVERVIEW_SOURCE: &str = "WITH window_usage AS (
+    SELECT provider, session_id, model, project, pricing_provider, timestamp, NULL AS archive_date,
+           tokens_total, tokens_input, tokens_output, tokens_cache_read, tokens_cache_write, tokens_thoughts, recorded_cost
+    FROM usage_messages WHERE timestamp >= ?1 AND timestamp <= ?2
+    UNION ALL
+    SELECT provider, session_id, model, project, pricing_provider, NULL, date,
+           tokens_total, tokens_input, tokens_output, tokens_cache_read, tokens_cache_write, tokens_thoughts, recorded_cost
+    FROM usage_archive WHERE date >= date(?1, 'unixepoch', 'localtime') AND date <= date(?2, 'unixepoch', 'localtime')
+    UNION ALL
+    SELECT provider, NULL, model, project, pricing_provider, NULL, date,
+           tokens_total, tokens_input, tokens_output, tokens_cache_read, tokens_cache_write, tokens_thoughts, recorded_cost
+    FROM usage_daily WHERE date >= date(?1, 'unixepoch', 'localtime') AND date <= date(?2, 'unixepoch', 'localtime')
+)";
 
+struct OverviewWindow {
+    since: i64,
+    until: i64,
+    count: i64,
+    hourly: bool,
+}
+
+impl OverviewWindow {
+    fn new(conn: &Connection, key: &str, now: i64) -> Option<Self> {
+        let (count, hourly) = match key {
+            "24h" => (24, true),
+            "7d" => (7, false),
+            "30d" => (30, false),
+            "365d" => (365, false),
+            _ => return None,
+        };
+        // Include the current hour/day. The previous range dropped today's final
+        // bucket while showing its tokens in the headline.
+        let since = if hourly {
+            now - now.rem_euclid(3600) - (count - 1) * 3600
+        } else {
+            conn.query_row(
+                "SELECT CAST(strftime('%s', ?1, 'unixepoch', 'localtime', 'start of day', ?2, 'utc') AS INTEGER)",
+                params![now, format!("-{} days", count - 1)], |row| row.get(0),
+            ).ok()?
+        };
+        Some(Self {
+            since,
+            until: now,
+            count,
+            hourly,
+        })
+    }
+}
+
+pub fn usage_overview(conn: &Connection, window: &str) -> Option<UsageOverview> {
+    usage_overview_at(conn, window, now_epoch_seconds() as i64)
+}
+
+fn usage_overview_at(conn: &Connection, window: &str, now: i64) -> Option<UsageOverview> {
+    let range = OverviewWindow::new(conn, window, now)?;
     let pricing = load_pricing(conn);
-    let trend = query_trend(conn, cutoff, bucket_count, mode, &pricing);
-    let providers = query_provider_summaries(conn, cutoff, &pricing, &trend);
-    let total_tokens: u64 = providers.iter().map(|p| p.tokens).sum();
-    let total_cost_value: f64 = providers.iter().filter_map(|p| p.cost).sum();
-    let total_cost = providers.iter().any(|p| p.cost.is_some()).then_some(total_cost_value);
+    let trend = query_overview_trend(conn, &range, &pricing);
+    let providers = query_provider_summaries(conn, &range, &pricing, &trend);
+    let total_tokens = providers.iter().map(|p| p.tokens).sum();
+    let total_cost_value = providers.iter().filter_map(|p| p.cost).sum();
+    let total_cost = providers
+        .iter()
+        .any(|p| p.cost.is_some())
+        .then_some(total_cost_value);
     let mut total_costs = CostAccumulator::default();
     for provider in &providers {
         total_costs.add(provider.cost_detail.clone());
     }
-    let total_cost_detail = total_costs.finish();
-    let top_models = query_breakdown_all(conn, cutoff, "model");
-    let top_projects = query_breakdown_all(conn, cutoff, "project");
-    let active_projects = count_distinct(conn, cutoff, "COALESCE(project, '')", true, mode);
-    let active_sessions = count_sessions(conn, cutoff, mode);
+    let top_models = query_breakdown_all(conn, &range, "model");
+    let top_projects = query_breakdown_all(conn, &range, "project");
+    let active_projects = conn.query_row(
+        &format!("{OVERVIEW_SOURCE} SELECT COUNT(DISTINCT NULLIF(NULLIF(project, 'unknown'), '')) FROM window_usage"),
+        params![range.since, range.until], |row| row.get::<_, i64>(0),
+    ).unwrap_or(0) as u64;
+    let active_sessions = conn.query_row(
+        &format!("{OVERVIEW_SOURCE} SELECT CASE WHEN EXISTS(SELECT 1 FROM window_usage WHERE session_id IS NULL) THEN NULL
+                 ELSE (SELECT COUNT(*) FROM (SELECT DISTINCT provider, session_id FROM window_usage)) END"),
+        params![range.since, range.until], |row| row.get::<_, Option<i64>>(0),
+    ).ok().flatten().map(|count| count as u64);
 
     Some(UsageOverview {
         window: window.to_string(),
         total_tokens,
         total_cost,
-        total_cost_detail,
+        total_cost_detail: total_costs.finish(),
         active_projects,
         active_sessions,
         providers,
@@ -958,42 +1014,20 @@ pub fn usage_overview(conn: &Connection, window: &str) -> Option<UsageOverview> 
 
 fn query_provider_summaries(
     conn: &Connection,
-    since: i64,
+    range: &OverviewWindow,
     pricing: &PricingMap,
     trend: &[UsageTrendBucket],
 ) -> Vec<UsageOverviewProvider> {
-    let mut stmt = match conn
-        .prepare(
-            "SELECT provider, SUM(tokens_total), SUM(tokens_input), SUM(tokens_output), SUM(tokens_cache_read), SUM(tokens_cache_write), SUM(tokens_thoughts)
-             FROM usage_messages
-             WHERE timestamp >= ?1
-             GROUP BY provider
-             ORDER BY 2 DESC",
-        ) {
-        Ok(s) => s,
-        Err(_) => return Vec::new(),
+    let query = format!("{OVERVIEW_SOURCE}
+        SELECT provider, SUM(tokens_total), SUM(tokens_input), SUM(tokens_output), SUM(tokens_cache_read), SUM(tokens_cache_write), SUM(tokens_thoughts)
+        FROM window_usage GROUP BY provider ORDER BY 2 DESC");
+    let Ok(mut stmt) = conn.prepare(&query) else {
+        return Vec::new();
     };
-
-    let raw: Vec<(String, u64, u64, u64, u64, u64, u64, UsageCost)> = match stmt
-        .query_map(params![since], |row| {
-            let provider: String = row.get(0)?;
-            let tokens = row.get::<_, i64>(1)? as u64;
-            let input = row.get::<_, i64>(2)? as u64;
-            let output = row.get::<_, i64>(3)? as u64;
-            let cache_read = row.get::<_, i64>(4)? as u64;
-            let cache_write = row.get::<_, i64>(5)? as u64;
-            let thoughts = row.get::<_, i64>(6)? as u64;
-            let cost_detail = windowed_cost_for_provider_detail(conn, &provider, since, pricing);
-            Ok((provider, tokens, input, output, cache_read, cache_write, thoughts, cost_detail))
-        }) {
-        Ok(rows) => rows.filter_map(|r| r.ok()).collect(),
-        Err(_) => return Vec::new(),
-    };
-
-    let total_tokens: u64 = raw.iter().map(|(_, tokens, _, _, _, _, _, _)| *tokens).sum();
-
-    raw.into_iter()
-        .map(|(provider, tokens, tokens_input, tokens_output, tokens_cache_read, tokens_cache_write, tokens_thoughts, cost)| UsageOverviewProvider {
+    let Ok(rows) = stmt.query_map(params![range.since, range.until], |row| {
+        let provider: String = row.get(0)?;
+        let cost = windowed_cost_for_provider_detail(conn, &provider, range, pricing);
+        Ok(UsageOverviewProvider {
             trend: trend
                 .iter()
                 .map(|bucket| {
@@ -1001,398 +1035,199 @@ fn query_provider_summaries(
                         .providers
                         .iter()
                         .find(|entry| entry.provider == provider)
-                        .map(|entry| entry.tokens)
-                        .unwrap_or(0)
+                        .map_or(0, |entry| entry.tokens)
                 })
                 .collect(),
             provider,
-            tokens,
-            tokens_input,
-            tokens_output,
-            tokens_cache_read,
-            tokens_cache_write,
-            tokens_thoughts,
+            tokens: row.get::<_, i64>(1)? as u64,
+            tokens_input: row.get::<_, i64>(2)? as u64,
+            tokens_output: row.get::<_, i64>(3)? as u64,
+            tokens_cache_read: row.get::<_, i64>(4)? as u64,
+            tokens_cache_write: row.get::<_, i64>(5)? as u64,
+            tokens_thoughts: row.get::<_, i64>(6)? as u64,
             cost: cost.amount,
             cost_detail: cost,
-            share_percent: if total_tokens > 0 {
-                tokens as f64 / total_tokens as f64 * 100.0
+            share_percent: 0.0,
+        })
+    }) else {
+        return Vec::new();
+    };
+    let mut providers: Vec<_> = rows.filter_map(Result::ok).collect();
+    let total: u64 = providers.iter().map(|row| row.tokens).sum();
+    for provider in &mut providers {
+        if total > 0 {
+            provider.share_percent = provider.tokens as f64 / total as f64 * 100.0;
+        }
+    }
+    providers
+}
+
+fn query_breakdown_all(
+    conn: &Connection,
+    range: &OverviewWindow,
+    dimension: &str,
+) -> Vec<UsageBreakdownItem> {
+    let column = match dimension {
+        "model" => "model",
+        "project" => "project",
+        _ => return Vec::new(),
+    };
+    let query = format!("{OVERVIEW_SOURCE}
+        SELECT provider, COALESCE({column}, 'unknown'), SUM(tokens_total), SUM(tokens_input), SUM(tokens_output),
+               SUM(tokens_cache_read), SUM(tokens_cache_write), SUM(tokens_thoughts),
+               CASE WHEN SUM(session_id IS NULL) > 0 THEN NULL ELSE COUNT(DISTINCT session_id) END
+        FROM window_usage GROUP BY provider, COALESCE({column}, 'unknown') ORDER BY 3 DESC");
+    let Ok(mut stmt) = conn.prepare(&query) else {
+        return Vec::new();
+    };
+    let Ok(rows) = stmt.query_map(params![range.since, range.until], |row| {
+        Ok(UsageBreakdownItem {
+            provider: row.get(0)?,
+            label: row.get(1)?,
+            tokens: row.get::<_, i64>(2)? as u64,
+            tokens_input: row.get::<_, i64>(3)? as u64,
+            tokens_output: row.get::<_, i64>(4)? as u64,
+            tokens_cache_read: row.get::<_, i64>(5)? as u64,
+            tokens_cache_write: row.get::<_, i64>(6)? as u64,
+            tokens_thoughts: row.get::<_, i64>(7)? as u64,
+            sessions: if dimension == "project" {
+                row.get::<_, Option<i64>>(8)?.map(|count| count as u64)
             } else {
-                0.0
+                None
             },
         })
-        .collect()
-}
-
-fn query_trend(
-    conn: &Connection,
-    since: i64,
-    bucket_count: i64,
-    mode: BucketMode,
-    pricing: &PricingMap,
-) -> Vec<UsageTrendBucket> {
-    match mode {
-        BucketMode::Hourly => query_trend_hourly(conn, since, bucket_count, pricing),
-        BucketMode::Daily => query_trend_daily(conn, since, bucket_count, pricing),
-    }
-}
-
-// The overview only displays token breakdowns. Return every group in one query
-// instead of limiting the denominator or issuing a cost/trend query per row.
-fn query_breakdown_all(conn: &Connection, since: i64, dimension: &str) -> Vec<UsageBreakdownItem> {
-    let column = match dimension { "model" => "model", "project" => "project", _ => return Vec::new() };
-    let query = format!(
-        "SELECT provider, COALESCE({column}, 'unknown'), SUM(tokens_total),
-                SUM(tokens_input), SUM(tokens_output), SUM(tokens_cache_read), SUM(tokens_cache_write), SUM(tokens_thoughts),
-                COUNT(DISTINCT session_id)
-         FROM usage_messages WHERE timestamp >= ?1
-         GROUP BY provider, {column} ORDER BY 3 DESC"
-    );
-    let Ok(mut stmt) = conn.prepare(&query) else { return Vec::new(); };
-    let Ok(rows) = stmt.query_map(params![since], |row| Ok(UsageBreakdownItem {
-        provider: row.get(0)?,
-        label: row.get(1)?,
-        tokens: row.get::<_, i64>(2)? as u64,
-        tokens_input: row.get::<_, i64>(3)? as u64,
-        tokens_output: row.get::<_, i64>(4)? as u64,
-        tokens_cache_read: row.get::<_, i64>(5)? as u64,
-        tokens_cache_write: row.get::<_, i64>(6)? as u64,
-        tokens_thoughts: row.get::<_, i64>(7)? as u64,
-        sessions: if dimension == "project" { Some(row.get::<_, i64>(8)? as u64) } else { None },
-    })) else { return Vec::new(); };
+    }) else {
+        return Vec::new();
+    };
     rows.filter_map(Result::ok).collect()
 }
 
-fn windowed_cost_for_provider_detail(conn: &Connection, provider: &str, since: i64, pricing: &PricingMap) -> UsageCost {
-    let stmt = conn.prepare(
-        "SELECT COALESCE(pricing_provider, provider), COALESCE(model, 'unknown'),
-                SUM(tokens_input), SUM(tokens_output), SUM(tokens_cache_read), SUM(tokens_cache_write), SUM(tokens_thoughts),
-                COALESCE(SUM(recorded_cost), 0), MAX(CASE WHEN recorded_cost IS NOT NULL THEN 1 ELSE 0 END)
-         FROM usage_messages
-         WHERE provider = ?1 AND timestamp >= ?2
-         GROUP BY COALESCE(pricing_provider, provider), model"
-    ).ok();
-
-    let Some(mut stmt) = stmt else {
+fn windowed_cost_for_provider_detail(
+    conn: &Connection,
+    provider: &str,
+    range: &OverviewWindow,
+    pricing: &PricingMap,
+) -> UsageCost {
+    let query = format!("{OVERVIEW_SOURCE}
+        SELECT COALESCE(pricing_provider, provider), COALESCE(model, 'unknown'),
+               SUM(tokens_input), SUM(tokens_output), SUM(tokens_cache_read), SUM(tokens_cache_write), SUM(tokens_thoughts),
+               COALESCE(SUM(recorded_cost), 0), MAX(recorded_cost IS NOT NULL)
+        FROM window_usage WHERE provider = ?3 GROUP BY COALESCE(pricing_provider, provider), model");
+    let Ok(mut stmt) = conn.prepare(&query) else {
         return unknown_cost();
     };
-
-    let mut costs = CostAccumulator::default();
-
-    let rows = stmt.query_map(params![provider, since], |row| {
-        Ok((
-            row.get::<_, String>(0)?,
-            row.get::<_, String>(1)?,
-            row.get::<_, i64>(2)?,
-            row.get::<_, i64>(3)?,
-            row.get::<_, i64>(4)?,
-            row.get::<_, i64>(5)?,
-            row.get::<_, i64>(6)?,
-            row.get::<_, f64>(7)?,
-            row.get::<_, i64>(8)?,
-        ))
-    });
-
-    let Ok(rows) = rows else {
-        return unknown_cost();
-    };
-
-    for row in rows.flatten() {
-        let (pricing_provider, model, input, output, cache_read, cache_write, thoughts, recorded_cost, has_recorded_cost) = row;
-        costs.add(resolved_cost_detail(
-            &pricing_provider,
-            &model,
-            input,
-            output,
-            cache_read,
-            cache_write,
-            thoughts,
-            recorded_cost,
-            has_recorded_cost != 0,
+    let Ok(rows) = stmt.query_map(params![range.since, range.until, provider], |row| {
+        Ok(resolved_cost_detail(
+            &row.get::<_, String>(0)?,
+            &row.get::<_, String>(1)?,
+            row.get(2)?,
+            row.get(3)?,
+            row.get(4)?,
+            row.get(5)?,
+            row.get(6)?,
+            row.get(7)?,
+            row.get::<_, i64>(8)? != 0,
             pricing,
-        ));
+        ))
+    }) else {
+        return unknown_cost();
+    };
+    let mut costs = CostAccumulator::default();
+    for cost in rows.flatten() {
+        costs.add(cost);
     }
-
     costs.finish()
 }
 
-fn count_distinct(conn: &Connection, since: i64, field: &str, skip_empty: bool, mode: BucketMode) -> u64 {
-    match mode {
-        BucketMode::Hourly => {
-            let query = if skip_empty {
-                format!(
-                    "SELECT COUNT(DISTINCT {field}) FROM usage_messages WHERE timestamp >= ?1 AND {field} != ''"
-                )
-            } else {
-                format!("SELECT COUNT(DISTINCT {field}) FROM usage_messages WHERE timestamp >= ?1")
-            };
-            conn.query_row(query.as_str(), params![since], |row| row.get::<_, i64>(0))
-                .unwrap_or(0) as u64
-        }
-        BucketMode::Daily => {
-            let cutoff_date = cutoff_local_date(conn, since);
-            let query = if skip_empty {
-                format!(
-                    "SELECT COUNT(DISTINCT {field}) FROM (
-                        SELECT {field} AS value FROM usage_messages WHERE timestamp >= ?1 AND {field} != ''
-                        UNION
-                        SELECT {field} AS value FROM usage_daily WHERE date >= ?2 AND {field} != ''
-                    )"
-                )
-            } else {
-                format!(
-                    "SELECT COUNT(DISTINCT {field}) FROM (
-                        SELECT {field} AS value FROM usage_messages WHERE timestamp >= ?1
-                        UNION
-                        SELECT {field} AS value FROM usage_daily WHERE date >= ?2
-                    )"
-                )
-            };
-            conn.query_row(query.as_str(), params![since, cutoff_date], |row| row.get::<_, i64>(0))
-                .unwrap_or(0) as u64
-        }
-    }
-}
-
-fn count_sessions(conn: &Connection, since: i64, mode: BucketMode) -> u64 {
-    match mode {
-        BucketMode::Hourly => conn
-            .query_row(
-                "SELECT COUNT(DISTINCT session_id) FROM usage_messages WHERE timestamp >= ?1",
-                params![since],
-                |row| row.get::<_, i64>(0),
-            )
-            .unwrap_or(0) as u64,
-        BucketMode::Daily => {
-            let cutoff_date = cutoff_local_date(conn, since);
-            let detailed: u64 = conn
-                .query_row(
-                    "SELECT COUNT(DISTINCT session_id) FROM usage_messages WHERE timestamp >= ?1",
-                    params![since],
-                    |row| row.get::<_, i64>(0),
-                )
-                .unwrap_or(0) as u64;
-            let rolled: u64 = conn
-                .query_row(
-                    "SELECT COALESCE(SUM(message_count), 0) FROM usage_daily WHERE date >= ?1",
-                    params![cutoff_date],
-                    |row| row.get::<_, i64>(0),
-                )
-                .unwrap_or(0) as u64;
-            detailed.max(rolled)
-        }
-    }
-}
-
-#[derive(Clone, Copy)]
-enum BucketMode {
-    Hourly,
-    Daily,
-}
-
-fn query_trend_hourly(
+fn query_overview_trend(
     conn: &Connection,
-    since: i64,
-    bucket_count: i64,
+    range: &OverviewWindow,
     pricing: &PricingMap,
 ) -> Vec<UsageTrendBucket> {
-    let hour_start = align_to_local_hour(conn, since);
+    let index = if range.hourly {
+        "CAST((timestamp - ?1) / 3600 AS INTEGER)"
+    } else {
+        "CAST(julianday(COALESCE(archive_date, date(timestamp, 'unixepoch', 'localtime'))) - julianday(date(?1, 'unixepoch', 'localtime')) AS INTEGER)"
+    };
+    let query = format!("{OVERVIEW_SOURCE}
+        SELECT provider, {index} AS bucket_idx, COALESCE(pricing_provider, provider), COALESCE(model, 'unknown'),
+               SUM(tokens_total), SUM(tokens_input), SUM(tokens_output), SUM(tokens_cache_read), SUM(tokens_cache_write), SUM(tokens_thoughts),
+               COALESCE(SUM(recorded_cost), 0), MAX(recorded_cost IS NOT NULL)
+        FROM window_usage GROUP BY provider, bucket_idx, COALESCE(pricing_provider, provider), model");
     let mut bucket_map: BTreeMap<i64, BTreeMap<String, (u64, CostAccumulator)>> = BTreeMap::new();
-    let mut stmt = match conn
-        .prepare(
-            "SELECT provider,
-                    CAST((strftime('%s', strftime('%Y-%m-%d %H:00:00', timestamp, 'unixepoch', 'localtime')) - ?1) / 3600 AS INTEGER) as bucket_idx,
-                    COALESCE(pricing_provider, provider),
-                    COALESCE(model, 'unknown'),
-                    SUM(tokens_total),
-                    SUM(tokens_input),
-                    SUM(tokens_output),
-                    SUM(tokens_cache_read),
-                    SUM(tokens_cache_write),
-                    SUM(tokens_thoughts),
-                    COALESCE(SUM(recorded_cost), 0),
-                    MAX(CASE WHEN recorded_cost IS NOT NULL THEN 1 ELSE 0 END)
-             FROM usage_messages
-             WHERE timestamp >= ?2
-             GROUP BY provider, bucket_idx, COALESCE(pricing_provider, provider), model",
-        ) {
-        Ok(s) => s,
-        Err(_) => return build_trend_buckets(bucket_count, hour_start, 3600, bucket_map),
-    };
-
-    let rows = match stmt.query_map(params![hour_start, since], |row| {
-        Ok((
-            row.get::<_, String>(0)?,
-            row.get::<_, i64>(1)?,
-            row.get::<_, String>(2)?,
-            row.get::<_, String>(3)?,
-            row.get::<_, i64>(4)?,
-            row.get::<_, i64>(5)?,
-            row.get::<_, i64>(6)?,
-            row.get::<_, i64>(7)?,
-            row.get::<_, i64>(8)?,
-            row.get::<_, i64>(9)?,
-            row.get::<_, f64>(10)?,
-            row.get::<_, i64>(11)?,
-        ))
-    }) {
-        Ok(rows) => rows,
-        Err(_) => return build_trend_buckets(bucket_count, hour_start, 3600, bucket_map),
-    };
-
-    for row in rows.flatten() {
-        let (provider, bucket_idx, pricing_provider, model, tokens, input, output, cache_read, cache_write, thoughts, recorded_cost, has_recorded_cost) = row;
-        if bucket_idx < 0 || bucket_idx >= bucket_count {
-            continue;
+    if let Ok(mut stmt) = conn.prepare(&query) {
+        if let Ok(rows) = stmt.query_map(params![range.since, range.until], |row| {
+            let cost = resolved_cost_detail(
+                &row.get::<_, String>(2)?,
+                &row.get::<_, String>(3)?,
+                row.get(5)?,
+                row.get(6)?,
+                row.get(7)?,
+                row.get(8)?,
+                row.get(9)?,
+                row.get(10)?,
+                row.get::<_, i64>(11)? != 0,
+                pricing,
+            );
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(4)? as u64,
+                cost,
+            ))
+        }) {
+            for (provider, index, tokens, cost) in rows.flatten() {
+                if index < 0 || index >= range.count {
+                    continue;
+                }
+                let entry = bucket_map
+                    .entry(index)
+                    .or_default()
+                    .entry(provider)
+                    .or_default();
+                entry.0 += tokens;
+                entry.1.add(cost);
+            }
         }
-        let provider_map = bucket_map.entry(bucket_idx).or_default();
-        let entry = provider_map.entry(provider).or_default();
-        entry.0 += tokens as u64;
-        entry.1.add(resolved_cost_detail(
-            &pricing_provider,
-            &model,
-            input,
-            output,
-            cache_read,
-            cache_write,
-            thoughts,
-            recorded_cost,
-            has_recorded_cost != 0,
-            pricing,
-        ));
     }
-
-    build_trend_buckets(bucket_count, hour_start, 3600, bucket_map)
-}
-
-fn query_trend_daily(
-    conn: &Connection,
-    since: i64,
-    bucket_count: i64,
-    pricing: &PricingMap,
-) -> Vec<UsageTrendBucket> {
-    let day_start = cutoff_local_date(conn, since);
-    let cutoff_date = day_start.clone();
-    let mut bucket_map: BTreeMap<i64, BTreeMap<String, (u64, CostAccumulator)>> = BTreeMap::new();
-    let mut stmt = match conn
-        .prepare(
-            "SELECT provider,
-                    CAST(julianday(bucket_day) - julianday(?1) AS INTEGER) as bucket_idx,
-                    pricing_provider,
-                    COALESCE(model, 'unknown'),
-                    SUM(tokens_total),
-                    SUM(tokens_input),
-                    SUM(tokens_output),
-                    SUM(tokens_cache_read),
-                    SUM(tokens_cache_write),
-                    SUM(tokens_thoughts),
-                    COALESCE(SUM(recorded_cost), 0),
-                    MAX(CASE WHEN recorded_cost IS NOT NULL THEN 1 ELSE 0 END)
-             FROM (
-                SELECT provider, date(timestamp, 'unixepoch', 'localtime') as bucket_day, COALESCE(pricing_provider, provider) as pricing_provider, model,
-                       tokens_total, tokens_input, tokens_output, tokens_cache_read, tokens_cache_write, tokens_thoughts, recorded_cost
-                FROM usage_messages
-                WHERE timestamp >= ?2
-                UNION ALL
-                SELECT provider, date as bucket_day, COALESCE(pricing_provider, provider) as pricing_provider, model,
-                       tokens_total, tokens_input, tokens_output, tokens_cache_read, tokens_cache_write, tokens_thoughts, recorded_cost
-                FROM usage_daily
-                WHERE date >= ?1
-             )
-             GROUP BY provider, bucket_idx, pricing_provider, model",
-        ) {
-        Ok(s) => s,
-        Err(_) => {
-            let start_epoch = day_start_epoch(conn, &day_start);
-            return build_trend_buckets(bucket_count, start_epoch, 86_400, bucket_map);
+    // Local midnight boundaries are not always 24 hours apart (DST). Resolve
+    // those boundaries independently from the hourly elapsed-time buckets.
+    let boundary = |index: i64| -> i64 {
+        if range.hourly {
+            return range.since + index * 3600;
         }
+        conn.query_row(
+            "SELECT CAST(strftime('%s', ?1, 'unixepoch', 'localtime', ?2, 'utc') AS INTEGER)",
+            params![range.since, format!("+{index} days")],
+            |row| row.get(0),
+        )
+        .unwrap_or(range.since + index * 86_400)
     };
-
-    let rows = match stmt.query_map(params![cutoff_date, since], |row| {
-        Ok((
-            row.get::<_, String>(0)?,
-            row.get::<_, i64>(1)?,
-            row.get::<_, String>(2)?,
-            row.get::<_, String>(3)?,
-            row.get::<_, i64>(4)?,
-            row.get::<_, i64>(5)?,
-            row.get::<_, i64>(6)?,
-            row.get::<_, i64>(7)?,
-            row.get::<_, i64>(8)?,
-            row.get::<_, i64>(9)?,
-            row.get::<_, f64>(10)?,
-            row.get::<_, i64>(11)?,
-        ))
-    }) {
-        Ok(rows) => rows,
-        Err(_) => {
-            let start_epoch = day_start_epoch(conn, &day_start);
-            return build_trend_buckets(bucket_count, start_epoch, 86_400, bucket_map);
-        }
-    };
-
-    for row in rows.flatten() {
-        let (provider, bucket_idx, pricing_provider, model, tokens, input, output, cache_read, cache_write, thoughts, recorded_cost, has_recorded_cost) = row;
-        if bucket_idx < 0 || bucket_idx >= bucket_count {
-            continue;
-        }
-        let provider_map = bucket_map.entry(bucket_idx).or_default();
-        let entry = provider_map.entry(provider).or_default();
-        entry.0 += tokens as u64;
-        entry.1.add(resolved_cost_detail(
-            &pricing_provider,
-            &model,
-            input,
-            output,
-            cache_read,
-            cache_write,
-            thoughts,
-            recorded_cost,
-            has_recorded_cost != 0,
-            pricing,
-        ));
-    }
-
-    let start_epoch = day_start_epoch(conn, &day_start);
-    build_trend_buckets(bucket_count, start_epoch, 86_400, bucket_map)
-}
-
-fn build_trend_buckets(
-    bucket_count: i64,
-    start_epoch: i64,
-    bucket_span_secs: i64,
-    bucket_map: BTreeMap<i64, BTreeMap<String, (u64, CostAccumulator)>>,
-) -> Vec<UsageTrendBucket> {
-    (0..bucket_count)
-        .map(|bucket_idx| {
-            let start = start_epoch + bucket_idx * bucket_span_secs;
-            let end = start + bucket_span_secs;
-            let providers = bucket_map
-                .get(&bucket_idx)
-                .map(|items| items.iter().map(|(provider, (tokens, cost_accumulator))| {
-                    let cost_detail = CostAccumulator {
-                        amount: cost_accumulator.amount,
-                        has_cost: cost_accumulator.has_cost,
-                        kind: cost_accumulator.kind.clone(),
-                        basis: cost_accumulator.basis.clone(),
-                        confidence: cost_accumulator.confidence.clone(),
-                        mixed: cost_accumulator.mixed,
-                    }.finish();
+    (0..range.count)
+        .map(|index| {
+            let providers: Vec<_> = bucket_map
+                .remove(&index)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|(provider, (tokens, costs))| {
+                    let cost_detail = costs.finish();
                     UsageTrendProviderValue {
-                    provider: provider.clone(),
-                    tokens: *tokens,
-                    cost: cost_detail.amount,
-                    cost_detail,
-                }}).collect::<Vec<_>>())
-                .unwrap_or_default();
-            let tokens = providers.iter().map(|p| p.tokens).sum();
+                        provider,
+                        tokens,
+                        cost: cost_detail.amount,
+                        cost_detail,
+                    }
+                })
+                .collect();
+            let tokens = providers.iter().map(|provider| provider.tokens).sum();
             let mut costs = CostAccumulator::default();
             for provider in &providers {
                 costs.add(provider.cost_detail.clone());
             }
             let cost_detail = costs.finish();
             UsageTrendBucket {
-                start,
-                end,
+                start: boundary(index),
+                end: boundary(index + 1),
                 label: String::new(),
                 tokens,
                 cost: cost_detail.amount,
@@ -1401,30 +1236,6 @@ fn build_trend_buckets(
             }
         })
         .collect()
-}
-
-fn cutoff_local_date(conn: &Connection, since: i64) -> String {
-    conn.query_row(
-        "SELECT date(?1, 'unixepoch', 'localtime')",
-        params![since],
-        |row| row.get::<_, String>(0),
-    ).unwrap_or_else(|_| "1970-01-01".to_string())
-}
-
-fn day_start_epoch(conn: &Connection, date: &str) -> i64 {
-    conn.query_row(
-        "SELECT CAST(strftime('%s', ?1 || ' 00:00:00') AS INTEGER)",
-        params![date],
-        |row| row.get::<_, i64>(0),
-    ).unwrap_or(0)
-}
-
-fn align_to_local_hour(conn: &Connection, since: i64) -> i64 {
-    conn.query_row(
-        "SELECT CAST(strftime('%s', strftime('%Y-%m-%d %H:00:00', ?1, 'unixepoch', 'localtime')) AS INTEGER)",
-        params![since],
-        |row| row.get::<_, i64>(0),
-    ).unwrap_or(since)
 }
 
 pub fn models_for_provider(conn: &Connection, provider: &str) -> Vec<String> {
@@ -1456,6 +1267,50 @@ pub fn models_for_provider(conn: &Connection, provider: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn annual_overview_includes_both_archives_and_todays_activity() {
+        let db = crate::usage::db::UsageDb::open_in_memory();
+        let conn = db.conn.lock().unwrap();
+        let now = 1_791_748_800_i64; // 2026-10-11 noon UTC
+        conn.execute_batch("INSERT INTO usage_daily (provider, date, project, model, tokens_total, message_count)
+            VALUES ('claude', '2026-01-01', 'old', 'legacy-model', 100, 500),
+                   ('claude', '2020-01-01', 'outside', 'old-model', 9000, 1);
+            INSERT INTO usage_archive (provider, session_id, date, project, model, pricing_provider, tokens_total)
+            VALUES ('codex', 'archived', '2026-02-01', 'archived', 'model', 'openai', 200);").unwrap();
+        conn.execute("INSERT INTO usage_messages (provider, session_id, timestamp, project, model, tokens_total)
+            VALUES ('codex', 'current', ?1, 'current', 'model', 30)", params![now]).unwrap();
+        let overview = usage_overview_at(&conn, "365d", now).unwrap();
+        assert_eq!(overview.total_tokens, 330);
+        assert_eq!(overview.trend.iter().map(|bucket| bucket.tokens).sum::<u64>(), 330);
+        assert_eq!(overview.trend.last().unwrap().tokens, 30);
+        assert_eq!(overview.top_models.iter().map(|row| row.tokens).sum::<u64>(), 330);
+        assert_eq!(overview.top_projects.iter().map(|row| row.tokens).sum::<u64>(), 330);
+        assert_eq!(overview.active_projects, 3);
+        assert_eq!(overview.active_sessions, None, "message counts are not session counts");
+        assert_eq!(overview.trend.len(), 365);
+        for pair in overview.trend.windows(2) { assert_eq!(pair[0].end, pair[1].start); }
+        for window in ["24h", "7d", "30d"] {
+            let recent = usage_overview_at(&conn, window, now).unwrap();
+            assert_eq!(recent.total_tokens, 30);
+            assert_eq!(recent.active_sessions, Some(1));
+            assert_eq!(recent.trend.last().unwrap().tokens, 30);
+        }
+    }
+
+    #[test]
+    fn new_archives_count_sessions_once_across_days_and_providers() {
+        let db = crate::usage::db::UsageDb::open_in_memory();
+        let conn = db.conn.lock().unwrap();
+        conn.execute_batch("INSERT INTO usage_archive (provider, session_id, date, project, model, pricing_provider, tokens_total)
+            VALUES ('codex', 'shared-id', '2026-01-01', 'a', 'model', 'openai', 10),
+                   ('codex', 'shared-id', '2026-01-02', 'a', 'model', 'openai', 20),
+                   ('claude', 'shared-id', '2026-01-01', 'b', 'model', 'anthropic', 30);").unwrap();
+        let overview = usage_overview_at(&conn, "365d", 1_791_748_800).unwrap();
+        assert_eq!(overview.total_tokens, 60);
+        assert_eq!(overview.active_sessions, Some(2));
+        assert_eq!(overview.active_projects, 2);
+    }
 
     #[test]
     fn overview_keeps_every_project_and_model_in_the_totals() {

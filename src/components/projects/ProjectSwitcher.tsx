@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Folder, FolderPlus, GitFork, LayoutGrid, Pin, Search } from "lucide-react";
 import type { RepoInfo } from "../../lib/types";
 import { useGitStore } from "../../stores/useGitStore";
@@ -45,6 +45,14 @@ function close() {
 export default function ProjectSwitcher({ activeRepoPath, onSelectRepo, onAddProject }: ProjectSwitcherProps) {
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState(0);
+  const [previousFocus] = useState(() => document.activeElement instanceof HTMLElement ? document.activeElement : null);
+  const focusScope = useCallback((element: HTMLDivElement | null) => {
+    if (!element) return;
+    element.querySelector("input")?.focus();
+    return () => {
+      if (previousFocus?.isConnected && previousFocus.getClientRects().length) previousFocus.focus();
+    };
+  }, [previousFocus]);
   const repos = useRepoStore((s) => s.repos);
   const groups = useRepoStore((s) => s.groups);
   const gitStatuses = useGitStore((s) => s.projectGitStatus);
@@ -102,13 +110,18 @@ export default function ProjectSwitcher({ activeRepoPath, onSelectRepo, onAddPro
       choose(items[selected]);
     } else if (event.key === "Escape") {
       event.preventDefault();
+      event.stopPropagation();
       close();
+    } else if (event.key === "Tab") {
+      // The search field is the switcher's only tab stop; arrows choose items.
+      event.preventDefault();
+      event.currentTarget.querySelector("input")?.focus();
     }
   };
 
   return (
     <div className="switcher-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) close(); }}>
-      <div className="switcher" role="dialog" aria-label="Switch project">
+      <div ref={focusScope} className="switcher" role="dialog" aria-modal="true" aria-label="Switch project" onKeyDown={handleKeyDown}>
         <div className="switcher__search">
           <Search size={15} aria-hidden="true" />
           <input
@@ -119,9 +132,11 @@ export default function ProjectSwitcher({ activeRepoPath, onSelectRepo, onAddPro
               setQuery(event.target.value);
               setSelected(0);
             }}
-            onKeyDown={handleKeyDown}
             placeholder="Switch to project…"
             aria-label="Search projects"
+            role="combobox"
+            aria-expanded="true"
+            aria-autocomplete="list"
             aria-controls="project-switcher-list"
             aria-activedescendant={`project-switcher-${selected}`}
             autoComplete="off"

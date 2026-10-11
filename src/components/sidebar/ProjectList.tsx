@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { FolderPlus, Folders, LayoutGrid, Pin, PinOff, Search } from "lucide-react";
 import ContextMenu from "../shared/ContextMenu";
+import { handleContextMenuKey } from "../../lib/a11y";
 import type { RepoGroup, RepoInfo } from "../../lib/types";
 import { useGitStore } from "../../stores/useGitStore";
 import { useRepoStore } from "../../stores/useRepoStore";
@@ -196,7 +197,8 @@ function SidebarGroupHeader({
         />,
         document.body,
       )}
-      <button type="button" className="project-group__toggle" onClick={onToggle} aria-expanded={!collapsed}>
+      <button type="button" className="project-group__toggle" onClick={onToggle} aria-expanded={!collapsed}
+        onKeyDown={(event) => handleContextMenuKey(event, (x, y) => setMenu({ x, y }))}>
         <Folders size={14} className="project-group__icon" />
         <span className="truncate">{group.name}</span>
         <span className="project-group__count">{count}</span>

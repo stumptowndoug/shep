@@ -47,6 +47,7 @@ export default function Select({
   const [query, setQuery] = useState("");
   const [highlight, setHighlight] = useState(0);
   const rootRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -79,6 +80,7 @@ export default function Select({
   const choose = (choice: SelectChoice | undefined) => {
     if (!choice) return;
     setOpen(false);
+    triggerRef.current?.focus();
     if (choice.value !== value) onChange(choice.value);
   };
 
@@ -93,7 +95,9 @@ export default function Select({
     if (!open) return;
     if (event.key === "Escape") {
       event.preventDefault();
+      event.stopPropagation();
       setOpen(false);
+      triggerRef.current?.focus();
     } else if (event.key === "ArrowDown") {
       event.preventDefault();
       moveHighlight(1);
@@ -109,6 +113,7 @@ export default function Select({
   return (
     <div ref={rootRef} className={`select ${className ?? ""}`} onKeyDown={handleKeyDown}>
       <button
+        ref={triggerRef}
         type="button"
         className="select__trigger"
         onClick={toggle}

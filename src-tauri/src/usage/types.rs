@@ -113,7 +113,7 @@ pub struct UsageOverview {
     pub total_cost: Option<f64>,
     pub total_cost_detail: UsageCost,
     pub active_projects: u64,
-    pub active_sessions: u64,
+    pub active_sessions: Option<u64>,
     pub providers: Vec<UsageOverviewProvider>,
     pub trend: Vec<UsageTrendBucket>,
     pub top_models: Vec<UsageBreakdownItem>,

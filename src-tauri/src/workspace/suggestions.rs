@@ -6,7 +6,7 @@ use serde::Serialize;
 use serde_json::Value;
 use std::collections::HashSet;
 use std::fs::{self, File};
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -14,6 +14,8 @@ use super::loader::load_global_config;
 
 /// Lines read from the top of a log before giving up on finding a cwd.
 const MAX_LINES: usize = 40;
+const MAX_LINE_BYTES: usize = 64 * 1024;
+const MAX_SCAN_BYTES: u64 = 512 * 1024;
 /// Codex keeps one file per session; only the newest are worth reading.
 const MAX_CODEX_FILES: usize = 300;
 
@@ -99,9 +101,14 @@ fn project_root(cwd: &Path, home: &Path) -> Option<PathBuf> {
 }
 
 fn is_temporary(path: &Path) -> bool {
-    ["/tmp", "/private/tmp", "/var/folders", "/private/var/folders"]
-        .iter()
-        .any(|prefix| path.starts_with(prefix))
+    [
+        "/tmp",
+        "/private/tmp",
+        "/var/folders",
+        "/private/var/folders",
+    ]
+    .iter()
+    .any(|prefix| path.starts_with(prefix))
 }
 
 /// Claude Code: one directory per working folder, holding session logs whose
@@ -120,7 +127,11 @@ fn claude_candidates(projects_dir: &Path) -> Vec<Candidate> {
                 .filter_map(|file| Some((file.metadata().ok()?.modified().ok()?, file.path())))
                 .max_by_key(|(modified, _)| *modified)?;
             let cwd = first_cwd(&newest.1, |row| row.get("cwd"))?;
-            Some(Candidate { cwd, modified: newest.0, agent: "claude" })
+            Some(Candidate {
+                cwd,
+                modified: newest.0,
+                agent: "claude",
+            })
         })
         .collect()
 }
@@ -136,7 +147,11 @@ fn codex_candidates(sessions_dir: &Path) -> Vec<Candidate> {
         .take(MAX_CODEX_FILES)
         .filter_map(|(modified, path)| {
             let cwd = first_cwd(&path, |row| row.get("payload")?.get("cwd"))?;
-            Some(Candidate { cwd, modified, agent: "codex" })
+            Some(Candidate {
+                cwd,
+                modified,
+                agent: "codex",
+            })
         })
         .collect()
 }
@@ -162,18 +177,43 @@ fn collect_jsonl(dir: &Path, out: &mut Vec<(SystemTime, PathBuf)>, depth: usize)
 
 fn first_cwd(path: &Path, pick: impl Fn(&Value) -> Option<&Value>) -> Option<String> {
     let reader = BufReader::new(File::open(path).ok()?);
-    reader
-        .lines()
-        .take(MAX_LINES)
-        .map_while(Result::ok)
-        .filter_map(|line| serde_json::from_str::<Value>(&line).ok())
-        .find_map(|row| pick(&row).and_then(Value::as_str).map(str::to_string))
-        .filter(|cwd| !cwd.trim().is_empty())
+    scan_cwd(reader, pick)
+}
+
+fn scan_cwd(reader: impl BufRead, pick: impl Fn(&Value) -> Option<&Value>) -> Option<String> {
+    let mut reader = reader.take(MAX_SCAN_BYTES);
+    for _ in 0..MAX_LINES {
+        let mut line = Vec::new();
+        let read = (&mut reader)
+            .take((MAX_LINE_BYTES + 1) as u64)
+            .read_until(b'\n', &mut line)
+            .ok()?;
+        if read == 0 || read > MAX_LINE_BYTES {
+            return None;
+        }
+        let Ok(row) = serde_json::from_slice::<Value>(&line) else {
+            continue;
+        };
+        if let Some(cwd) = pick(&row)
+            .and_then(Value::as_str)
+            .filter(|cwd| !cwd.trim().is_empty())
+        {
+            return Some(cwd.to_owned());
+        }
+    }
+    None
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn oversized_log_lines_stop_before_allocating_the_whole_line() {
+        let mut reader = std::io::Cursor::new(vec![b'x'; MAX_LINE_BYTES * 100]);
+        assert!(scan_cwd(&mut reader, |row| row.get("cwd")).is_none());
+        assert_eq!(reader.position(), (MAX_LINE_BYTES + 1) as u64);
+    }
 
     #[test]
     fn project_root_requires_a_repo_and_skips_temp_and_home() {
@@ -188,11 +228,25 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("shep-suggest-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
         let claude = dir.join("a.jsonl");
-        fs::write(&claude, "{\"type\":\"summary\"}\n{\"cwd\":\"/work/app\",\"type\":\"user\"}\n").unwrap();
-        assert_eq!(first_cwd(&claude, |row| row.get("cwd")).as_deref(), Some("/work/app"));
+        fs::write(
+            &claude,
+            "{\"type\":\"summary\"}\n{\"cwd\":\"/work/app\",\"type\":\"user\"}\n",
+        )
+        .unwrap();
+        assert_eq!(
+            first_cwd(&claude, |row| row.get("cwd")).as_deref(),
+            Some("/work/app")
+        );
         let codex = dir.join("b.jsonl");
-        fs::write(&codex, "{\"type\":\"session_meta\",\"payload\":{\"cwd\":\"/work/api\"}}\n").unwrap();
-        assert_eq!(first_cwd(&codex, |row| row.get("payload")?.get("cwd")).as_deref(), Some("/work/api"));
+        fs::write(
+            &codex,
+            "{\"type\":\"session_meta\",\"payload\":{\"cwd\":\"/work/api\"}}\n",
+        )
+        .unwrap();
+        assert_eq!(
+            first_cwd(&codex, |row| row.get("payload")?.get("cwd")).as_deref(),
+            Some("/work/api")
+        );
         fs::remove_dir_all(&dir).ok();
     }
 }

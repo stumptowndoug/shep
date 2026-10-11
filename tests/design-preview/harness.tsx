@@ -179,7 +179,7 @@ mockIPC((cmd, payload) => {
       return ++previewPtyId;
     }
     case 'get_usage_overview': return usageOverview(String(args?.window ?? '24h'));
-    case 'get_memory_stats': return {app_rss_bytes:100000000,children_rss_bytes:0,child_count:0};
+    case 'get_memory_stats': return {app_rss:100000000,children_rss:0};
     case 'resolve_session_title': case 'get_agent_runtime_status': return null;
     default: return [];
   }

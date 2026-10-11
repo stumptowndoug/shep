@@ -6,6 +6,7 @@ import { useNoticeStore } from "../../stores/useNoticeStore";
 import { useRepoStore } from "../../stores/useRepoStore";
 import { useTerminalStore } from "../../stores/useTerminalStore";
 import { getErrorMessage } from "../../lib/errors";
+import { handleContextMenuKey } from "../../lib/a11y";
 import {
   abbreviateHome,
   buildProjectTree,
@@ -458,6 +459,7 @@ function ProjectCard({
         onContextMenu={handleContextMenu}
         onKeyDown={(event) => {
           if (event.target !== event.currentTarget) return;
+          if (handleContextMenuKey(event, openMenuAt)) return;
           if (event.key === "Enter" || event.key === " ") {
             event.preventDefault();
             onSelect();

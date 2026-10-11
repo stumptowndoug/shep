@@ -515,7 +515,7 @@ export interface UsageOverview {
   totalCost: number | null;
   totalCostDetail: UsageCost;
   activeProjects: number;
-  activeSessions: number;
+  activeSessions: number | null;
   providers: UsageOverviewProvider[];
   trend: UsageTrendBucket[];
   topModels: UsageBreakdownItem[];

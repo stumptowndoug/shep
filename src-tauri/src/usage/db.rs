@@ -340,6 +340,32 @@ fn migrate(conn: &Connection) -> Result<(), String> {
         .map_err(|e| format!("Failed to run migration v14: {e}"))?;
     }
 
+    if version < 15 {
+        // Keep identity for new rollups. Legacy daily rows have no session IDs
+        // and remain intact; they cannot safely be assigned invented identities.
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS usage_archive (
+                provider TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                date TEXT NOT NULL,
+                pricing_provider TEXT NOT NULL,
+                model TEXT NOT NULL,
+                project TEXT NOT NULL,
+                tokens_input INTEGER NOT NULL DEFAULT 0,
+                tokens_output INTEGER NOT NULL DEFAULT 0,
+                tokens_cache_write INTEGER NOT NULL DEFAULT 0,
+                tokens_cache_read INTEGER NOT NULL DEFAULT 0,
+                tokens_thoughts INTEGER NOT NULL DEFAULT 0,
+                tokens_total INTEGER NOT NULL DEFAULT 0,
+                message_count INTEGER NOT NULL DEFAULT 0,
+                recorded_cost REAL,
+                PRIMARY KEY (provider, session_id, date, pricing_provider, model, project)
+             );
+             CREATE INDEX IF NOT EXISTS idx_archive_date ON usage_archive(date);
+             INSERT INTO schema_version (version) VALUES (15);",
+        ).map_err(|e| format!("Failed to run migration v15: {e}"))?;
+    }
+
     Ok(())
 }
 
@@ -454,7 +480,7 @@ mod tests {
             )
             .unwrap();
 
-        assert_eq!(version, 14);
+        assert_eq!(version, 15);
         assert_eq!(history_table, 1);
         assert!(pricing_rows > 0);
     }
@@ -531,7 +557,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(stale_count, 0);
-        assert_eq!(version, 14);
+        assert_eq!(version, 15);
     }
 
     #[test]
@@ -587,7 +613,7 @@ mod tests {
 
         assert_eq!(codex_rows, 0);
         assert_eq!(claude_rows, 3);
-        assert_eq!(version, 14);
+        assert_eq!(version, 15);
     }
 
     #[test]
@@ -643,7 +669,7 @@ mod tests {
 
         assert_eq!(antigravity_rows, 0);
         assert_eq!(claude_rows, 3);
-        assert_eq!(version, 14);
+        assert_eq!(version, 15);
     }
 
     #[test]
@@ -707,6 +733,6 @@ mod tests {
         assert_eq!(google_rows, 2);
         assert_eq!(anthropic_rows, 2);
         assert_eq!(unknown_rows, 1);
-        assert_eq!(version, 14);
+        assert_eq!(version, 15);
     }
 }

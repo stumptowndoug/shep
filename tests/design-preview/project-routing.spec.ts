@@ -17,8 +17,8 @@ for (const cold of [false, true]) {
     await page.goto(`/tests/design-preview/?autostart=1${cold ? "&cold=1" : ""}`);
     if (!cold) {
       await page.evaluate(async () => (await import("/src/stores/useUIStore.ts")).useUIStore.getState().setProjectSwitcherOpen(true));
-      await page.getByRole("textbox", { name: "Search projects" }).fill("springroll");
-      await page.getByRole("textbox", { name: "Search projects" }).press("Enter");
+      await page.getByRole("combobox", { name: "Search projects" }).fill("springroll");
+      await page.getByRole("combobox", { name: "Search projects" }).press("Enter");
     }
     await expect.poll(() => page.evaluate(() => document.documentElement.dataset.previewLastSession)).toBeTruthy();
     const result = await page.evaluate(async () => {

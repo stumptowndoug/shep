@@ -367,7 +367,7 @@ function Overview({ overview, snapshots }: { overview: UsageOverview; snapshots:
         <div className="usage-label">
           <span>Activity</span>
           <span className="usage-label__value">
-            {hover ?? `${formatTokenCount(total)} tokens · ${plural(overview.activeSessions, "session")}`}
+            {hover ?? `${formatTokenCount(total)} tokens${overview.activeSessions == null ? "" : ` · ${plural(overview.activeSessions, "session")}`}`}
           </span>
         </div>
         <div className="usage-card">
@@ -381,7 +381,7 @@ function Overview({ overview, snapshots }: { overview: UsageOverview; snapshots:
 
       <p className="page__note usage-footnote">
         Token counts come from your agents’ session logs on this Mac; Cursor reports its own totals and has no project
-        detail. Limits come from each provider, so they won’t always line up with these counts.
+        detail. Limits come from each provider, so they won’t always line up with these counts. Older activity is grouped by day; session counts are unavailable when older archives have no session detail.
       </p>
     </>
   );

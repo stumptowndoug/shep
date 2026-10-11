@@ -1328,8 +1328,8 @@ body.theme-clear .app-shell__frame {
 /* Context menu (right-click) */
 
 .context-menu__item--danger:hover {
-  background: rgba(239, 68, 68, 0.15);
-  color: rgb(252, 129, 129);
+  background: var(--danger-ground);
+  color: var(--danger);
 }
 
 /* Popover list (Select, slash commands, pickers) */
@@ -1398,7 +1398,7 @@ body.theme-clear .app-shell__frame {
   padding: 5px 10px;
   border-radius: var(--radius-md);
   border: 1px solid color-mix(in srgb, var(--text-primary), transparent 82%);
-  background: color-mix(in srgb, var(--bg-primary), white 2%);
+  background: color-mix(in srgb, var(--bg), white 2%);
   font-size: 13px;
   color: var(--text-primary);
 }
@@ -3334,7 +3334,10 @@ body.theme-clear .app-shell__frame {
 }
 .project-row__pin:hover { background: var(--state-hover); color: var(--fg); }
 .project-row:hover .project-row__pin,
+.project-row:focus-within .project-row__pin,
+.project-row__pin--on,
 .project-row__pin:focus-visible { display: grid; }
+.project-row__pin--on { color: var(--muted); }
 /* Pinned to the bottom of the scroll area, so a long project list scrolls
    beneath it inside the island. */
 .project-list__tools {
@@ -3375,8 +3378,8 @@ body.theme-clear .app-shell__frame {
 .project-group__header:hover .project-group__toggle { color: var(--muted); }
 .project-group__icon { flex: none; color: var(--muted); opacity: 0.75; }
 .project-group__count { color: var(--faint); font-family: var(--font-mono); font-size: var(--text-2xs); font-weight: 400; letter-spacing: 0; }
-.project-group__header .project-row__pin { display: none; }
 .project-group__header:hover .project-row__pin,
+.project-group__header:focus-within .project-row__pin,
 .project-group__header .project-row__pin:focus-visible { display: grid; }
 .project-group__rows { display: flex; flex-direction: column; gap: 1px; padding-left: 12px; }
 .project-group__empty { padding-left: 30px; }

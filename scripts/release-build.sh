@@ -6,7 +6,8 @@
 # - Verifies the Developer ID certificate is actually installed in Keychain
 # - Verifies the updater signing key file exists and exports its contents
 # - Verifies package.json / tauri.conf.json / Cargo.toml versions match
-# - Runs pnpm install, pnpm tauri build, post-build-dmg.sh, final DMG notarization,
+# - Requires a committed source tree and passing checks with frozen dependencies
+# - Runs pnpm tauri build, post-build-dmg.sh, final DMG notarization,
 #   and generate-update-json.sh
 # - Prints a summary of the resulting artifacts
 #
@@ -22,6 +23,13 @@ cd "$(dirname "$0")/.."
 step()  { printf -- "\n── %s\n" "$1"; }
 ok()    { printf -- "   OK: %s\n" "$1"; }
 fail()  { printf -- "\nERROR: %s\n" "$1" >&2; exit 1; }
+
+# Check code before loading credentials or performing signing/notarization.
+step "Verifying release revision"
+RELEASE_REVISION=$(bash scripts/check-release-tree.sh)
+step "Running release checks"
+bash scripts/check-release.sh
+[ "$(bash scripts/check-release-tree.sh)" = "$RELEASE_REVISION" ] || fail "Source revision changed during checks"
 
 # ── Step 1: verify .env and load signing env vars ───────────────────
 
@@ -125,25 +133,11 @@ fi
 VERSION="$PKG_VERSION"
 ok "all three files agree on v$VERSION"
 
-# ── Step 7: warn on dirty working tree (don't block) ────────────────
-
-step "Checking working tree"
-
-if [ -n "$(git status --porcelain)" ]; then
-  printf "   WARNING: working tree is dirty. Continuing anyway, but release artifacts\n"
-  printf "            will include uncommitted changes.\n"
-  git status --short | sed 's/^/            /'
-else
-  ok "working tree is clean"
-fi
-
-# ── Step 8: install deps + build + post-build + updater metadata ────
-
-step "pnpm install"
-pnpm install
+# ── Build, post-build, and updater metadata ────────────────────────
 
 step "pnpm tauri build (signs + notarizes — can take several minutes)"
-pnpm tauri build
+pnpm tauri build -- --locked
+[ "$(bash scripts/check-release-tree.sh)" = "$RELEASE_REVISION" ] || fail "Source revision changed during build"
 
 step "Patching DMG (post-build-dmg.sh)"
 ./scripts/post-build-dmg.sh
@@ -171,6 +165,7 @@ UPDATER_SIG="src-tauri/target/release/bundle/macos/shep.app.tar.gz.sig"
 
 printf "\n"
 printf "── Release build complete: v%s\n" "$VERSION"
+printf "   Commit:       %s\n" "$RELEASE_REVISION"
 printf "\n"
 printf "   DMG:          %s\n" "$DMG_PATH"
 printf "   Updater:      %s\n" "$UPDATER_TARBALL"

@@ -17,6 +17,7 @@ const APPROVAL_ORDER = ["reject_always", "reject_once", "allow_always", "allow_o
 
 /** Distance from the bottom (px) within which new output keeps the view pinned. */
 const STICK_THRESHOLD = 48;
+const TURN_PAGE_SIZE = 50;
 
 function ChatSignIn({ chatId, url }: { chatId: number; url?: string }) {
   const [error, setError] = useState(false);
@@ -47,6 +48,8 @@ function plural(count: number, word: string): string {
 const Turn = memo(function Turn({ turn }: { turn: ChatTurn }) {
   const { work, answer } = splitTurn(turn);
   const tools = work.filter((item) => item.kind === "tool");
+  const [workExpanded, setWorkExpanded] = useState<boolean | null>(null);
+  const showWork = workExpanded ?? tools.some((item) => item.kind === "tool" && item.status === "failed");
   const stopMessage = turnStopMessage(turn);
   const edits = tools.filter((item) => item.kind === "tool" && item.toolKind === "edit").length;
   const facts = [
@@ -58,15 +61,15 @@ const Turn = memo(function Turn({ turn }: { turn: ChatTurn }) {
     <div className="chat-turn">
       {turn.prompt && <div className="chat-user">{turn.prompt}</div>}
       {work.length > 0 && (
-        <details className="chat-worked" open={tools.some((item) => item.kind === "tool" && item.status === "failed") || undefined}>
+        <details className="chat-worked" open={showWork} onToggle={(event) => setWorkExpanded(event.currentTarget.open)}>
           <summary>
             <ChevronRight size={14} className="chat-worked__chevron" />
             <span>Worked</span>
             <span className="chat-worked__facts">{facts}</span>
           </summary>
-          <div className="chat-worked__items">
+          {showWork && <div className="chat-worked__items">
             {work.map((item) => <ChatItemView key={item.id} item={item} streaming={turn.endedAt === null} />)}
-          </div>
+          </div>}
         </details>
       )}
       {answer.map((item) => <ChatItemView key={item.id} item={item} streaming={turn.endedAt === null} />)}
@@ -90,6 +93,7 @@ export default function ChatView({ chatId, assistantId, repoPath, fullAccess, on
   const agentName = assistant?.name ?? "Agent";
   const scrollRef = useRef<HTMLDivElement>(null);
   const stuckRef = useRef(true);
+  const [visibleTurnCount, setVisibleTurnCount] = useState(TURN_PAGE_SIZE);
 
   // Keep the newest output in view while the user is already at the bottom.
   const contentRef = useCallback((node: HTMLDivElement | null) => {
@@ -135,7 +139,15 @@ export default function ChatView({ chatId, assistantId, repoPath, fullAccess, on
               {chat.status === "starting" && chat.startup && <ChatSignIn chatId={chatId} url={chat.startup.authUrl} />}
             </div>
           )}
-          {chat.turns.map((turn) => <Turn key={turn.id} turn={turn} />)}
+          {chat.turns.length > visibleTurnCount && <button type="button" className="btn-secondary" onClick={() => {
+            stuckRef.current = false;
+            setVisibleTurnCount(count => count + TURN_PAGE_SIZE);
+          }}>Show {Math.min(TURN_PAGE_SIZE, chat.turns.length - visibleTurnCount)} earlier turns</button>}
+          {visibleTurnCount > TURN_PAGE_SIZE && <button type="button" className="btn-secondary" onClick={() => {
+            stuckRef.current = true;
+            setVisibleTurnCount(TURN_PAGE_SIZE);
+          }}>Show recent turns</button>}
+          {chat.turns.slice(-visibleTurnCount).map((turn) => <Turn key={turn.id} turn={turn} />)}
           {chat.status === "working" && !request && <div className="chat-working chat-shimmer">Working</div>}
           {chat.error && <div className="chat-error">{chat.error}</div>}
         </div>

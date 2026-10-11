@@ -201,8 +201,8 @@ pub fn get_models_for_provider(db: &UsageDb, provider: &str) -> Vec<String> {
 pub fn run_background_ingest(db: &UsageDb) {
     loop {
         let done = {
-            let conn = db.conn.lock().unwrap();
-            ingest::ingest_all(&conn)
+            let mut conn = db.conn.lock().unwrap();
+            ingest::ingest_all(&mut conn)
         };
         if done {
             break;
@@ -863,7 +863,7 @@ mod cursor_overview_tests {
                 confidence: "estimated".to_string(),
             },
             active_projects: 1,
-            active_sessions: 1,
+            active_sessions: Some(1),
             providers: vec![UsageOverviewProvider {
                 provider: "claude".to_string(),
                 tokens: 100,

@@ -1,7 +1,7 @@
 import { Folder, GitFork, Pin } from "lucide-react";
 import type { RepoInfo } from "../../lib/types";
 import type { ProjectLiveState } from "../../lib/projectTree";
-import { handleActionKey } from "../../lib/a11y";
+import { handleActionKey, handleContextMenuKey } from "../../lib/a11y";
 import { toggleProjectPin, useProjectMenu, type ProjectHandlers } from "../shared/useProjectMenu";
 
 interface ProjectItemProps {
@@ -17,7 +17,7 @@ interface ProjectItemProps {
 }
 
 export default function ProjectItem({ repo, parentName, nested, isActive, live, handlers, onSelect }: ProjectItemProps) {
-  const { handleContextMenu, portals } = useProjectMenu(repo, handlers);
+  const { handleContextMenu, openMenuAt, portals } = useProjectMenu(repo, handlers);
   const showStatus = live && live.status !== "idle" && live.status !== "running";
 
   return (
@@ -26,7 +26,7 @@ export default function ProjectItem({ repo, parentName, nested, isActive, live, 
         className={`list-item project-row ${isActive ? "project-active" : ""} ${nested ? "project-row--nested" : ""}`}
         onClick={onSelect}
         onContextMenu={handleContextMenu}
-        onKeyDown={(event) => handleActionKey(event, onSelect)}
+        onKeyDown={(event) => { if (!handleContextMenuKey(event, openMenuAt)) handleActionKey(event, onSelect); }}
         title={repo.path}
         role="button"
         tabIndex={0}

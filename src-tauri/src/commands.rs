@@ -169,6 +169,41 @@ pub fn open_in_editor(
 
 const MAX_MARKDOWN_PREVIEW_BYTES: u64 = 512 * 1024;
 
+fn project_file(repo_path: &str, file_path: &str) -> Result<std::path::PathBuf, String> {
+    let repo = Path::new(repo_path).canonicalize().map_err(|error| format!("Project not found: {error}"))?;
+    let file = repo.join(file_path).canonicalize().map_err(|_| format!("File does not exist: {file_path}"))?;
+    if !repo.is_dir() || !file.starts_with(&repo) {
+        return Err("File is outside the project.".into());
+    }
+    if !file.is_file() { return Err(format!("File does not exist: {file_path}")); }
+    Ok(file)
+}
+
+#[cfg(test)]
+mod editor_path_tests {
+    use super::project_file;
+    use std::fs;
+
+    #[test]
+    fn editor_paths_stay_inside_the_project_after_resolving_symlinks() {
+        let dir = std::env::temp_dir().join(format!("shep-editor-paths-{}", std::process::id()));
+        let repo = dir.join("repo");
+        fs::create_dir_all(&repo).unwrap();
+        fs::write(repo.join("inside.md"), "inside").unwrap();
+        fs::write(dir.join("outside.md"), "outside").unwrap();
+        let root = repo.to_str().unwrap();
+        assert!(project_file(root, "inside.md").is_ok());
+        assert!(project_file(root, "../outside.md").is_err());
+        assert!(project_file(root, dir.join("outside.md").to_str().unwrap()).is_err());
+        assert!(project_file(root, ".").is_err());
+        #[cfg(unix)] {
+            std::os::unix::fs::symlink(dir.join("outside.md"), repo.join("escape.md")).unwrap();
+            assert!(project_file(root, "escape.md").is_err());
+        }
+        fs::remove_dir_all(dir).unwrap();
+    }
+}
+
 /// Read a changed Markdown file for the Changes panel's preview. Limited to
 /// Markdown inside the project so this can't become a general file reader.
 #[tauri::command]
@@ -177,16 +212,7 @@ pub fn read_markdown_file(repo_path: &str, file_path: &str) -> Result<String, St
     if !(lower.ends_with(".md") || lower.ends_with(".markdown")) {
         return Err("Only Markdown files can be previewed.".to_string());
     }
-    let repo = Path::new(repo_path)
-        .canonicalize()
-        .map_err(|e| format!("Project not found: {e}"))?;
-    let file = repo
-        .join(file_path)
-        .canonicalize()
-        .map_err(|_| format!("File does not exist: {file_path}"))?;
-    if !file.starts_with(&repo) {
-        return Err("File is outside the project.".to_string());
-    }
+    let file = project_file(repo_path, file_path)?;
     let size = std::fs::metadata(&file).map_err(|e| e.to_string())?.len();
     if size > MAX_MARKDOWN_PREVIEW_BYTES {
         return Err("This file is too large to preview.".to_string());
@@ -201,11 +227,7 @@ pub fn open_file_in_editor(
     file_path: &str,
     workspace: State<'_, WorkspaceManager>,
 ) -> Result<(), String> {
-    let repo = Path::new(repo_path);
-    let file = repo.join(file_path);
-    if !repo.is_dir() || !file.is_file() {
-        return Err(format!("File does not exist: {file_path}"));
-    }
+    let file = project_file(repo_path, file_path)?;
     let editor_id = workspace
         .load_editor_settings()?
         .preferred_editor
@@ -392,10 +414,12 @@ pub fn kill_pty(pty_id: u32, pty_manager: State<'_, PtyManager>) -> Result<(), S
 // ── ACP agent commands ──────────────────────────────────────────────
 
 #[tauri::command]
-pub fn get_managed_acp_adapter(
-    adapter: &str,
+pub async fn get_managed_acp_adapter(
+    adapter: String,
 ) -> Result<Option<crate::acp_runtime::RuntimeCommand>, String> {
-    crate::acp_runtime::get(adapter)
+    tauri::async_runtime::spawn_blocking(move || crate::acp_runtime::get(&adapter))
+        .await
+        .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -1006,41 +1030,48 @@ pub struct MemoryStats {
 }
 
 #[tauri::command]
-pub async fn get_memory_stats(pty_manager: State<'_, PtyManager>) -> Result<MemoryStats, String> {
-    let app_pid = std::process::id() as i32;
-    let app_rss = rss_for_pid(app_pid);
-
-    // Sum RSS of all child process trees
-    let child_pids = pty_manager.child_pids();
-    let mut children_rss: u64 = 0;
-    for pid in child_pids {
-        let pid = pid as i32;
-        // The direct child + its descendants
-        children_rss += rss_for_pid(pid);
-        if let Ok(output) = Command::new("pgrep").arg("-P").arg(pid.to_string()).output() {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            for line in stdout.lines() {
-                if let Ok(child) = line.trim().parse::<i32>() {
-                    children_rss += rss_for_pid(child);
-                }
-            }
-        }
-    }
-
-    Ok(MemoryStats { app_rss, children_rss })
+pub async fn get_memory_stats(pty_manager: State<'_, PtyManager>, acp_manager: State<'_, AcpManager>) -> Result<MemoryStats, String> {
+    let mut roots = pty_manager.child_pids();
+    roots.extend(acp_manager.child_pids());
+    tauri::async_runtime::spawn_blocking(move || {
+        let output = Command::new("ps").args(["-axo", "pid=,ppid=,rss="]).output().map_err(|error| error.to_string())?;
+        if !output.status.success() { return Err("Could not read process memory".into()); }
+        Ok(memory_from_snapshot(std::process::id(), &roots, &String::from_utf8_lossy(&output.stdout)))
+    }).await.map_err(|error| error.to_string())?
 }
 
-/// Get resident set size (RSS) for a single PID using `ps`.
-fn rss_for_pid(pid: i32) -> u64 {
-    // ps -o rss= returns RSS in kilobytes
-    Command::new("ps")
-        .args(["-o", "rss=", "-p", &pid.to_string()])
-        .output()
-        .ok()
-        .and_then(|o| String::from_utf8(o.stdout).ok())
-        .and_then(|s| s.trim().parse::<u64>().ok())
-        .map(|kb| kb * 1024)
-        .unwrap_or(0)
+fn memory_from_snapshot(app_pid: u32, roots: &[u32], snapshot: &str) -> MemoryStats {
+    let mut rss = std::collections::HashMap::new();
+    let mut children = std::collections::HashMap::<u32, Vec<u32>>::new();
+    for line in snapshot.lines() {
+        let mut parts = line.split_whitespace();
+        let parsed = (parts.next().and_then(|value| value.parse::<u32>().ok()),
+            parts.next().and_then(|value| value.parse::<u32>().ok()),
+            parts.next().and_then(|value| value.parse::<u64>().ok()));
+        if let (Some(pid), Some(parent), Some(kb)) = parsed {
+            rss.insert(pid, kb * 1024);
+            children.entry(parent).or_default().push(pid);
+        }
+    }
+    let mut pending = roots.to_vec();
+    let mut seen = std::collections::HashSet::new();
+    let mut children_rss = 0;
+    while let Some(pid) = pending.pop() {
+        if !seen.insert(pid) || pid == app_pid { continue; }
+        children_rss += rss.get(&pid).copied().unwrap_or(0);
+        if let Some(descendants) = children.get(&pid) { pending.extend(descendants); }
+    }
+    MemoryStats { app_rss: rss.get(&app_pid).copied().unwrap_or(0), children_rss }
+}
+
+#[cfg(test)]
+mod memory_tests {
+    #[test]
+    fn sums_full_agent_trees_once_and_excludes_unrelated_processes() {
+        let stats = super::memory_from_snapshot(1, &[2, 3, 5], "1 0 10\n2 1 20\n3 2 30\n4 3 40\n5 1 50\n6 5 60\n7 0 9000\n");
+        assert_eq!(stats.app_rss, 10 * 1024);
+        assert_eq!(stats.children_rss, 200 * 1024);
+    }
 }
 
 fn open_path_in_editor(repo_path: &str, editor_id: &str) -> Result<(), String> {

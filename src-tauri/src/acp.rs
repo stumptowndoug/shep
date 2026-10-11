@@ -70,6 +70,16 @@ impl AcpManager {
         self.state.lock().unwrap().processes.len()
     }
 
+    pub fn child_pids(&self) -> Vec<u32> {
+        self.state
+            .lock()
+            .unwrap()
+            .processes
+            .values()
+            .map(|process| process.pid)
+            .collect()
+    }
+
     pub fn spawn(
         &self,
         id: u32,
