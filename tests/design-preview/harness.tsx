@@ -14,6 +14,7 @@ import { emptyChat } from '../../src/lib/acp/chatModel';
 import { startChat } from '../../src/lib/acp/chatSessions';
 import { CODING_ASSISTANTS } from '../../src/components/sidebar/constants';
 import { mockChatCommand } from './chatPreview';
+import { mockAvailability } from './availabilityPreview';
 import { antigravityMock, mockAntigravityCommand, finishAntigravityAuth } from '../antigravity-chat/mockAntigravity';
 import type { PortInfo, RepoInfo, SessionHistoryEntry } from '../../src/lib/types';
 import '../../src/styles/globals.css';
@@ -90,7 +91,8 @@ mockIPC((cmd, payload) => {
     return null;
   }
   const args = payload as Record<string, unknown> | undefined;
-  if (cmd === 'get_managed_acp_adapter' || cmd === 'install_managed_acp_adapter') return mockAntigravityCommand(cmd, args ?? {});
+  if (cmd === 'get_managed_acp_adapter' || cmd === 'check_command_exists') return mockAvailability(cmd, args ?? {});
+  if (cmd === 'install_managed_acp_adapter') return mockAntigravityCommand(cmd, args ?? {});
   if (cmd === 'open_url' && params.get('chat') === 'antigravity') {
     document.body.dataset.previewGoogleSignIn = 'opened';
     for (const call of antigravityMock.calls.filter(call => call.method === 'authenticate')) finishAntigravityAuth(call.chatId);
@@ -154,8 +156,6 @@ mockIPC((cmd, payload) => {
     case 'git_file_contents': return previewFile;
     case 'read_markdown_file': return '# Shep\n\nRun coding agents and terminals **side by side**.\n\n- Projects and groups\n- Chat or terminal agents\n\n```sh\npnpm tauri dev\n```\n';
     case 'git_file_diff': return `diff --git a/${args?.filePath} b/${args?.filePath}\nindex 1111111..2222222 100644\n--- a/${args?.filePath}\n+++ b/${args?.filePath}\n@@ -1,3 +1,3 @@\n export default function App() {\n-  return <main>Welcome</main>;\n+  return <main>Start an agent.</main>;\n }\n`;
-    // Cover an unavailable CLI, an installed terminal-only agent, and a missing chat adapter.
-    case 'check_command_exists': return !['grok', 'agy', 'codex-acp'].includes(String(args?.command));
     case 'get_models_for_provider': return ['Default model', 'Fast model', 'Reasoning model'];
     case 'list_listening_ports': {
       portScans++;

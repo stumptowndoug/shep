@@ -2,8 +2,8 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import type { AgentInterface, CodingAssistant, ProjectActionKind, SessionMode } from "../../lib/types";
 import tabKindMeta from "../../lib/tabKindMeta";
 import { CODING_ASSISTANTS } from "../sidebar/constants";
-import { checkCommandExists, getModelsForProvider, installManagedAcpAdapter, revealInFinder } from "../../lib/tauri";
-import { chatAdapterAvailable } from "../../lib/acp/adapters";
+import { getModelsForProvider, installManagedAcpAdapter, revealInFinder } from "../../lib/tauri";
+import { chatAvailabilityKey, commandAvailabilityKey, useAgentAvailabilityStore } from "../../stores/useAgentAvailabilityStore";
 import { getErrorMessage } from "../../lib/errors";
 import { useRepoStore } from "../../stores/useRepoStore";
 import { usePiConfigStore } from "../../stores/usePiConfigStore";
@@ -49,8 +49,8 @@ export default function SessionLauncher({ onStartSession, onRunInTerminal, onOpe
 
   const [selectedAssistant, setSelectedAssistant] = useState<CodingAssistant | null>(null);
   const selectedAssistantRef = useRef<string | null>(null);
-  const [available, setAvailable] = useState<Record<string, boolean>>({});
-  const [chatAvailable, setChatAvailable] = useState<Record<string, boolean>>({});
+  const availability = useAgentAvailabilityStore((s) => s.checks);
+  const refreshAvailability = useAgentAvailabilityStore((s) => s.refresh);
   const [installPopover, setInstallPopover] = useState<string | null>(null);
   // Explicit picks override the project defaults for this launch only.
   const [modeOverride, setMode] = useState<SessionMode | null>(null);
@@ -77,30 +77,14 @@ export default function SessionLauncher({ onStartSession, onRunInTerminal, onOpe
   const [piKeyInputs, setPiKeyInputs] = useState({ provider: "", key: "" });
   const [piInfoOpen, setPiInfoOpen] = useState(false);
 
-  // Check which assistants (and their chat adapters) are installed
+  // Keep shared results across launcher mounts; focus catches setup done outside
+  // Shep. Each probe publishes independently, without clearing known results.
   useEffect(() => {
-    let cancelled = false;
-    const exists = (command: string) => checkCommandExists(command).catch(() => false);
-    (async () => {
-      const cli: Record<string, boolean> = {};
-      const chat: Record<string, boolean> = {};
-      await Promise.all(
-        CODING_ASSISTANTS.map(async (a) => {
-          const [hasCli, hasChat] = await Promise.all([
-            exists(a.command),
-            a.acp ? chatAdapterAvailable(a.acp) : Promise.resolve(false),
-          ]);
-          cli[a.id] = hasCli;
-          chat[a.id] = hasChat;
-        }),
-      );
-      if (!cancelled) {
-        setAvailable(cli);
-        setChatAvailable(chat);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, []);
+    const refresh = () => { void refreshAvailability(); };
+    refresh();
+    window.addEventListener("focus", refresh);
+    return () => window.removeEventListener("focus", refresh);
+  }, [refreshAvailability]);
 
   // Close install popover on outside click
   useEffect(() => {
@@ -137,12 +121,15 @@ export default function SessionLauncher({ onStartSession, onRunInTerminal, onOpe
 
   const supportsModelSelection = (id: string) => id !== "pi" && id !== "opencode";
   const supportsMode = (id: string) => id !== "pi";
-  const canChat = Boolean(selectedAssistant?.acp && chatAvailable[selectedAssistant.id]);
-  const canTerminal = !selectedAssistant || available[selectedAssistant.id] !== false;
-  const agentInterface: AgentInterface = !canTerminal && selectedAssistant?.acp?.managed ? "chat"
-    : canChat ? interfaceOverride ?? defaultAgentInterface : "terminal";
+  const terminalCheck = selectedAssistant ? availability[commandAvailabilityKey(selectedAssistant.command)] : undefined;
+  const chatCheck = selectedAssistant?.acp ? availability[chatAvailabilityKey(selectedAssistant.acp)] : undefined;
+  const canChat = chatCheck?.available === true;
+  const canTerminal = terminalCheck?.available === true;
+  const chatUnknown = Boolean(selectedAssistant?.acp && chatCheck?.available === undefined);
+  const agentInterface: AgentInterface = terminalCheck?.available === false && (canChat || selectedAssistant?.acp?.managed) ? "chat"
+    : canChat || chatUnknown ? interfaceOverride ?? defaultAgentInterface : "terminal";
   const chatUnavailableReason = selectedAssistant?.acp
-    ? "Chat adapter not installed"
+    ? chatUnknown ? chatCheck?.error ? "Couldn’t check chat availability" : "Checking chat availability…" : "Chat adapter not installed"
     : `Chat isn’t available for ${selectedAssistant?.name ?? "this agent"} in Shep yet.`;
 
   const handleSelectAssistant = (assistant: CodingAssistant) => {
@@ -254,7 +241,7 @@ export default function SessionLauncher({ onStartSession, onRunInTerminal, onOpe
       setAdapterError(null);
       setInstallingAdapter(assistant.id);
       void installManagedAcpAdapter(assistant.acp.managed).then(() => {
-        setChatAvailable(current => ({ ...current, [assistant.id]: true }));
+        useAgentAvailabilityStore.getState().markChatInstalled(assistant.acp!);
         if (selectedAssistantRef.current === assistant.id) setAgentInterface("chat");
       }).catch(error => setAdapterError({ assistantId: assistant.id, message: getErrorMessage(error) }))
         .finally(() => setInstallingAdapter(null));
@@ -287,7 +274,13 @@ export default function SessionLauncher({ onStartSession, onRunInTerminal, onOpe
         <div className="agent-grid" role="group" aria-label="Choose an agent">
           {CODING_ASSISTANTS.map((assistant) => {
             const logoUrl = assistantLogoSrc[assistant.id];
-            const isAvailable = available[assistant.id] !== false || Boolean(assistant.acp?.managed);
+            const cli = availability[commandAvailabilityKey(assistant.command)];
+            const chat = assistant.acp ? availability[chatAvailabilityKey(assistant.acp)] : undefined;
+            const isAvailable = cli?.available !== false || Boolean(assistant.acp && chat?.available !== false) || Boolean(assistant.acp?.managed);
+            const checking = cli?.available === undefined || Boolean(assistant.acp && chat?.available === undefined);
+            const availabilityLabel = checking ? cli?.error || chat?.error ? "Couldn’t check availability" : "Checking…"
+              : !isAvailable ? "Set up agent" : chat?.available ? cli?.available ? "Chat & terminal" : "Chat"
+                : cli?.available ? "Terminal" : "Set up chat";
             const logoClassName = [getAssistantLogoClass(assistant.id), !isAvailable ? "logo-unavailable" : null]
               .filter(Boolean)
               .join(" ");
@@ -316,9 +309,7 @@ export default function SessionLauncher({ onStartSession, onRunInTerminal, onOpe
                   {logoUrl && <img src={logoUrl} alt="" width={22} height={22} className={logoClassName || undefined} />}
                   <span className="agent-choice__body">
                     <span className="agent-choice__name">{assistant.name}</span>
-                    <span className="agent-choice__meta">{!isAvailable ? "Set up agent"
-                      : chatAvailable[assistant.id] ? available[assistant.id] === false ? "Chat" : "Chat & terminal"
-                        : available[assistant.id] === false ? "Set up chat" : "Terminal"}</span>
+                    <span className="agent-choice__meta">{availabilityLabel}</span>
                   </span>
                   {isSelected && <Check size={15} className="agent-choice__check" />}
                 </button>
@@ -465,7 +456,7 @@ export default function SessionLauncher({ onStartSession, onRunInTerminal, onOpe
             onChange={setAgentInterface}
             options={[
               { value: "chat", label: "Chat", disabled: !canChat, title: canChat ? "A conversation with messages, tool calls, and changes" : chatUnavailableReason },
-              { value: "terminal", label: "Terminal", disabled: !canTerminal, title: canTerminal ? undefined : "Install the agent’s CLI to use Terminal" },
+              { value: "terminal", label: "Terminal", disabled: !canTerminal, title: canTerminal ? undefined : terminalCheck?.available === undefined ? "Checking terminal availability…" : "Install the agent’s CLI to use Terminal" },
             ]}
           />
           <p className="field-note">{!selectedAssistant.acp
@@ -473,7 +464,7 @@ export default function SessionLauncher({ onStartSession, onRunInTerminal, onOpe
             : agentInterface === "chat"
               ? "A conversation with messages, tool calls, and changes."
               : "The agent’s own command-line interface, in your workspace."}</p>
-          {selectedAssistant.acp && !canChat && (
+          {selectedAssistant.acp && chatCheck?.available === false && (
             <div className="callout mt-3">
               <MessageSquare size={15} />
               <div className="callout__body">
@@ -496,6 +487,12 @@ export default function SessionLauncher({ onStartSession, onRunInTerminal, onOpe
                   {installingAdapter === selectedAssistant.id ? "Installing…" : selectedAssistant.acp.managed ? "Install chat runtime" : "Set up in terminal"}
                 </button>
               </div>
+            </div>
+          )}
+          {(chatCheck?.error || terminalCheck?.error) && (
+            <div className="callout mt-3" role="alert">
+              <div className="callout__body">Couldn’t check agent availability. {chatCheck?.error ?? terminalCheck?.error}</div>
+              <button className="btn-secondary" onClick={() => void refreshAvailability(true)}>Retry</button>
             </div>
           )}
           {adapterError?.assistantId === selectedAssistant.id && <div className="command-form__error mt-3" role="alert">{adapterError.message}</div>}
