@@ -75,7 +75,7 @@ function AgentSessionRow({
           {secondary}
         </span>
       </span>
-      <ActivityIndicator activity={activity} className="agent-session-row__indicator" />
+      <ActivityIndicator activity={activity} agentInterface={tab.agentInterface} className="agent-session-row__indicator" />
     </div>
   );
 }

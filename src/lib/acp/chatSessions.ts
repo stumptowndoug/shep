@@ -96,9 +96,10 @@ export async function startChat(options: StartChatOptions): Promise<number> {
       if (assistant.id !== "antigravity" || !live.has(chatId)) return;
       const url = antigravitySignInUrl(line);
       if (!url) return;
-      useChatStore.getState().update(chatId, chat => chat.status === "starting" && chat.startup
-        ? { ...chat, startup: { message: "Sign in with Google to connect Antigravity.", authUrl: url } }
-        : chat);
+      const chat = useChatStore.getState().chats[chatId];
+      if (chat?.status !== "starting" || !chat.startup) return;
+      useChatStore.getState().update(chatId, chat => ({ ...chat, startup: { message: "Sign in with Google to connect Antigravity.", authUrl: url } }));
+      setAgentState(chatId, "blocked", "Waiting for Google sign-in");
     },
   });
   chatId = connection.id;
@@ -136,6 +137,7 @@ export async function startChat(options: StartChatOptions): Promise<number> {
     labelSource: resume?.title ? "session" : "default",
     agentInterface: "chat",
   });
+  setAgentState(chatId, "working", "Starting agent");
 
   let startupTimer: number;
   const resetStartupTimer = (signingIn = false) => {
@@ -160,7 +162,7 @@ export async function startChat(options: StartChatOptions): Promise<number> {
 
 export function cancelChatStartup(chatId: number) {
   if (useChatStore.getState().chats[chatId]?.status === "starting") {
-    failChat(chatId, "Sign-in cancelled. Start a new chat when you’re ready to connect.");
+    failChat(chatId, "Sign-in cancelled. Start a new chat when you’re ready to connect.", 0);
   }
 }
 
@@ -181,6 +183,7 @@ export function cancelTurn(chatId: number) {
   if (!session?.sessionId) return;
   cancelPendingRequests(session);
   useChatStore.getState().update(chatId, (state) => ({ ...state, queued: [] }));
+  setAgentState(chatId, "idle", "Stopped");
   session.connection.notify("session/cancel", { sessionId: session.sessionId });
 }
 
@@ -316,6 +319,7 @@ async function openSession(chatId: number, options: StartChatOptions, resetStart
     if (!live.has(chatId)) return;
     if (browserSignIn) {
       useChatStore.getState().update(chatId, chat => ({ ...chat, startup: undefined }));
+      setAgentState(chatId, "working", "Starting agent");
       resetStartupTimer();
     }
   }
@@ -412,8 +416,8 @@ async function runTurn(chatId: number, prompt: string) {
     stopReason = result?.stopReason ?? "end_turn";
   } catch (error) {
     if (!live.has(chatId)) return;
-    stopReason = "error";
-    turnError = errorText(error);
+    stopReason = session.cancelling ? "cancelled" : "error";
+    if (!session.cancelling) turnError = errorText(error);
   }
   if (!live.has(chatId)) return;
 
@@ -421,18 +425,18 @@ async function runTurn(chatId: number, prompt: string) {
   store.update(chatId, (chat) => endTurn(chat, stopReason, turnError));
   void recordHistoryActivity(session, false);
   if (!isChatVisible(chatId) && stopReason !== "cancelled") {
-    void notifyAgent(chatId, `${session.assistant.name} finished`);
+    void notifyAgent(chatId, stopReason === "error" ? `${session.assistant.name} needs you: ${turnError ?? "Request failed"}` : `${session.assistant.name} finished`, { attention: false });
   }
-  setReady(chatId);
+  setReady(chatId, stopReason === "error" ? turnError ?? "Request failed" : undefined);
 }
 
 /** Mark the chat idle and send the next queued prompt, if any. */
-function setReady(chatId: number) {
+function setReady(chatId: number, error?: string) {
   const chat = useChatStore.getState().chats[chatId];
   if (!chat || chat.status === "exited") return;
   const [next, ...rest] = chat.queued;
   useChatStore.getState().update(chatId, (state) => ({ ...state, status: "ready", queued: rest }));
-  setAgentState(chatId, "idle", "Waiting for a prompt");
+  setAgentState(chatId, error ? "blocked" : "idle", error ?? "Waiting for a prompt");
   if (next) void runTurn(chatId, next);
 }
 
@@ -453,7 +457,7 @@ async function handleRequest(chatId: number, method: string, params: unknown) {
     const itemId = `cursor-${crypto.randomUUID()}`;
     useChatStore.getState().update(chatId, chat => addCursorRequest(chat, itemId, request));
     setAgentState(chatId, "blocked", request.kind === "plan" ? "Waiting for plan approval" : "Waiting for your answer");
-    if (!isChatVisible(chatId)) void notifyAgent(chatId, request.kind === "plan" ? "Cursor needs plan approval" : "Cursor needs your input");
+    if (!isChatVisible(chatId)) void notifyAgent(chatId, request.kind === "plan" ? "Cursor needs plan approval" : "Cursor needs your input", { attention: false });
     // Questions and plan approval always need a human decision, including in Full access.
     session.interactions ??= new Map();
     const outcome = await new Promise<CursorOutcome>(resolve => session.interactions!.set(itemId, resolve));
@@ -482,7 +486,7 @@ async function handleRequest(chatId: number, method: string, params: unknown) {
   const title = toolCall?.title ?? "Run a tool";
   useChatStore.getState().update(chatId, (chat) => addPermission(chat, itemId, title, options));
   setAgentState(chatId, "blocked", "Waiting for permission");
-  if (!isChatVisible(chatId)) void notifyAgent(chatId, `${session.assistant.name} needs permission: ${title}`);
+  if (!isChatVisible(chatId)) void notifyAgent(chatId, `${session.assistant.name} needs permission: ${title}`, { attention: false });
 
   const optionId = await new Promise<string | null>((resolve) => session.permissions.set(itemId, resolve));
   session.permissions.delete(itemId);
@@ -495,7 +499,7 @@ async function handleRequest(chatId: number, method: string, params: unknown) {
 
 function refreshWaitingState(chatId: number) {
   const chat = useChatStore.getState().chats[chatId];
-  if (!live.has(chatId) || chat?.status !== "working") return;
+  if (!live.has(chatId) || live.get(chatId)?.cancelling || chat?.status !== "working") return;
   if (pendingRequest(chat)) setAgentState(chatId, "blocked", "Waiting for your input");
   else setAgentState(chatId, "working", "Agent is responding");
 }
@@ -512,7 +516,7 @@ function handleExit(chatId: number, code: number, stderr: string) {
   useTerminalStore.getState().setTabExited(chatId, code);
 }
 
-function failChat(chatId: number, error: string | null) {
+function failChat(chatId: number, error: string | null, exitCode = 1) {
   useChatStore.getState().update(chatId, (chat) => ({
     ...endTurn(chat, "error"),
     status: "exited",
@@ -525,7 +529,7 @@ function failChat(chatId: number, error: string | null) {
     cancelPendingRequests(session);
     live.delete(chatId);
     void session.connection.kill().catch(() => {});
-    useTerminalStore.getState().setTabExited(chatId, 1);
+    useTerminalStore.getState().setTabExited(chatId, exitCode);
   }
 }
 

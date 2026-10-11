@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { RepoInfo, RepoGroup, TabActivity } from "../../lib/types";
+import type { AgentInterface, RepoInfo, RepoGroup, TabActivity } from "../../lib/types";
+import { getTabActivityStatus } from "./ActivityIndicator";
 import { useTerminalStore } from "../../stores/useTerminalStore";
 import { useGitStore } from "../../stores/useGitStore";
 import { useProjectSettingsStore } from "../../stores/useProjectSettingsStore";
@@ -11,7 +12,11 @@ import AgentSessionList, { type AgentSessionItem } from "./AgentSessionList";
 import SidebarSectionToggle from "./SidebarSectionToggle";
 import type { ProjectActionKind } from "../shared/ProjectActionMenu";
 
-function agentSessionPriority(activity: TabActivity | undefined): number {
+function agentSessionPriority(activity: TabActivity | undefined, agentInterface?: AgentInterface): number {
+  if (agentInterface === "chat") {
+    const status = getTabActivityStatus(activity, agentInterface);
+    return status === "attention" ? 0 : status === "working" ? 3 : 4;
+  }
   if (activity?.bell || activity?.agentState === "blocked") return 0;
   if (activity && !activity.alive && activity.exitCode !== 0) return 0;
   if (activity?.agentState === "possibly_stuck") return 1;
@@ -78,7 +83,7 @@ export default function Sidebar({
     return sessions.sort((a, b) => {
       const aActivity = tabActivity[a.tab.ptyId];
       const bActivity = tabActivity[b.tab.ptyId];
-      const priorityDifference = agentSessionPriority(aActivity) - agentSessionPriority(bActivity);
+      const priorityDifference = agentSessionPriority(aActivity, a.tab.agentInterface) - agentSessionPriority(bActivity, b.tab.agentInterface);
       if (priorityDifference !== 0) return priorityDifference;
 
       // Selection and streaming output must not move rows under the pointer.

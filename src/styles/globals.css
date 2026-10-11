@@ -1781,6 +1781,10 @@ body.theme-clear .app-shell__frame {
 .activity-indicator--done {
   background: var(--accent);
 }
+.activity-indicator--chat.activity-indicator--working {
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+  border-top-color: var(--accent);
+}
 .activity-indicator--attention,
 .activity-indicator--stuck {
   background: var(--warn);

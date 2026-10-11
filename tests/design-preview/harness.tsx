@@ -154,7 +154,10 @@ useUsageSettingsStore.setState({settings:{...useUsageSettingsStore.getState().se
 for (let i = 0; i < 2; i++) {
   const id = 900 + i;
   useTerminalStore.getState().addTab({id:`preview-${id}`,kind:'assistant',label:i ? 'Keyboard navigation' : 'Workspace design',labelSource:'user',ptyId:id,agentInterface:'chat',repoPath:repos[0].path,commandName:null,assistantId:i ? 'codex' : 'claude',providerSessionId:i ? null : 'sample-0',sessionMode:'standard'});
-  if (!i) useTerminalStore.getState().initActivity(id);
+  if (!i) {
+    useTerminalStore.getState().initActivity(id);
+    useTerminalStore.getState().setTabAgentState(id, {state:'idle',updatedAt:now,source:'provider',reason:'Waiting for a prompt',ruleId:null});
+  }
   useChatStore.getState().init(id);
   useChatStore.getState().update(id, () => ({...emptyChat(),status:'ready',commands:[{name:'compact',description:'Summarize this conversation'}],options:[{id:'model',name:'Model',value:'default',source:'model',choices:[{value:'default',name:i ? 'Codex' : 'Claude Code'}]}],turns:[{id:0,prompt:'Bring the workspace closer to Springroll. Keep it calm and easy to scan.',startedAt:now-47000,endedAt:now,stopReason:'end_turn',items:[{kind:'tool',id:'read',title:'Read workspace styles',toolKind:'read',status:'completed',output:'Read src/styles/globals.css',diffs:[]},{kind:'message',id:'answer',messageId:null,text:'The workspace now has a consistent rhythm.\n\n- **Clearer navigation.** Projects and active agents have distinct places in the sidebar.\n- **Room to read.** Pages share a comfortable width, with quieter controls and more consistent spacing.\n- **One visual language.** Light and dark themes use the same surfaces and type hierarchy.\n\nThe next step is to check the smaller window layouts and keyboard interactions.'}]}]}));
 }
