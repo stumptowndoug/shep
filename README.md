@@ -1,70 +1,103 @@
 # Shep
 
-**A native terminal workspace for developers running projects, agents, and background tasks side by side.**
+**A macOS workspace for running AI coding agents across all your projects, as a chat or in their own terminal.**
 
-Shep gives each repo a dedicated workspace for terminals, AI coding agents, commands, and git-aware workflows. Instead of managing a pile of Terminal tabs, iTerm windows, and half-remembered shell commands, you open one app and work from a single place.
+Shep keeps your agents, terminals, commands, and git changes together, organized by
+project. Start Claude Code, Codex, Cursor, Antigravity, OpenCode, or Pi in a click,
+see which sessions are working or waiting on you, review what they changed, and keep
+an eye on your usage limits, all from one window instead of a pile of terminal tabs.
 
 <p align="center">
-  <img src="assets/shep.png" alt="Shep" width="200" />
+  <img src="assets/shep.png" alt="Shep" width="160" />
 </p>
+
+<!-- TODO: hero screenshot (sidebar + a chat tab + Changes panel), e.g.
+<p align="center"><img src="docs/images/shep-0.9.png" alt="Shep with a chat session and the Changes panel" width="900" /></p>
+-->
 
 ## Why Shep
 
-- Keep project terminals grouped by repo instead of spread across shell windows.
-- Launch AI coding agents from the app with standard and auto-accept modes.
-- Start common tasks quickly with saved commands and autostart behavior.
-- See which sessions are running, stopped, or need attention without hunting for them.
-- Automatically import existing git worktrees when you add a repo, and work in them from the same UI.
+- **Every agent in one place.** Run several agents across several repos and see at
+  a glance which are working, done, or waiting for you.
+- **Chat or terminal, your choice.** Use a native chat view with tool cards, diffs, and
+  permission prompts, or the agent's own CLI in a terminal tab.
+- **A sidebar that stays focused.** It shows the projects you're working in: groups,
+  pinned projects, and anything with open tabs. Everything else is one ⌘P away.
+- **See what changed.** The Changes panel shows only the files your agents touched,
+  with their diffs.
+- **Know your limits.** Usage tracks tokens by agent, model, and project, plus each
+  provider's rate limits.
 
-## What It Does
+## Features
 
-- **Project workspaces** for repos, tasks, agents, and terminal tabs
-- **Agent chat and terminals** for Claude Code, Codex, Cursor, Antigravity, OpenCode, and Pi
-- **Git-aware project views** including discovered worktrees
-- **Autostart tasks** for dev servers, watchers, and recurring commands
-- **Status indicators** so crashed or noisy sessions are easy to spot
-- **Usage tracking** for token activity, models, projects, and provider limits
-- **In-app notices** for common failures instead of silent errors or browser alerts
-- **Native macOS packaging** via Tauri
+- **Agents.** Chat and terminal sessions for six coding agents, with Standard or
+  YOLO (auto-accept) modes, model selection, and saved drafts.
+- **Projects.** Groups, pinning, a Projects page, and a ⌘P switcher. Git worktrees are
+  picked up automatically and nest under their main checkout.
+- **New tab launcher.** Pick an agent, or open a terminal, Commands, Changes,
+  To-dos, your editor, or Finder.
+- **Changes.** Changed files with +/− counts, Working/Staged views, Markdown
+  previews, merge-conflict markers, and open-in-editor.
+- **Commands and Ports.** Saved per-project commands (dev servers, watchers, tests)
+  with optional autostart, and a view of what's listening on which port.
+- **History.** Browse past agent sessions and resume them where they left off.
+- **Usage.** Token activity by agent, model, and project, with provider limits in
+  the sidebar.
+- **To-dos and skills.** A `TODO.md` kanban board your agents can keep up to date,
+  and installable agent skills such as `/orchestrate`.
+
+## Supported agents
+
+| Agent | Terminal (CLI) | Chat (ACP adapter) | YOLO |
+| --- | --- | --- | --- |
+| Claude Code | `claude` | `npm i -g @agentclientprotocol/claude-agent-acp` | ✓ |
+| Codex | `codex` | `npm i -g @agentclientprotocol/codex-acp` | ✓ |
+| Cursor | `cursor-agent` | Included with the Cursor CLI | ✓ |
+| Antigravity | `agy` | Installed by Shep from the launcher | ✓ |
+| OpenCode | `opencode` | Included with OpenCode | ✓ |
+| Pi | `pi` | `npm i -g pi-acp` | — |
+
+Install the CLI for any agent you want to run in a terminal. Chat needs the adapter
+in the third column; the launcher tells you when one is missing. See
+[docs/agents.md](docs/agents.md) for how the two interfaces and modes differ.
 
 ## Download
 
-Download the latest `.dmg` from [GitHub Releases](https://github.com/stumptowndoug/shep/releases).
+Download the latest `.dmg` from [GitHub Releases](https://github.com/stumptowndoug/shep/releases),
+open it, and drag **Shep.app** into **Applications**. Release builds are signed and
+notarized, and Shep updates itself in place.
 
-After downloading:
+Requires macOS.
 
-1. Open the `.dmg`
-2. Drag `Shep.app` into `Applications`
-3. Launch Shep
+## Getting started
 
-Official release builds are signed and notarized. See [release instructions](docs/RELEASING.md) for packaging and upgrade verification.
+1. **Add a project.** On first launch, Shep shows which agent CLIs it found and
+   suggests git repos you've recently used with Claude Code or Codex. Add one with a
+   click, or choose any folder.
+2. **Open a New tab** with the **+** in the tab bar (⌘⇧T) and pick an agent. Choose
+   Chat or Terminal, and Standard or YOLO.
+3. **Work across projects.** Switch with the sidebar or ⌘P. Sessions keep running
+   in the background, and the sidebar shows which need your attention.
+4. **Review changes** with the branch button in the header (⌘G).
 
-## Requirements
+## Keyboard shortcuts
 
-For using Shep:
+| Shortcut | Action |
+| --- | --- |
+| ⌘P | Switch project |
+| ⌘⇧P | All projects |
+| ⌘⇧T | New tab |
+| ⌘T | New terminal |
+| ⌘G | Show Changes |
+| ⌘⇧C | Commands |
+| ⌘E | Open project in editor |
+| ⌘B | Toggle sidebar |
+| ⌘, | Settings |
 
-- macOS
-- A local git repo to work from
-- The CLI for agents you want to run in terminals; chat adapters can be set up from the launcher
+## Project configuration
 
-For building from source:
-
-- Node.js 24+
-- `pnpm` 10
-- Rust 1.95+ via `rustup`
-- Xcode Command Line Tools
-
-## Getting Started
-
-### 1. Add a repo
-
-Open Shep and add a local repository from the sidebar.
-
-### 2. Configure tasks
-
-Shep stores project configuration under `<repo>/.shep/workspace.yml`.
-
-Example:
+Commands you save in Shep are stored in `<repo>/.shep/workspace.yml`, so you can
+commit them and share them with your team:
 
 ```yaml
 name: my-app
@@ -72,156 +105,53 @@ commands:
   - name: dev server
     command: npm run dev
     autostart: true
-    env: {}
-    cwd: null
   - name: tests
     command: npm test -- --watch
-    autostart: false
-    env: {}
-    cwd: null
-assistants: []
+    env:
+      CI: "1"
+    cwd: packages/web
 ```
 
-### 3. Open workspaces and sessions
+`autostart` commands start the first time you open the project in a session. `env`
+and `cwd` are optional; `cwd` is relative to the repo.
 
-Use the sidebar and tab bar to:
+## Build from source
 
-- open project terminals
-- launch assistants
-- create blank shells
-- jump into git or commands views
-- switch projects without manually rebuilding your terminal layout
-
-## Assistant Modes
-
-Agents can run in **Chat** through ACP or in a **Terminal** using their CLI.
-New installations default to Chat; existing installations retain Terminal when
-they have not chosen an interface. History resumes in its recorded interface.
-Antigravity Chat uses Shep's verified managed runtime; it does not replace `agy`.
-
-Shep supports two session modes for supported coding agents:
-
-| Mode | Purpose |
-| --- | --- |
-| `Standard` | Runs the agent in the current repo directory |
-| `YOLO` | Runs the agent in the current repo directory with auto-accept when supported |
-
-Worktrees are managed outside Shep. If you create one with git, adding the main repo or a worktree in Shep will automatically import the related entries Git already knows about, and you can use the same terminals, assistants, commands, and git UI there.
-
-Supported today:
-
-- Codex CLI
-- Claude Code
-- Antigravity CLI (`agy`)
-- Cursor (`cursor-agent`)
-- OpenCode (`opencode`)
-- Pi (`pi`)
-
-Gemini CLI was removed from the launcher after Google deprecated it in favor of Antigravity CLI (consumer requests stop June 18, 2026). If you still use it (e.g. on an enterprise license), run `gemini` from any Shep terminal — historical Gemini usage stays visible in the usage panel.
-
-### Antigravity usage
-
-With `agy` 1.1.11 or newer, Shep reads subscription limits using the CLI's
-authenticated `agy -p /usage --output-format json` report. Sign in through `agy`
-once; Shep uses that existing login to show Gemini and Claude/GPT weekly and
-five-hour limits. This read-only command does not start an agent turn or spend
-model tokens, and works without an interactive Antigravity session open.
-
-Older CLIs and desktop-only installations use the existing running-service
-probe. If usage is unavailable, check that `/usage` works in `agy`. Refreshes
-retain the last successful values in memory; they refresh at most every five
-minutes after success and retry with backoff after failures.
-
-## Build From Source
-
-### Install dependencies
+Requires Node.js 24+, pnpm 10, Rust 1.95+ (via `rustup`), and Xcode Command Line Tools.
 
 ```bash
 pnpm install --frozen-lockfile
+pnpm tauri dev      # run the app in development
+pnpm test           # unit, Rust, and browser tests
+pnpm tauri build    # production build → src-tauri/target/release/bundle/
 ```
 
-### Run in development
+`bash scripts/check-release.sh` runs the full set of release checks without signing.
 
-```bash
-pnpm tauri dev
-```
-
-This starts the Vite frontend and the Tauri shell together.
-
-### Create a production build
-
-```bash
-pnpm tauri build
-```
-
-### Create a debug-packaged build
-
-```bash
-pnpm tauri build --debug
-```
-
-Useful validation commands:
-
-```bash
-pnpm build
-pnpm test
-bash scripts/check-release.sh
-```
-
-Build artifacts land here:
-
-- App bundle: `src-tauri/target/release/bundle/macos/shep.app`
-- DMG: `src-tauri/target/release/bundle/dmg/`
-
-Debug artifacts land here:
-
-- App bundle: `src-tauri/target/debug/bundle/macos/shep.app`
-- DMG: `src-tauri/target/debug/bundle/dmg/`
-
-## Project Structure
+### Project structure
 
 ```text
-src/                    React frontend
-src/components/         App UI
-src/hooks/              UI and PTY lifecycle hooks
-src/lib/                Shared helpers and Tauri bindings
-src/stores/             Zustand stores
-
-src-tauri/              Rust backend and Tauri config
-src-tauri/src/commands.rs
-src-tauri/src/pty/      PTY process management
-src-tauri/src/workspace/
+src/                 React frontend (components, hooks, Zustand stores, lib)
+src/lib/acp/         Chat sessions and the ACP client
+src-tauri/src/       Rust backend: PTYs, ACP processes, git, workspace config, usage
+tests/               Unit tests and Playwright browser tests
+docs/                Agent details, release process, and release notes
 ```
 
-## Tech Stack
+Built with Tauri 2, Rust, React 19, TypeScript, Zustand, Vite, and xterm.js.
 
-- React 19
-- TypeScript
-- Zustand
-- Vite
-- xterm.js
-- Rust
-- Tauri 2
+## More docs
 
-## Reporting Issues
+- [Agents: chat vs. terminal, modes, Antigravity usage](docs/agents.md)
+- [Release notes](https://github.com/stumptowndoug/shep/releases)
+- [Releasing Shep](docs/RELEASING.md)
 
-For tester reports, include:
+## Reporting issues
 
-- Shep version
-- macOS version
-- whether the issue happened in dev mode or the packaged app
-- the repo/workflow you were using
-- anything visible in the terminal or notice UI
-
-## Releases
-
-Releases are built locally on macOS and published as a `.dmg` via GitHub Releases:
-
-1. `./scripts/bump-version.sh X.Y.Z` — updates `package.json`, `src-tauri/tauri.conf.json`, and `src-tauri/Cargo.toml`, then commits the bump
-2. `./scripts/release-build.sh` — builds, signs, notarizes, and generates `latest.json`
-3. Smoke test the DMG, then `git tag vX.Y.Z && git push origin main vX.Y.Z`
-4. `gh release create` with the artifacts and release notes
+[Open an issue](https://github.com/stumptowndoug/shep/issues) and include your Shep
+version, macOS version, the agent and interface (Chat or Terminal) you were using,
+and any notice Shep showed.
 
 ## License
 
-MIT
+[MIT](LICENSE)
