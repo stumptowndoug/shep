@@ -2972,7 +2972,127 @@ body.theme-clear .app-shell__frame {
   .changes__list { width: 220px; }
 }
 
-/* ── Commands Panel ────────────────────────────────────── */
+/* ── Commands: page anatomy, one list card like Ports ── */
+
+.commands-empty-state {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+/* Actions sit level with the title line, not centered on title + lede. */
+.commands-page .page__heading--actions { align-items: flex-start; }
+.commands-page__actions { margin-top: calc((var(--text-display) * 0.98 - var(--ctl-h)) / 2); }
+.commands-page__actions { display: flex; flex: none; gap: 8px; }
+.commands-page__actions button { display: inline-flex; align-items: center; gap: 6px; }
+/* A label row above the list, spanning its width: count left, status right. */
+.commands-page__meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 4px 10px;
+  color: var(--muted);
+  font-size: var(--text-2xs);
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.commands-page__running { display: inline-flex; align-items: center; gap: 7px; color: var(--faint); }
+.commands-page__running--on { color: var(--ok); }
+.commands-page__running--on::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.command-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  overflow: hidden;
+}
+.command-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 60px;
+  padding: 10px 12px 10px 16px;
+}
+.command-row + .command-row { border-top: 1px solid var(--line); }
+.command-row__dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--faint);
+  opacity: 0.6;
+}
+.command-row--running .command-row__dot { background: var(--ok); opacity: 1; box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 18%, transparent); }
+.command-row--crashed .command-row__dot { background: var(--danger); opacity: 1; }
+.command-row--new .command-row__dot { visibility: hidden; }
+.command-row__body { display: grid; flex: 1; gap: 4px; min-width: 0; }
+/* Each command reads like a terminal line; it edits in place. */
+.command-row__code {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 36px;
+  padding: 0 12px;
+  margin-left: -12px;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  cursor: text;
+  transition: background var(--fast), box-shadow var(--fast);
+}
+.command-row__code:hover { background: var(--state-hover); }
+.command-row__code:focus-within { background: transparent; box-shadow: inset 0 0 0 1px var(--ring); }
+.command-row__prompt { flex: none; color: var(--faint); user-select: none; }
+.command-row--running .command-row__prompt { color: var(--ok); }
+.command-row__input {
+  flex: 1;
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  outline: none;
+}
+.command-row__input::placeholder { color: var(--faint); }
+.command-row__error { color: var(--danger); font-size: var(--text-xs); }
+.command-row__auto {
+  flex: none;
+  height: 26px;
+  padding: 0 10px;
+  border: none;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--faint);
+  font: 500 var(--text-xs) / 1 var(--font-sans);
+  cursor: pointer;
+  transition: background var(--fast), color var(--fast);
+}
+.command-row__auto:hover { background: var(--state-hover); color: var(--fg); }
+.command-row__auto--on { background: color-mix(in srgb, var(--ok) 16%, transparent); color: var(--ok); }
+.command-row__auto--on:hover { background: color-mix(in srgb, var(--ok) 22%, transparent); color: var(--ok); }
+.command-row__actions { display: flex; flex: none; align-items: center; gap: 4px; }
+.command-row__run { width: 30px; height: 30px; border-radius: 50%; background: var(--state-hover); color: var(--fg); }
+.command-row__run:hover { background: var(--state-active); }
+.command-row--running .command-row__run { color: var(--danger); }
+.command-row__remove { width: 30px; height: 30px; opacity: 0; }
+.command-row:hover .command-row__remove,
+.command-row__remove:focus-visible,
+.command-row--new .command-row__remove { opacity: 1; }
+.command-row__remove[data-danger]:hover { color: var(--danger); background: var(--danger-ground); }
+@container workspace (max-width: 700px) {
+  .command-row { flex-wrap: wrap; }
+  .command-row__body { flex-basis: calc(100% - 40px); }
+}
+
+/* ── Shared panel scaffolding (still used by the To-dos panel) ── */
 
 .commands-panel {
   padding: 0 12px;
