@@ -34,7 +34,7 @@ The updater private key must match the public key in the Tauri configuration.
    release notes. Commit the result.
 2. Run `bash scripts/release-build.sh`. It requires committed tracked files and
    no untracked build inputs, installs with the frozen pnpm lockfile, runs the
-   frontend build, all unit/native/browser tests, Clippy, and both dependency
+   frontend build, all unit/native/browser tests, Clippy with warnings denied, and both dependency
    audits, then signs and notarizes the app and DMG. Cargo builds use `--locked`.
 3. Record the printed commit ID with the generated artifacts. Rebuild if source
    files change. You can run `bash scripts/check-release.sh` independently of
@@ -70,3 +70,22 @@ Publish only after these checks pass. Tag the tested commit, push the intended
 branch and tag, and attach the DMG, updater tarball, detached signature, and
 `latest.json` to that version's GitHub release. Do not reuse artifacts from a
 different revision.
+
+## Synthetic chat memory profile
+
+Run `pnpm exec vite --host 127.0.0.1 --port 5176 --strictPort`, then in another
+terminal run `node scripts/profile-chat-memory.mjs`. It uses the browser fixture
+with mocked native calls, appends up to 2,000 turns with distinct 23 KB tool
+outputs, verifies that only 50 turns render, and closes the tab through the real
+UI. It repeats three times and prints JavaScript heap samples after garbage
+collection. No live agents or user history are accessed.
+
+On 2026-10-11, the development fixture used about 29 MiB initially, 42 MiB at
+500 turns, 54 MiB at 1,000 turns, and 78 MiB at 2,000 turns. After the third close
+it returned to about 30 MiB, within 1.6 MiB of the initial sample. The full turn
+payloads did not accumulate after closing tabs in this check. Open conversations
+still retain their entire history in memory; storage-backed paging remains open.
+
+These are Chromium JavaScript heap measurements. They do not measure native
+allocations, WebKit/GPU processes, or live providers, and do not replace the
+packaged long-session checks above.

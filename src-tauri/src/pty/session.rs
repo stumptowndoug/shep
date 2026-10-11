@@ -156,10 +156,7 @@ fn run_output_coalescer(
         data.push_str(&first);
         let mut exit_code = None;
 
-        loop {
-            let Some(remaining) = OUTPUT_COALESCE_WINDOW.checked_sub(started.elapsed()) else {
-                break;
-            };
+        while let Some(remaining) = OUTPUT_COALESCE_WINDOW.checked_sub(started.elapsed()) {
             match receiver.recv_timeout(remaining) {
                 Ok(ReaderOutput::Data(next)) => data.push_str(&next),
                 Ok(ReaderOutput::Exit(code)) => {
@@ -496,19 +493,13 @@ impl PtySession {
         args: Option<Vec<String>>,
         cwd: &str,
         env: HashMap<String, String>,
-        cols: u16,
-        rows: u16,
+        size: PtySize,
         color_theme: PtyColorTheme,
         channel: Channel<PtyOutput>,
     ) -> Result<Self, String> {
         let pty_system = native_pty_system();
         let pair = pty_system
-            .openpty(PtySize {
-                rows,
-                cols,
-                pixel_width: 0,
-                pixel_height: 0,
-            })
+            .openpty(size)
             .map_err(|e| format!("Failed to open PTY: {e}"))?;
 
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());

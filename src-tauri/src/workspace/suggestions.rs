@@ -41,7 +41,7 @@ pub fn suggest_project_folders(limit: usize) -> Result<Vec<FolderSuggestion>, St
     };
     let mut candidates = claude_candidates(&home.join(".claude/projects"));
     candidates.extend(codex_candidates(&home.join(".codex/sessions")));
-    candidates.sort_by(|a, b| b.modified.cmp(&a.modified));
+    candidates.sort_by_key(|candidate| std::cmp::Reverse(candidate.modified));
 
     let registered: HashSet<String> = load_global_config()
         .map(|config| config.repos.into_iter().map(|repo| repo.path).collect())
@@ -80,7 +80,7 @@ pub fn suggest_project_folders(limit: usize) -> Result<Vec<FolderSuggestion>, St
     }
     // Candidates arrive newest first, so a stable sort on session count keeps
     // recency as the tie-breaker; repos used once rank below repeat ones.
-    by_root.sort_by(|a, b| (b.1 > 1).cmp(&(a.1 > 1)));
+    by_root.sort_by_key(|root| std::cmp::Reverse(root.1 > 1));
     Ok(by_root.into_iter().take(limit).map(|(s, _)| s).collect())
 }
 
@@ -141,7 +141,7 @@ fn claude_candidates(projects_dir: &Path) -> Vec<Candidate> {
 fn codex_candidates(sessions_dir: &Path) -> Vec<Candidate> {
     let mut files = Vec::new();
     collect_jsonl(sessions_dir, &mut files, 0);
-    files.sort_by(|a, b| b.0.cmp(&a.0));
+    files.sort_by_key(|file| std::cmp::Reverse(file.0));
     files
         .into_iter()
         .take(MAX_CODEX_FILES)

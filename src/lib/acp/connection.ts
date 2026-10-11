@@ -42,6 +42,7 @@ export class AcpConnection {
     });
     connection = new AcpConnection(id, handlers);
     for (const msg of early) connection.receive(msg);
+    early.length = 0;
     return connection;
   }
 

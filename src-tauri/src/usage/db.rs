@@ -376,13 +376,12 @@ fn column_exists(conn: &Connection, table: &str, column: &str) -> bool {
         Err(_) => return false,
     };
 
-    let rows = match stmt.query_map([], |row| row.get::<_, String>(1)) {
+    let mut rows = match stmt.query_map([], |row| row.get::<_, String>(1)) {
         Ok(rows) => rows,
         Err(_) => return false,
     };
 
-    let exists = rows.filter_map(|row| row.ok()).any(|name| name == column);
-    exists
+    rows.any(|row| row.is_ok_and(|name| name == column))
 }
 
 fn ensure_column(

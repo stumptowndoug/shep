@@ -1,3 +1,4 @@
+use portable_pty::PtySize;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
@@ -67,7 +68,8 @@ impl PtyManager {
         if self.is_shutting_down() {
             return Err("Shep is shutting down".into());
         }
-        let session = PtySession::spawn(command, args, cwd, env, cols, rows, color_theme, channel)?;
+        let size = PtySize { cols, rows, pixel_width: 0, pixel_height: 0 };
+        let session = PtySession::spawn(command, args, cwd, env, size, color_theme, channel)?;
         let id = self.allocate_id();
         sessions.insert(id, session);
         Ok(id)

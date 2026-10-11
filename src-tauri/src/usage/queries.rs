@@ -131,13 +131,21 @@ fn pricing_model_aliases(model: &str) -> Vec<String> {
     aliases
 }
 
+struct CostTokens {
+    input: i64,
+    output: i64,
+    cache_read: i64,
+    cache_write: i64,
+    thoughts: i64,
+}
+
 /// Calculate cost in USD for a set of token counts.
-fn calculate_cost(pricing: &ModelPricing, input: i64, output: i64, cache_read: i64, cache_write: i64, thoughts: i64) -> f64 {
-    (input as f64 * pricing.input_per_m
-        + output as f64 * pricing.output_per_m
-        + cache_read as f64 * pricing.cache_read_per_m
-        + cache_write as f64 * pricing.cache_write_per_m
-        + thoughts as f64 * pricing.thoughts_per_m)
+fn calculate_cost(pricing: &ModelPricing, tokens: &CostTokens) -> f64 {
+    (tokens.input as f64 * pricing.input_per_m
+        + tokens.output as f64 * pricing.output_per_m
+        + tokens.cache_read as f64 * pricing.cache_read_per_m
+        + tokens.cache_write as f64 * pricing.cache_write_per_m
+        + tokens.thoughts as f64 * pricing.thoughts_per_m)
         / 1_000_000.0
 }
 
@@ -157,11 +165,7 @@ fn unknown_cost() -> UsageCost {
 fn resolved_cost_detail(
     pricing_provider: &str,
     model: &str,
-    input: i64,
-    output: i64,
-    cache_read: i64,
-    cache_write: i64,
-    thoughts: i64,
+    tokens: CostTokens,
     recorded_cost: f64,
     has_recorded_cost: bool,
     pricing: &PricingMap,
@@ -176,7 +180,7 @@ fn resolved_cost_detail(
     find_pricing(pricing_provider, model, pricing)
         .map(|p| {
             cost_detail(
-                Some(calculate_cost(p, input, output, cache_read, cache_write, thoughts)),
+                Some(calculate_cost(p, &tokens)),
                 "estimated",
                 "local-pricing",
                 "estimated",
@@ -497,11 +501,7 @@ fn windowed_cost_detail(conn: &Connection, provider: &str, cutoff: i64, pricing:
         costs.add(resolved_cost_detail(
             &pricing_provider,
             &model,
-            input,
-            output,
-            cache_read,
-            cache_write,
-            thoughts,
+            CostTokens { input, output, cache_read, cache_write, thoughts },
             recorded_cost,
             has_recorded_cost != 0,
             pricing,
@@ -740,11 +740,7 @@ fn query_top_models_since(conn: &Connection, provider: &str, since: i64, pricing
         let cost_detail = resolved_cost_detail(
             &pricing_provider,
             &name,
-            input,
-            output,
-            cache_read,
-            cache_write,
-            thoughts,
+            CostTokens { input, output, cache_read, cache_write, thoughts },
             recorded_cost,
             has_recorded_cost != 0,
             pricing,
@@ -796,11 +792,7 @@ fn query_top_tasks_since(conn: &Connection, provider: &str, since: i64, pricing:
         let cost_detail = model.as_deref().map(|name| resolved_cost_detail(
             &pricing_provider,
             name,
-            input,
-            output,
-            cache_read,
-            cache_write,
-            thoughts,
+            CostTokens { input, output, cache_read, cache_write, thoughts },
             recorded_cost,
             has_recorded_cost != 0,
             pricing,
@@ -902,11 +894,7 @@ fn windowed_cost_for_project_detail(conn: &Connection, provider: &str, since: i6
         costs.add(resolved_cost_detail(
             &pricing_provider,
             &model,
-            input,
-            output,
-            cache_read,
-            cache_write,
-            thoughts,
+            CostTokens { input, output, cache_read, cache_write, thoughts },
             recorded_cost,
             has_recorded_cost != 0,
             pricing,
@@ -1120,11 +1108,13 @@ fn windowed_cost_for_provider_detail(
         Ok(resolved_cost_detail(
             &row.get::<_, String>(0)?,
             &row.get::<_, String>(1)?,
-            row.get(2)?,
-            row.get(3)?,
-            row.get(4)?,
-            row.get(5)?,
-            row.get(6)?,
+            CostTokens {
+                input: row.get(2)?,
+                output: row.get(3)?,
+                cache_read: row.get(4)?,
+                cache_write: row.get(5)?,
+                thoughts: row.get(6)?,
+            },
             row.get(7)?,
             row.get::<_, i64>(8)? != 0,
             pricing,
@@ -1160,11 +1150,13 @@ fn query_overview_trend(
             let cost = resolved_cost_detail(
                 &row.get::<_, String>(2)?,
                 &row.get::<_, String>(3)?,
-                row.get(5)?,
-                row.get(6)?,
-                row.get(7)?,
-                row.get(8)?,
-                row.get(9)?,
+                CostTokens {
+                    input: row.get(5)?,
+                    output: row.get(6)?,
+                    cache_read: row.get(7)?,
+                    cache_write: row.get(8)?,
+                    thoughts: row.get(9)?,
+                },
                 row.get(10)?,
                 row.get::<_, i64>(11)? != 0,
                 pricing,
