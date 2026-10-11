@@ -8,6 +8,7 @@ import { useEditorStore } from "../../stores/useEditorStore";
 import { useThemeStore } from "../../stores/useThemeStore";
 import { useKeybindingStore } from "../../stores/useKeybindingStore";
 import { useProjectSettingsStore } from "../../stores/useProjectSettingsStore";
+import { useChatModelStore } from "../../stores/useChatModelStore";
 import { useTerminalStore } from "../../stores/useTerminalStore";
 import { useTodoStore } from "../../stores/useTodoStore";
 import { useTerminalSettingsStore } from "../../stores/useTerminalSettingsStore";
@@ -16,6 +17,7 @@ import { UsageLimitSettings } from "./UsageLimitSettings";
 import OptionGroup from "../shared/OptionGroup";
 import { useUpdateStore } from "../../stores/useUpdateStore";
 import { assistantLogoSrc, getAssistantLogoClass } from "../../lib/assistantLogos";
+import { CODING_ASSISTANTS } from "../sidebar/constants";
 import {
   FONT_SIZE_OPTIONS,
   TERMINAL_FONT_FAMILY,
@@ -82,6 +84,8 @@ export default function SettingsPanel() {
   const projectError = useProjectSettingsStore((s) => s.error);
   const loadProjectSettings = useProjectSettingsStore((s) => s.loadSettings);
   const updateProjectSettings = useProjectSettingsStore((s) => s.updateSettings);
+  const chatModels = useChatModelStore((s) => s.models);
+  const useAgentDefault = useChatModelStore((s) => s.useAgentDefault);
 
   const termSettings = useTerminalSettingsStore((s) => s.settings);
   const termHasLoaded = useTerminalSettingsStore((s) => s.hasLoaded);
@@ -239,7 +243,6 @@ export default function SettingsPanel() {
   return (
     <div className="page settings-page">
       <header className="page__heading">
-        <div className="page__eyebrow">Shep</div>
         <h1 className="page__title">Settings.</h1>
         <p className="page__lede">Appearance, session defaults, and tools.</p>
       </header>
@@ -455,6 +458,25 @@ export default function SettingsPanel() {
 
         {projectIsSaving && <div className="mt-2 text-xs text-[var(--text-muted)]">Saving project settings...</div>}
         {projectError && <div className="mt-2 text-sm text-red-300">{projectError}</div>}
+      </section>
+
+      <section className="settings-section" hidden={section !== "Workspace"}>
+        <h2 className="page__label settings-section__header">Chat models</h2>
+        <p className="field-note settings-chat-models__note">New chats remember your last model for each agent across projects. Resumed chats keep their own model.</p>
+        {CODING_ASSISTANTS.filter((assistant) => assistant.acp).map((assistant) => {
+          const model = chatModels[assistant.id];
+          return <div key={assistant.id} className="settings-chat-model" role="group" aria-label={`${assistant.name} chat model`}>
+            <span className="settings-chat-model__agent">
+              <img src={assistantLogoSrc[assistant.id]} alt="" width={16} height={16} className={getAssistantLogoClass(assistant.id)} />
+              {assistant.name}
+            </span>
+            <span className="settings-chat-model__value" title={model?.id}>{model?.name ?? "Agent default"}</span>
+            {model && <button type="button" className="btn-secondary" onClick={() => useAgentDefault(assistant.id)}
+              title={`Use ${assistant.name}’s default model for new chats`}>
+              Use agent default
+            </button>}
+          </div>;
+        })}
       </section>
 
       {/* ── To-dos ─────────────────────────────────────────── */}

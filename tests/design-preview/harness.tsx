@@ -11,10 +11,19 @@ import { useThemeStore } from '../../src/stores/useThemeStore';
 import { useChatStore } from '../../src/stores/useChatStore';
 import { useUIStore } from '../../src/stores/useUIStore';
 import { emptyChat } from '../../src/lib/acp/chatModel';
+import { startChat } from '../../src/lib/acp/chatSessions';
+import { CODING_ASSISTANTS } from '../../src/components/sidebar/constants';
+import { mockChatCommand } from './chatPreview';
+import { antigravityMock, mockAntigravityCommand, finishAntigravityAuth } from '../antigravity-chat/mockAntigravity';
 import type { PortInfo, RepoInfo, SessionHistoryEntry } from '../../src/lib/types';
 import '../../src/styles/globals.css';
 
+// Keep the fixture mounted while testing the real app's live-session hot reload.
+if (import.meta.hot) import.meta.hot.accept('../../src/lib/acp/chatSessions', () => {});
+
 const params = new URLSearchParams(location.search);
+antigravityMock.installed = !['missing', 'error'].includes(params.get('adapter') ?? '');
+antigravityMock.installError = params.get('adapter') === 'error';
 let previewPorts: PortInfo[] = params.get('ports') === 'empty' ? [] : [
   {port:5173,pid:1234,process:'node',framework:'Vite',project:'shep',cwd:'/preview/shep',memory_kb:148480,uptime:'02:14:32'},
   {port:8787,pid:1235,process:'node',framework:'Express',project:'shep',cwd:'/preview/shep/api',memory_kb:58368,uptime:'02:12:08'},
@@ -64,6 +73,13 @@ mockIPC((cmd, payload) => {
     return null;
   }
   const args = payload as Record<string, unknown> | undefined;
+  if (cmd === 'get_managed_acp_adapter' || cmd === 'install_managed_acp_adapter') return mockAntigravityCommand(cmd, args ?? {});
+  if (cmd === 'open_url' && params.get('chat') === 'antigravity') {
+    document.body.dataset.previewGoogleSignIn = 'opened';
+    for (const call of antigravityMock.calls.filter(call => call.method === 'authenticate')) finishAntigravityAuth(call.chatId);
+    return null;
+  }
+  if (['spawn_acp_agent','write_acp_agent','kill_acp_agent'].includes(cmd)) return mockChatCommand(cmd, args ?? {}, params.get('chat'));
   // Give project switching distinct totals, including a clean repository.
   const repoChanges = args?.path === '/preview/springroll-website' ? []
     : args?.path === '/preview/springroll' ? changedFiles.slice(0, 2) : changedFiles;
@@ -151,6 +167,7 @@ if (previewWidth >= 800 && previewHeight >= 600) {
   root.style.height = `${previewHeight}px`;
 }
 if (params.get('view') === 'chat') useTerminalStore.getState().setActiveTab('preview-900');
+if (params.has('chat')) await startChat({assistant:CODING_ASSISTANTS.find(assistant => assistant.id === (params.get('chat') === 'antigravity' ? 'antigravity' : params.get('chat') === 'cursor' ? 'cursor' : params.get('chat')?.startsWith('pi') ? 'pi' : 'claude'))!,repoPath:repos[0].path,mode:params.get('access') === 'ask' ? 'standard' : 'yolo'});
 if (params.get('view') === 'ports') useUIStore.getState().togglePortsPanel();
 if (params.get('view') === 'history') useUIStore.getState().toggleHistoryPanel();
 const theme = new URLSearchParams(location.search).get('theme');

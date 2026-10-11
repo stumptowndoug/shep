@@ -1,25 +1,35 @@
 import { AcpConnection, AcpError } from "./connection";
 import {
   addNotice,
+  addCursorRequest,
   addPermission,
   applySessionUpdate,
   endTurn,
   optionsFromSession,
+  pendingRequest,
+  removeStartupMessage,
   resolvePermission,
+  resolveCursorRequest,
   setOptionValue,
   startTurn,
   type AcpSessionInfo,
   type PermissionOption,
 } from "./chatModel";
 import { useChatStore } from "../../stores/useChatStore";
+import { useChatModelStore } from "../../stores/useChatModelStore";
+import { chatDraftKey, useChatDraftStore } from "../../stores/useChatDraftStore";
 import { useTerminalStore, nextTabId } from "../../stores/useTerminalStore";
-import { recordSessionHistoryActivity, upsertSessionHistory } from "../tauri";
+import { killAcpAgent, recordSessionHistoryActivity, upsertSessionHistory } from "../tauri";
 import { notifyAgent } from "../notifications";
 import type { AgentSemanticState, CodingAssistant, SessionMode } from "../types";
+import { isAccessOption, isFullAccessMode, isModelOption } from "./chatOptions";
+import { applyCursorNotification, parseCursorRequest, validCursorOutcome, type CursorOutcome } from "./cursorProtocol";
+import { chatAdapterCommand } from "./adapters";
+import { antigravitySignInUrl } from "./antigravityProtocol";
 
-/** Mode ids adapters use for "run without asking" (Claude, Codex, others). */
-const FULL_ACCESS_MODES = ["bypassPermissions", "full-access", "agent-full-access", "yolo", "full"];
 const TITLE_MAX_CHARS = 60;
+const STARTUP_TIMEOUT_MS = 60_000;
+const SIGN_IN_TIMEOUT_MS = 5 * 60_000;
 
 interface LiveChat {
   connection: AcpConnection;
@@ -32,9 +42,14 @@ interface LiveChat {
   titled: boolean;
   history: Promise<void>;
   permissions: Map<string, (optionId: string | null) => void>;
+  interactions?: Map<string, (outcome: CursorOutcome) => void>;
+  cancelling?: boolean;
+  startupMessage: string | null;
 }
 
-const live = new Map<number, LiveChat>();
+// React refresh keeps chat tabs mounted; retain their live connections too.
+const live: Map<number, LiveChat> = import.meta.hot?.data.liveChats ?? new Map();
+if (import.meta.hot) import.meta.hot.dispose((data) => { data.liveChats = live; });
 
 export interface StartChatOptions {
   assistant: CodingAssistant;
@@ -53,16 +68,38 @@ export async function startChat(options: StartChatOptions): Promise<number> {
   const adapter = assistant.acp;
   if (!adapter) throw new Error(`${assistant.name} has no chat adapter`);
 
+  const runtime = await chatAdapterCommand(adapter);
   let chatId = -1;
-  const connection = await AcpConnection.spawn(adapter.command, adapter.args, repoPath, {
+  const connection = await AcpConnection.spawn(runtime.command, runtime.args, repoPath, {
     onRequest: (method, params) => handleRequest(chatId, method, params),
     onNotification: (method, params) => {
       if (method === "session/update") {
         const update = (params as { update?: Parameters<typeof applySessionUpdate>[1] }).update;
-        if (update) useChatStore.getState().update(chatId, (chat) => applySessionUpdate(chat, update));
+        if (update) {
+          const session = live.get(chatId);
+          if (session?.startupMessage && update.sessionUpdate === "agent_message_chunk" &&
+            update.content?.type === "text" && update.content.text === session.startupMessage) {
+            session.startupMessage = null;
+            return;
+          }
+          const previous = useChatStore.getState().chats[chatId]?.options.find(isAccessOption)?.value;
+          useChatStore.getState().update(chatId, (chat) => applySessionUpdate(chat, update));
+          const access = useChatStore.getState().chats[chatId]?.options.find(isAccessOption);
+          if (access && previous !== access.value) syncAccessPolicy(chatId, access.value);
+        }
+      } else if (assistant.id === "cursor" && method.startsWith("cursor/")) {
+        if (!live.get(chatId)?.cancelling) useChatStore.getState().update(chatId, chat => applyCursorNotification(chat, method, params));
       }
     },
     onExit: (code, stderr) => handleExit(chatId, code, stderr),
+    onStderr: (line) => {
+      if (assistant.id !== "antigravity" || !live.has(chatId)) return;
+      const url = antigravitySignInUrl(line);
+      if (!url) return;
+      useChatStore.getState().update(chatId, chat => chat.status === "starting" && chat.startup
+        ? { ...chat, startup: { message: "Sign in with Google to connect Antigravity.", authUrl: url } }
+        : chat);
+    },
   });
   chatId = connection.id;
 
@@ -77,8 +114,13 @@ export async function startChat(options: StartChatOptions): Promise<number> {
     titled: Boolean(resume?.title),
     history: Promise.resolve(),
     permissions: new Map(),
+    interactions: new Map(),
+    startupMessage: null,
   });
   useChatStore.getState().init(chatId);
+  const draftKey = chatDraftKey(assistant.id, repoPath, resume?.sessionId ?? `pending:${crypto.randomUUID()}`);
+  useChatDraftStore.getState().load(draftKey);
+  useChatStore.getState().update(chatId, (chat) => ({ ...chat, draftKey }));
   const terminals = useTerminalStore.getState();
   terminals.initActivity(chatId);
   terminals.addTab({
@@ -95,55 +137,131 @@ export async function startChat(options: StartChatOptions): Promise<number> {
     agentInterface: "chat",
   });
 
-  void openSession(chatId, options).catch((error: unknown) => {
-    failChat(chatId, describeStartError(assistant, error));
-  });
+  let startupTimer: number;
+  const resetStartupTimer = (signingIn = false) => {
+    window.clearTimeout(startupTimer);
+    startupTimer = window.setTimeout(() => {
+      if (!live.has(chatId)) return;
+      failChat(chatId, signingIn
+        ? "Google sign-in timed out. Close this tab and start a new Antigravity chat to try again."
+        : `${assistant.name} didn’t finish starting within 60 seconds. Check your connection and agent sign-in, then close this tab and start a new chat.`);
+    }, signingIn ? SIGN_IN_TIMEOUT_MS : STARTUP_TIMEOUT_MS);
+  };
+  resetStartupTimer();
+  void openSession(chatId, options, resetStartupTimer)
+    .catch((error: unknown) => {
+      // A timeout or tab close already supplied the final state. The pending
+      // request rejects when we kill the adapter; keep the original error.
+      if (live.has(chatId)) failChat(chatId, describeStartError(assistant, error));
+    })
+    .finally(() => window.clearTimeout(startupTimer));
   return chatId;
 }
 
-export function sendPrompt(chatId: number, text: string) {
+export function cancelChatStartup(chatId: number) {
+  if (useChatStore.getState().chats[chatId]?.status === "starting") {
+    failChat(chatId, "Sign-in cancelled. Start a new chat when you’re ready to connect.");
+  }
+}
+
+export function sendPrompt(chatId: number, text: string): boolean {
   const prompt = text.trim();
   const chat = useChatStore.getState().chats[chatId];
-  if (!prompt || !chat || chat.status === "exited") return;
+  if (!prompt || !chat || chat.status === "exited" || !live.has(chatId)) return false;
   if (chat.status !== "ready") {
     useChatStore.getState().update(chatId, (state) => ({ ...state, queued: [...state.queued, prompt] }));
-    return;
+    return true;
   }
   void runTurn(chatId, prompt);
+  return true;
 }
 
 export function cancelTurn(chatId: number) {
   const session = live.get(chatId);
   if (!session?.sessionId) return;
-  for (const resolve of session.permissions.values()) resolve(null);
+  cancelPendingRequests(session);
   useChatStore.getState().update(chatId, (state) => ({ ...state, queued: [] }));
   session.connection.notify("session/cancel", { sessionId: session.sessionId });
 }
 
 export function answerPermission(chatId: number, itemId: string, optionId: string) {
-  live.get(chatId)?.permissions.get(itemId)?.(optionId);
+  const item = useChatStore.getState().chats[chatId]?.turns.flatMap(turn => turn.items).find(item => item.id === itemId);
+  if (item?.kind === "permission" && item.options.some(option => option.optionId === optionId)) {
+    live.get(chatId)?.permissions.get(itemId)?.(optionId);
+  }
+}
+
+export function answerCursorRequest(chatId: number, itemId: string, outcome: CursorOutcome) {
+  const session = live.get(chatId);
+  const item = useChatStore.getState().chats[chatId]?.turns.flatMap(turn => turn.items).find(item => item.id === itemId);
+  if (item?.kind !== "cursor_request" || item.outcome !== null || !validCursorOutcome(item.request, outcome)) return false;
+  const resolve = session?.interactions?.get(itemId);
+  if (!resolve) return false;
+  session!.interactions!.delete(itemId);
+  resolve(outcome);
+  return true;
+}
+
+function cancelPendingRequests(session: LiveChat) {
+  session.cancelling = true;
+  for (const resolve of session.permissions.values()) resolve(null);
+  for (const resolve of session.interactions?.values() ?? []) resolve({ outcome: "cancelled" });
 }
 
 export async function setChatOption(chatId: number, optionId: string, value: string) {
+  return changeChatOption(chatId, optionId, value, true);
+}
+
+async function changeChatOption(chatId: number, optionId: string, value: string, rememberModel: boolean) {
   const session = live.get(chatId);
   const option = useChatStore.getState().chats[chatId]?.options.find((entry) => entry.id === optionId);
-  if (!session?.sessionId || !option) return;
+  if (!session?.sessionId || !option || !option.choices.some((choice) => choice.value === value)) return;
   const { sessionId, connection } = session;
   const previous = option.value;
+  const previousMode = session.mode;
+  const access = isAccessOption(option);
+  // Stop automatic approval immediately when asking for a more restrictive mode.
+  if (access && !isFullAccessMode(value)) session.mode = "standard";
   useChatStore.getState().update(chatId, (state) => setOptionValue(state, optionId, value));
   try {
+    let result: AcpSessionInfo | undefined;
     if (option.source === "mode") {
       await connection.request("session/set_mode", { sessionId, modeId: value });
     } else if (option.source === "model") {
       await connection.request("session/set_model", { sessionId, modelId: value });
     } else {
-      await connection.request("session/set_config_option", { sessionId, configId: optionId, value });
+      result = await connection.request<AcpSessionInfo>("session/set_config_option", { sessionId, configId: optionId, value });
+    }
+    if (live.get(chatId) !== session) return;
+    // Providers may clamp a choice (e.g. Fast mode unavailable) or change related settings.
+    if (result?.configOptions) useChatStore.getState().update(chatId, (state) => ({ ...state, options: optionsFromSession(result!) }));
+    if (access) syncAccessPolicy(chatId, useChatStore.getState().chats[chatId]?.options.find((entry) => entry.id === optionId)?.value ?? value);
+    if (isModelOption(option)) {
+      const current = useChatStore.getState().chats[chatId]?.options.find(isModelOption);
+      session.model = current?.value ?? null;
+      const accepted = current?.choices.find((choice) => choice.value === current.value);
+      if (rememberModel && accepted?.value === value) {
+        useChatModelStore.getState().remember(session.assistant.id, { id: accepted.value, name: accepted.name });
+      }
     }
   } catch (error) {
+    if (live.get(chatId) !== session) return;
+    if (access) {
+      session.mode = previousMode;
+      useTerminalStore.getState().setTabSessionMode(chatId, previousMode);
+    }
     useChatStore.getState().update(chatId, (state) =>
       addNotice(setOptionValue(state, optionId, previous), `Couldn’t change ${option.name}: ${errorText(error)}`),
     );
   }
+}
+
+function syncAccessPolicy(chatId: number, value: string) {
+  const session = live.get(chatId);
+  if (!session) return;
+  const mode = isFullAccessMode(value) ? "yolo" : "standard";
+  session.mode = mode;
+  useTerminalStore.getState().setTabSessionMode(chatId, mode);
 }
 
 /** Stop the agent process and drop the conversation state. */
@@ -153,11 +271,15 @@ export async function closeChat(chatId: number) {
   useChatStore.getState().remove(chatId);
   useTerminalStore.getState().removeActivity(chatId);
   if (session) {
-    for (const resolve of session.permissions.values()) resolve(null);
+    cancelPendingRequests(session);
     await session.connection.kill().catch(() => {});
     if (session.sessionId) {
       await recordHistoryActivity(session, true);
     }
+  } else {
+    // The native registry still owns this id if frontend state was lost during
+    // a reload. Closing its tab must stop that process even without a connection.
+    await killAcpAgent(chatId).catch(() => {});
   }
 }
 
@@ -168,7 +290,7 @@ interface InitializeResult {
   authMethods?: { id: string; name: string; description?: string }[];
 }
 
-async function openSession(chatId: number, options: StartChatOptions) {
+async function openSession(chatId: number, options: StartChatOptions, resetStartupTimer: (signingIn?: boolean) => void) {
   const session = live.get(chatId);
   if (!session) return;
   const { connection, repoPath } = session;
@@ -176,9 +298,27 @@ async function openSession(chatId: number, options: StartChatOptions) {
   const init = await connection.request<InitializeResult>("initialize", {
     protocolVersion: 1,
     // Agents read, write and run commands themselves, exactly as their CLI does.
-    clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false },
+    clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false, session: { notices: {} } },
     clientInfo: { name: "shep", version: "1" },
   });
+
+  const authMethodId = session.assistant.acp?.authMethodId;
+  if (authMethodId) {
+    if (!init.authMethods?.some(method => method.id === authMethodId)) {
+      throw new Error(`Update ${session.assistant.name} CLI to a version that supports chat authentication.`);
+    }
+    const browserSignIn = session.assistant.id === "antigravity";
+    if (browserSignIn) {
+      useChatStore.getState().update(chatId, chat => ({ ...chat, startup: { message: "Connecting your Google account…" } }));
+      resetStartupTimer(true);
+    }
+    await connection.request("authenticate", { methodId: authMethodId });
+    if (!live.has(chatId)) return;
+    if (browserSignIn) {
+      useChatStore.getState().update(chatId, chat => ({ ...chat, startup: undefined }));
+      resetStartupTimer();
+    }
+  }
 
   let info: AcpSessionInfo & { sessionId?: string };
   if (options.resume && init.agentCapabilities?.loadSession) {
@@ -200,10 +340,40 @@ async function openSession(chatId: number, options: StartChatOptions) {
   }
   if (!live.has(chatId)) return;
 
-  useChatStore.getState().update(chatId, (chat) => ({ ...chat, options: optionsFromSession(info) }));
-  if (session.mode === "yolo") await enableFullAccess(chatId);
-  if (options.model) await setChatOption(chatId, "model", options.model);
+  if (session.sessionId) {
+    const draftKey = chatDraftKey(session.assistant.id, repoPath, session.sessionId);
+    const previous = useChatStore.getState().chats[chatId]?.draftKey;
+    if (previous) useChatDraftStore.getState().moveDraft(previous, draftKey);
+    else useChatDraftStore.getState().load(draftKey);
+    useChatStore.getState().update(chatId, (chat) => ({ ...chat, draftKey }));
+  }
+
+  const startupMessage = options.assistant.id === "pi" && !options.resume ? info._meta?.piAcp?.startupInfo : null;
+  if (typeof startupMessage === "string" && startupMessage) {
+    session.startupMessage = startupMessage;
+    useChatStore.getState().update(chatId, (chat) => {
+      const updated = removeStartupMessage(chat, startupMessage);
+      if (updated !== chat) session.startupMessage = null;
+      return updated;
+    });
+  }
+
+  const sessionOptions = optionsFromSession(info);
+  useChatStore.getState().update(chatId, (chat) => ({ ...chat, options: sessionOptions }));
+  const access = sessionOptions.find(isAccessOption);
+  if (access) syncAccessPolicy(chatId, access.value);
+  if (options.mode === "yolo") await enableFullAccess(chatId);
+  // Resumed conversations retain the model returned by session/load. Replaying
+  // a preference must not replace a newer choice made in another open chat.
+  if (!options.resume) {
+    const model = useChatStore.getState().chats[chatId]?.options.find(isModelOption);
+    const preferred = options.model ?? useChatModelStore.getState().models[options.assistant.id]?.id;
+    if (model && preferred && preferred !== model.value && model.choices.some((choice) => choice.value === preferred)) {
+      await changeChatOption(chatId, model.id, preferred, false);
+    }
+  }
   if (!live.has(chatId)) return;
+  session.model = useChatStore.getState().chats[chatId]?.options.find(isModelOption)?.value ?? null;
 
   if (session.sessionId) {
     useTerminalStore.getState().setTabSessionInfo(chatId, session.sessionId, options.resume?.title ?? null);
@@ -213,14 +383,15 @@ async function openSession(chatId: number, options: StartChatOptions) {
 }
 
 async function enableFullAccess(chatId: number) {
-  const mode = useChatStore.getState().chats[chatId]?.options.find((option) => option.id === "mode");
-  const full = mode?.choices.find((choice) => FULL_ACCESS_MODES.includes(choice.value));
+  const mode = useChatStore.getState().chats[chatId]?.options.find(isAccessOption);
+  const full = mode?.choices.find((choice) => isFullAccessMode(choice.value));
   if (mode && full && mode.value !== full.value) await setChatOption(chatId, mode.id, full.value);
 }
 
 async function runTurn(chatId: number, prompt: string) {
   const session = live.get(chatId);
   if (!session?.sessionId) return;
+  session.cancelling = false;
   const store = useChatStore.getState();
   store.update(chatId, (chat) => ({ ...startTurn(chat, prompt), status: "working" }));
   setAgentState(chatId, "working", "Agent is responding");
@@ -232,6 +403,7 @@ async function runTurn(chatId: number, prompt: string) {
   }
 
   let stopReason = "end_turn";
+  let turnError: string | undefined;
   try {
     const result = await session.connection.request<{ stopReason?: string }>("session/prompt", {
       sessionId: session.sessionId,
@@ -241,11 +413,12 @@ async function runTurn(chatId: number, prompt: string) {
   } catch (error) {
     if (!live.has(chatId)) return;
     stopReason = "error";
-    store.update(chatId, (chat) => addNotice(chat, errorText(error)));
+    turnError = errorText(error);
   }
   if (!live.has(chatId)) return;
 
-  store.update(chatId, (chat) => endTurn(chat, stopReason));
+  cancelPendingRequests(session);
+  store.update(chatId, (chat) => endTurn(chat, stopReason, turnError));
   void recordHistoryActivity(session, false);
   if (!isChatVisible(chatId) && stopReason !== "cancelled") {
     void notifyAgent(chatId, `${session.assistant.name} finished`);
@@ -264,15 +437,38 @@ function setReady(chatId: number) {
 }
 
 async function handleRequest(chatId: number, method: string, params: unknown) {
+  const session = live.get(chatId);
+  if (!session || session.cancelling) return { outcome: { outcome: "cancelled" } };
+  // Cursor also sends its fire-and-forget extensions as JSON-RPC requests in
+  // some CLI versions. Acknowledge them without asking the user or doing work.
+  if (session.assistant.id === "cursor" && ["cursor/update_todos", "cursor/task", "cursor/generate_image"].includes(method)) {
+    useChatStore.getState().update(chatId, chat => applyCursorNotification(chat, method, params));
+    return {};
+  }
+  if (session.assistant.id === "cursor" && (method === "cursor/ask_question" || method === "cursor/create_plan")) {
+    let request;
+    try { request = parseCursorRequest(method, params); }
+    catch (error) { throw new AcpError(`Invalid Cursor request: ${errorText(error)}`, -32602); }
+    if (!request) throw new AcpError(`${method} is not supported by Shep`, -32601);
+    const itemId = `cursor-${crypto.randomUUID()}`;
+    useChatStore.getState().update(chatId, chat => addCursorRequest(chat, itemId, request));
+    setAgentState(chatId, "blocked", request.kind === "plan" ? "Waiting for plan approval" : "Waiting for your answer");
+    if (!isChatVisible(chatId)) void notifyAgent(chatId, request.kind === "plan" ? "Cursor needs plan approval" : "Cursor needs your input");
+    // Questions and plan approval always need a human decision, including in Full access.
+    session.interactions ??= new Map();
+    const outcome = await new Promise<CursorOutcome>(resolve => session.interactions!.set(itemId, resolve));
+    session.interactions.delete(itemId);
+    useChatStore.getState().update(chatId, chat => resolveCursorRequest(chat, itemId, outcome));
+    refreshWaitingState(chatId);
+    return { outcome };
+  }
   if (method !== "session/request_permission") {
     throw new AcpError(`${method} is not supported by Shep`, -32601);
   }
-  const session = live.get(chatId);
   const { toolCall, options } = params as {
     toolCall?: { title?: string };
     options: PermissionOption[];
   };
-  if (!session) return { outcome: { outcome: "cancelled" } };
 
   if (session.mode === "yolo") {
     // allow_once, not allow_always: "always" makes some adapters write
@@ -291,18 +487,27 @@ async function handleRequest(chatId: number, method: string, params: unknown) {
   const optionId = await new Promise<string | null>((resolve) => session.permissions.set(itemId, resolve));
   session.permissions.delete(itemId);
   useChatStore.getState().update(chatId, (chat) => resolvePermission(chat, itemId, optionId));
-  if (live.has(chatId)) setAgentState(chatId, "working", "Agent is responding");
+  refreshWaitingState(chatId);
   return optionId
     ? { outcome: { outcome: "selected", optionId } }
     : { outcome: { outcome: "cancelled" } };
+}
+
+function refreshWaitingState(chatId: number) {
+  const chat = useChatStore.getState().chats[chatId];
+  if (!live.has(chatId) || chat?.status !== "working") return;
+  if (pendingRequest(chat)) setAgentState(chatId, "blocked", "Waiting for your input");
+  else setAgentState(chatId, "working", "Agent is responding");
 }
 
 function handleExit(chatId: number, code: number, stderr: string) {
   const session = live.get(chatId);
   if (!session) return;
   live.delete(chatId);
-  for (const resolve of session.permissions.values()) resolve(null);
-  const detail = stderr.trim().split("\n").slice(-3).join("\n");
+  cancelPendingRequests(session);
+  const detail = stderr.trim().split("\n")
+    .filter(line => !line.includes("Open the following link to authenticate the ACP server:"))
+    .slice(-3).join("\n");
   failChat(chatId, code === 0 ? null : `${session.assistant.name} exited (code ${code}).${detail ? `\n${detail}` : ""}`);
   useTerminalStore.getState().setTabExited(chatId, code);
 }
@@ -312,10 +517,12 @@ function failChat(chatId: number, error: string | null) {
     ...endTurn(chat, "error"),
     status: "exited",
     queued: [],
+    startup: undefined,
     error: error ?? chat.error,
   }));
   const session = live.get(chatId);
   if (session) {
+    cancelPendingRequests(session);
     live.delete(chatId);
     void session.connection.kill().catch(() => {});
     useTerminalStore.getState().setTabExited(chatId, 1);
@@ -348,6 +555,7 @@ function persistHistory(session: LiveChat, title: string | null) {
   if (!session.sessionId) return Promise.resolve();
   const record = {
     provider: session.assistant.id,
+    agentInterface: "chat" as const,
     sessionId: session.sessionId,
     projectPath: session.repoPath,
     title,
@@ -386,6 +594,8 @@ function errorText(error: unknown): string {
 
 function describeStartError(assistant: CodingAssistant, error: unknown): string {
   if (error instanceof AcpError && (error.code === -32000 || /auth/i.test(error.message))) {
+    if (assistant.id === "antigravity") return "Antigravity couldn’t complete Google sign-in. Close this tab and start a new chat to sign in again.";
+    if (assistant.id === "cursor") return "Cursor isn’t signed in. Run `cursor-agent login` in a terminal, then open a new chat.";
     return `${assistant.name} isn’t signed in. Start it once in a terminal tab and log in, then try chat again.`;
   }
   return `Couldn’t start ${assistant.name}: ${errorText(error)}`;

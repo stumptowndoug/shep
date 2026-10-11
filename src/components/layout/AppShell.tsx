@@ -24,6 +24,8 @@ import { computeTerminalSize } from "../../lib/terminalMeasure";
 import { listen } from "@tauri-apps/api/event";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { checkCommandExists, getUsername, getComputerName, openInEditor, saveWorkspace, shutdownAndQuit, refreshUsageData } from "../../lib/tauri";
+import { chatAdapterAvailable } from "../../lib/acp/adapters";
+import { sessionResumeInterface } from "../../lib/sessionResume";
 import { useEditorStore } from "../../stores/useEditorStore";
 import { useTerminalSettingsStore } from "../../stores/useTerminalSettingsStore";
 import { useUsageStore } from "../../stores/useUsageStore";
@@ -503,10 +505,20 @@ export default function AppShell() {
         return true;
       }
 
-      const adapter = CODING_ASSISTANTS.find((entry) => entry.id === session.provider)?.acp;
-      const preferChat = useProjectSettingsStore.getState().settings.defaultAgentInterface === "chat";
+      const assistant = CODING_ASSISTANTS.find((entry) => entry.id === session.provider);
+      const adapter = assistant?.acp;
+      const preferred = useProjectSettingsStore.getState().settings.defaultAgentInterface;
       let sessionId: number | null | undefined;
-      if (adapter && preferChat && await checkCommandExists(adapter.command).catch(() => false)) {
+      const [terminal, chat] = await Promise.all([
+        assistant ? checkCommandExists(assistant.command).catch(() => false) : Promise.resolve(false),
+        adapter ? chatAdapterAvailable(adapter) : Promise.resolve(false),
+      ]);
+      const target = sessionResumeInterface(session, preferred, { terminal, chat });
+      if (!target) {
+        pushNotice({ tone: "error", title: "Agent setup needed", message: `Set up ${assistant?.name ?? session.provider}${session.agentInterface === "chat" ? " chat" : ""} in New agent before resuming.` });
+        return false;
+      }
+      if (target === "chat") {
         sessionId = await launchChat({
           assistantId: session.provider,
           repoPath: session.projectPath,

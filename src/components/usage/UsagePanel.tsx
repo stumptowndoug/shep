@@ -768,7 +768,6 @@ export default function UsagePanel() {
   return (
     <div className="page">
       <header className="page__heading">
-        <div className="page__eyebrow">Coding agents</div>
         <h1 className="page__title">Usage.</h1>
       </header>
       <div className="usage-window-tabs-row">

@@ -4,6 +4,7 @@ import { Check, ChevronDown } from "lucide-react";
 export interface SelectChoice {
   value: string;
   label: string;
+  description?: string;
 }
 
 interface SelectProps {
@@ -18,6 +19,9 @@ interface SelectProps {
   placement?: "above" | "below";
   disabled?: boolean;
   title?: string;
+  /** Visible setting name for otherwise ambiguous values such as On or High. */
+  label?: string;
+  ariaLabel?: string;
   className?: string;
   /** Rendered in the list when there are no choices (e.g. "Loading…"). */
   emptyLabel?: string;
@@ -34,6 +38,8 @@ export default function Select({
   placement = "below",
   disabled = false,
   title,
+  label,
+  ariaLabel,
   className,
   emptyLabel = "Nothing to choose",
 }: SelectProps) {
@@ -108,10 +114,12 @@ export default function Select({
         onClick={toggle}
         disabled={disabled}
         title={title}
+        aria-label={ariaLabel}
         aria-haspopup="listbox"
         aria-expanded={open}
       >
         {icon}
+        {label && <span className="select__label">{label}:</span>}
         <span className="select__value">{selected?.label ?? placeholder}</span>
         <ChevronDown size={13} className="select__chevron" />
       </button>
@@ -142,7 +150,10 @@ export default function Select({
                 onClick={() => choose(choice)}
               >
                 <Check size={13} className={choice.value === value ? "" : "invisible"} />
-                <span className="popover__item-label">{choice.label}</span>
+                <span className="popover__item-label">
+                  {choice.label}
+                  {choice.description && <span className="select__description">{choice.description}</span>}
+                </span>
               </button>
             ))}
             {filtered.length === 0 && <div className="popover__empty">{query ? "No matches" : emptyLabel}</div>}

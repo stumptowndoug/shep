@@ -1,4 +1,5 @@
 mod acp;
+mod acp_runtime;
 mod agent_status;
 mod commands;
 mod fonts;
@@ -115,6 +116,8 @@ pub fn run() {
             commands::resize_pty,
             commands::kill_pty,
             commands::spawn_acp_agent,
+            commands::get_managed_acp_adapter,
+            commands::install_managed_acp_adapter,
             commands::write_acp_agent,
             commands::kill_acp_agent,
             commands::resolve_session_title,

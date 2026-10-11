@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { AgentStatusObservation, TerminalTabData, TabActivity, UnifiedTab, PanelTabKind, PanelTabData } from "../lib/types";
+import type { AgentStatusObservation, TerminalTabData, TabActivity, UnifiedTab, PanelTabKind, PanelTabData, SessionMode } from "../lib/types";
 import { isSessionTab, panelTabId, panelTabDefaults } from "../lib/types";
 import { nextAgentDoneState } from "../lib/agentActivity";
 import { useUIStore } from "./useUIStore";
@@ -19,6 +19,7 @@ interface TerminalStore {
   removeTab: (id: string) => void;
   setActiveTab: (id: string) => void;
   updateTab: (id: string, patch: Partial<Pick<UnifiedTab, "label">>) => void;
+  setTabSessionMode: (ptyId: number, mode: SessionMode) => void;
   setTabTitleFromPty: (ptyId: number, title: string) => void;
   setTabSessionInfo: (ptyId: number, sessionId: string, title: string | null) => void;
   reorderTab: (tabId: string, toIndex: number) => void;
@@ -224,6 +225,13 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
       };
     });
   },
+
+  setTabSessionMode: (ptyId, sessionMode) => set((state) => ({
+    projectState: Object.fromEntries(Object.entries(state.projectState).map(([path, project]) => [
+      path, { ...project, tabs: project.tabs.map((tab) =>
+        isSessionTab(tab) && tab.ptyId === ptyId ? { ...tab, sessionMode } : tab) },
+    ])),
+  })),
 
   updateTab: (id: string, patch: Partial<Pick<UnifiedTab, "label">>) => {
     set((state) => {

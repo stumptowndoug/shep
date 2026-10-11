@@ -5,7 +5,6 @@ import { useGitStore } from "../../stores/useGitStore";
 import { useProjectSettingsStore } from "../../stores/useProjectSettingsStore";
 import ProjectList from "./ProjectList";
 import SidebarNav, { SidebarNewAgent } from "./SidebarNav";
-import shepMark from "../../assets/shep-mark.png";
 import { startWindowDrag } from "../../lib/windowDrag";
 import SidebarUsage from "./SidebarUsage";
 import AgentSessionList, { type AgentSessionItem } from "./AgentSessionList";
@@ -98,12 +97,6 @@ export default function Sidebar({
   return (
     <aside className="sidebar" onContextMenu={(e) => e.preventDefault()}>
       <div className="sidebar-titlebar" onMouseDown={startWindowDrag} />
-      <div className="sidebar-top" onMouseDown={startWindowDrag}>
-        <div className="brand">
-          <img src={shepMark} alt="" className="brand__mark" />
-          <span>Shep</span>
-        </div>
-      </div>
       <SidebarNewAgent hasProject={activeRepoPath !== null} />
       <div className="side-scroll">
         <AgentSessionList

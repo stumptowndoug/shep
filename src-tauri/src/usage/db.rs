@@ -321,6 +321,12 @@ fn migrate(conn: &Connection) -> Result<(), String> {
         .map_err(|e| format!("Failed to run migration v12: {e}"))?;
     }
 
+    if version < 13 {
+        ensure_column(conn, "session_history", "agent_interface", "TEXT")?;
+        conn.execute("INSERT INTO schema_version (version) VALUES (13)", [])
+            .map_err(|e| format!("Failed to run migration v13: {e}"))?;
+    }
+
     Ok(())
 }
 
@@ -435,9 +441,29 @@ mod tests {
             )
             .unwrap();
 
-        assert_eq!(version, 12);
+        assert_eq!(version, 13);
         assert_eq!(history_table, 1);
         assert!(pricing_rows > 0);
+    }
+
+    #[test]
+    fn v13_preserves_legacy_history_and_is_repeatable() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate(&conn).unwrap();
+        conn.execute_batch(
+            "ALTER TABLE session_history DROP COLUMN agent_interface;
+             DELETE FROM schema_version WHERE version >= 13;
+             INSERT INTO session_history (provider, session_id, project_path, title, started_at, last_activity_at, created_at, updated_at)
+             VALUES ('antigravity', 'old-session', '/repo', 'Keep this', 1, 2, 1, 2);",
+        )
+        .unwrap();
+        migrate(&conn).unwrap();
+        migrate(&conn).unwrap();
+        let row: (String, Option<String>) = conn.query_row(
+            "SELECT title, agent_interface FROM session_history WHERE session_id = 'old-session'",
+            [], |row| Ok((row.get(0)?, row.get(1)?))
+        ).unwrap();
+        assert_eq!(row, ("Keep this".into(), None));
     }
 
     #[test]
@@ -475,7 +501,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(stale_count, 0);
-        assert_eq!(version, 12);
+        assert_eq!(version, 13);
     }
 
     #[test]
@@ -531,7 +557,7 @@ mod tests {
 
         assert_eq!(codex_rows, 0);
         assert_eq!(claude_rows, 3);
-        assert_eq!(version, 12);
+        assert_eq!(version, 13);
     }
 
     #[test]
@@ -587,7 +613,7 @@ mod tests {
 
         assert_eq!(antigravity_rows, 0);
         assert_eq!(claude_rows, 3);
-        assert_eq!(version, 12);
+        assert_eq!(version, 13);
     }
 
     #[test]
@@ -651,6 +677,6 @@ mod tests {
         assert_eq!(google_rows, 2);
         assert_eq!(anthropic_rows, 2);
         assert_eq!(unknown_rows, 1);
-        assert_eq!(version, 12);
+        assert_eq!(version, 13);
     }
 }

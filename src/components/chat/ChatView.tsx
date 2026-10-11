@@ -1,10 +1,13 @@
-import { memo, useCallback, useRef } from "react";
-import { ChevronRight, ShieldAlert } from "lucide-react";
+import { memo, useCallback, useRef, useState } from "react";
+import { ChevronRight, CircleAlert, ShieldAlert, X } from "lucide-react";
 import { ChatItemView } from "./ChatItems";
 import ChatComposer from "./ChatComposer";
+import CursorRequestCard from "./CursorRequestCard";
 import { useChatStore } from "../../stores/useChatStore";
-import { answerPermission } from "../../lib/acp/chatSessions";
-import { lastOf, pendingPermission, type ChatItem, type ChatTurn } from "../../lib/acp/chatModel";
+import { answerPermission, cancelChatStartup } from "../../lib/acp/chatSessions";
+import { openUrl } from "../../lib/tauri";
+import { pendingRequest, type ChatTurn } from "../../lib/acp/chatModel";
+import { splitTurn, turnStopMessage } from "../../lib/acp/chatPresentation";
 import { assistantLogoSrc, getAssistantLogoClass } from "../../lib/assistantLogos";
 import { CODING_ASSISTANTS } from "../sidebar/constants";
 import "./chat.css";
@@ -15,21 +18,26 @@ const APPROVAL_ORDER = ["reject_always", "reject_once", "allow_always", "allow_o
 /** Distance from the bottom (px) within which new output keeps the view pinned. */
 const STICK_THRESHOLD = 48;
 
+function ChatSignIn({ chatId, url }: { chatId: number; url?: string }) {
+  const [error, setError] = useState(false);
+  return <>
+    <div className="chat-sign-in">
+      {url && <button type="button" className="btn-primary" onClick={() => {
+        setError(false);
+        void openUrl(url).catch(() => setError(true));
+      }}>Sign in with Google <ChevronRight size={14} /></button>}
+      <button type="button" className="btn-secondary" onClick={() => cancelChatStartup(chatId)}>Cancel</button>
+    </div>
+    {url && <p className="field-note">Finish signing in in your browser. This chat will connect automatically.</p>}
+    {error && <p className="chat-error">Couldn’t open your browser. Try the sign-in button again.</p>}
+  </>;
+}
+
 function formatDuration(ms: number): string {
   const seconds = Math.max(1, Math.round(ms / 1000));
   if (seconds < 60) return `${seconds}s`;
   const minutes = Math.floor(seconds / 60);
   return `${minutes}m ${seconds % 60}s`;
-}
-
-/** A finished turn keeps its final answer visible and folds the work above it. */
-function splitTurn(turn: ChatTurn): { work: ChatItem[]; answer: ChatItem[] } {
-  if (turn.endedAt === null) return { work: [], answer: turn.items };
-  const final = lastOf(turn.items);
-  const answer = final?.kind === "message" ? [final] : [];
-  const work = turn.items.slice(0, turn.items.length - answer.length);
-  const notices = work.filter((item) => item.kind === "notice");
-  return { work: work.filter((item) => item.kind !== "notice"), answer: [...notices, ...answer] };
 }
 
 function plural(count: number, word: string): string {
@@ -39,6 +47,7 @@ function plural(count: number, word: string): string {
 const Turn = memo(function Turn({ turn }: { turn: ChatTurn }) {
   const { work, answer } = splitTurn(turn);
   const tools = work.filter((item) => item.kind === "tool");
+  const stopMessage = turnStopMessage(turn);
   const edits = tools.filter((item) => item.kind === "tool" && item.toolKind === "edit").length;
   const facts = [
     formatDuration((turn.endedAt ?? Date.now()) - turn.startedAt),
@@ -49,7 +58,7 @@ const Turn = memo(function Turn({ turn }: { turn: ChatTurn }) {
     <div className="chat-turn">
       {turn.prompt && <div className="chat-user">{turn.prompt}</div>}
       {work.length > 0 && (
-        <details className="chat-worked">
+        <details className="chat-worked" open={tools.some((item) => item.kind === "tool" && item.status === "failed") || undefined}>
           <summary>
             <ChevronRight size={14} className="chat-worked__chevron" />
             <span>Worked</span>
@@ -61,7 +70,7 @@ const Turn = memo(function Turn({ turn }: { turn: ChatTurn }) {
         </details>
       )}
       {answer.map((item) => <ChatItemView key={item.id} item={item} />)}
-      {turn.stopReason === "cancelled" && <div className="chat-notice">Stopped</div>}
+      {stopMessage && <div className="chat-notice">{stopMessage}</div>}
     </div>
   );
 });
@@ -92,7 +101,9 @@ export default function ChatView({ chatId, assistantId, repoPath, fullAccess }: 
   }, []);
 
   if (!chat) return null;
-  const permission = pendingPermission(chat);
+  const notices = chat.notices ?? [];
+  const request = pendingRequest(chat);
+  const permission = request?.kind === "permission" ? request : undefined;
   const logo = assistantId ? assistantLogoSrc[assistantId] : undefined;
   const projectName = repoPath.split("/").filter(Boolean).pop() ?? repoPath;
 
@@ -114,20 +125,32 @@ export default function ChatView({ chatId, assistantId, repoPath, fullAccess }: 
                 <span>{agentName} · {projectName}</span>
               </div>
               <h1 className="chat-empty__title">New chat.</h1>
-              <p className={`chat-empty__lede ${chat.status === "starting" ? "chat-shimmer" : ""}`}>
+              <p role={chat.status === "starting" ? "status" : undefined} className={`chat-empty__lede ${chat.status === "starting" && !chat.startup?.authUrl ? "chat-shimmer" : ""}`}>
                 {chat.status === "starting"
-                  ? `Starting ${agentName}…`
+                  ? chat.startup?.message ?? `Starting ${agentName}…`
                   : `${fullAccess ? "Full access: it edits and runs commands without asking." : "It asks before editing or running commands."} Type / for commands.`}
               </p>
+              {chat.status === "starting" && chat.startup && <ChatSignIn chatId={chatId} url={chat.startup.authUrl} />}
             </div>
           )}
           {chat.turns.map((turn) => <Turn key={turn.id} turn={turn} />)}
-          {chat.status === "working" && !permission && <div className="chat-working chat-shimmer">Working</div>}
+          {chat.status === "working" && !request && <div className="chat-working chat-shimmer">Working</div>}
           {chat.error && <div className="chat-error">{chat.error}</div>}
         </div>
       </div>
 
       <div className="chat-view__dock">
+        {notices.length > 0 && <div className="chat-session-notices" role="status">
+          {notices.map((notice) => (
+            <div key={notice.id} className={`chat-session-notice ${notice.severity === "error" ? "chat-session-notice--error" : ""}`}>
+              <CircleAlert size={14} aria-hidden="true" />
+              <span><strong>{notice.title}</strong>{notice.description && <> · {notice.description}</>}</span>
+              <button type="button" className="icon-btn" aria-label={`Dismiss ${notice.title}`} onClick={() => {
+                useChatStore.getState().update(chatId, (state) => ({ ...state, notices: (state.notices ?? []).filter((item) => item.id !== notice.id) }));
+              }}><X size={13} aria-hidden="true" /></button>
+            </div>
+          ))}
+        </div>}
         {permission && (
           <div className="chat-approval">
             <div className="chat-approval__head">
@@ -151,7 +174,8 @@ export default function ChatView({ chatId, assistantId, repoPath, fullAccess }: 
             </div>
           </div>
         )}
-        <ChatComposer chatId={chatId} chat={chat} agentName={agentName} />
+        {request?.kind === "cursor_request" && <CursorRequestCard key={request.id} chatId={chatId} item={request} />}
+        <ChatComposer chatId={chatId} chat={chat} agentName={agentName} fullAccess={fullAccess} />
       </div>
     </div>
   );

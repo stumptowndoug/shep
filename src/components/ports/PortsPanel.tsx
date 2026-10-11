@@ -95,7 +95,6 @@ export default function PortsPanel() {
     <div className="page ports-page">
       <div className="page__heading page__heading--actions">
         <div>
-          <div className="page__eyebrow">Local development</div>
           <h1 className="page__title">Ports.</h1>
           <p className="page__lede">Your running servers, all in one place.</p>
         </div>

@@ -8,6 +8,7 @@ import {
   endTurn,
   optionsFromSession,
   pendingPermission,
+  removeStartupMessage,
   resolvePermission,
   startTurn,
 } from "../src/lib/acp/chatModel.ts";
@@ -99,4 +100,72 @@ test("normalizes config options and legacy modes/models", () => {
     ["effort", "config", "high"],
     ["mode", "mode", "default"],
   ]);
+});
+
+test("keeps setting categories and explanations for clearly labeled composer controls", () => {
+  const [option] = optionsFromSession({configOptions:[{
+    id:"fast",name:"Fast mode",description:"Faster responses on supported models",category:"model_config",type:"select",currentValue:"off",
+    options:[{value:"on",name:"On",description:"Use fast responses"},{value:"off",name:"Off"}],
+  }]});
+  assert.equal(option.category, "model_config");
+  assert.equal(option.description, "Faster responses on supported models");
+  assert.equal(option.choices[0].description, "Use fast responses");
+});
+
+test("fast-mode notices stay outside streamed answers and do not change turn status", () => {
+  let chat = startTurn({ ...emptyChat(), status: "working" }, "Why is the sky blue?");
+  chat = applySessionUpdate(chat, {
+    sessionUpdate: "notice", severity: "warning", title: "Fast mode turned off",
+    description: "Requires extra usage to be enabled for this account.",
+  });
+  chat = applySessionUpdate(chat, {
+    sessionUpdate: "config_option_update", configOptions: [{
+      id: "fast", name: "Fast mode", type: "select", currentValue: "off",
+      options: [{ value: "on", name: "On" }, { value: "off", name: "Off" }],
+    }],
+  });
+  for (const text of ["It’s because of Rayleigh scattering.", " Air molecules scatter blue light."]) {
+    chat = applySessionUpdate(chat, { sessionUpdate: "agent_message_chunk", content: { type: "text", text } });
+  }
+  assert.equal(chat.status, "working");
+  assert.equal(chat.turns.length, 1);
+  assert.equal(chat.turns[0].endedAt, null);
+  assert.equal(chat.turns[0].items.length, 1);
+  assert.equal(chat.turns[0].items[0].kind === "message" && chat.turns[0].items[0].text, "It’s because of Rayleigh scattering. Air molecules scatter blue light.");
+  assert.equal(chat.notices[0].title, "Fast mode turned off");
+  assert.equal(chat.options[0].value, "off");
+});
+
+test("live notices coalesce without opening history turns and preserve unknown severities", () => {
+  const notice = { sessionUpdate: "notice", severity: "_custom", title: "Agent status", description: null };
+  let chat = applySessionUpdate(emptyChat(), notice);
+  chat = applySessionUpdate(chat, notice);
+  assert.equal(chat.notices.length, 1);
+  assert.equal(chat.notices[0].severity, "_custom");
+  assert.equal(chat.notices[0].description, null);
+  assert.equal(chat.turns.length, 0);
+  assert.equal(chat.error, null);
+  assert.equal(applySessionUpdate(chat, { ...notice, title: "  " }), chat);
+});
+
+test("Pi's identified startup prelude is removed without hiding warnings or prompted replies", () => {
+  const banner = "pi v1.1.0\n---\n## Extensions\n- npm:pi-web-access\n";
+  let chat = applySessionUpdate(emptyChat(), { sessionUpdate: "agent_message_chunk", content: { type: "text", text: banner } });
+  chat = applySessionUpdate(chat, { sessionUpdate: "notice", severity: "warning", title: "Provider unavailable" });
+  chat = removeStartupMessage(chat, banner);
+  assert.equal(chat.turns.length, 0);
+  assert.equal(chat.notices[0].title, "Provider unavailable");
+  chat = startTurn(chat, "Print this banner exactly");
+  chat = applySessionUpdate(chat, { sessionUpdate: "agent_message_chunk", content: { type: "text", text: banner } });
+  assert.equal(removeStartupMessage(chat, banner), chat);
+  assert.equal(removeStartupMessage(chat, "unrelated text"), chat);
+});
+
+test("Pi's legacy thinking modes do not duplicate its modern reasoning control", () => {
+  const choices = [{ value: "low", name: "Thinking: low" }, { value: "high", name: "Thinking: high" }];
+  const options = optionsFromSession({
+    configOptions: [{ id: "thought_level", name: "Thinking", type: "select", category: "thought_level", currentValue: "high", options: choices }],
+    modes: { currentModeId: "high", availableModes: choices.map((choice) => ({ id: choice.value, name: choice.name })) },
+  });
+  assert.deepEqual(options.map((option) => [option.id, option.source]), [["thought_level", "config"]]);
 });

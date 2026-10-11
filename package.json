@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "test:agent-status": "node --test tests/agentScreenStatus.test.ts",
-    "test:chat": "node --test tests/chatModel.test.ts",
+    "test:chat": "node --test tests/chatModel.test.ts tests/chatOptions.test.ts tests/chatModelPreferences.test.ts tests/chatContent.test.ts tests/chatDrafts.test.ts tests/cursorProtocol.test.ts tests/antigravityProtocol.test.ts tests/sessionResume.test.ts",
     "test:terminal-theme": "node --test tests/terminalColorMode.test.ts",
     "test:terminal-input": "playwright test",
     "test:usage": "node --test tests/usageHelpers.test.ts",

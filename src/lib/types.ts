@@ -129,6 +129,8 @@ export interface TerminalTabData extends TabBase {
 
 export interface SessionHistoryUpsert {
   provider: string;
+  /** Older history has no interface recorded; new sessions resume where they started. */
+  agentInterface?: AgentInterface | null;
   sessionId: string;
   projectPath: string;
   title: string | null;
@@ -206,6 +208,10 @@ export interface AcpAdapter {
   args: string[];
   /** Shown when the adapter binary is missing. */
   install: string;
+  /** Advertised authentication method to use before opening a session. */
+  authMethodId?: string;
+  /** Binary runtime installed into Shep's application data directory. */
+  managed?: "antigravity";
 }
 
 export interface CodingAssistant {

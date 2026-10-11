@@ -374,6 +374,7 @@ function startSessionTitleResolver(
           const lastActivityAt = Date.now();
           await upsertSessionHistory({
             provider: assistantId,
+            agentInterface: "terminal",
             sessionId: match.sessionId,
             projectPath: repoPath,
             title: match.title,
@@ -1007,6 +1008,7 @@ export function usePty() {
         historyActivityWrites.set(ptyId, resumedAt);
         void upsertSessionHistory({
           provider: session.provider,
+          agentInterface: "terminal",
           sessionId: session.sessionId,
           projectPath: session.projectPath,
           title: session.title,

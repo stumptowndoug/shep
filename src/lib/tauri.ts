@@ -192,7 +192,18 @@ export function killPty(ptyId: number): Promise<void> {
 
 export type AcpOutput =
   | { event: "line"; data: string }
+  | { event: "stderr"; data: string }
   | { event: "exit"; data: { code: number; stderr: string } };
+
+export interface AcpRuntimeCommand { command: string; args: string[] }
+
+export function getManagedAcpAdapter(adapter: string): Promise<AcpRuntimeCommand | null> {
+  return invoke("get_managed_acp_adapter", { adapter });
+}
+
+export function installManagedAcpAdapter(adapter: string): Promise<AcpRuntimeCommand> {
+  return invoke("install_managed_acp_adapter", { adapter });
+}
 
 export function spawnAcpAgent(
   command: string,

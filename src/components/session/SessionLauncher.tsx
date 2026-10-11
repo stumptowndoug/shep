@@ -1,11 +1,13 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import type { AgentInterface, CodingAssistant, SessionMode } from "../../lib/types";
 import { CODING_ASSISTANTS } from "../sidebar/constants";
-import { checkCommandExists, getModelsForProvider } from "../../lib/tauri";
+import { checkCommandExists, getModelsForProvider, installManagedAcpAdapter } from "../../lib/tauri";
+import { chatAdapterAvailable } from "../../lib/acp/adapters";
+import { getErrorMessage } from "../../lib/errors";
 import { useRepoStore } from "../../stores/useRepoStore";
 import { usePiConfigStore } from "../../stores/usePiConfigStore";
 import { useProjectSettingsStore } from "../../stores/useProjectSettingsStore";
-import { ArrowRight, Check, Copy, Info, MessageSquare, SquareTerminal, X } from "lucide-react";
+import { ArrowRight, Check, Copy, Download, Info, MessageSquare, SquareTerminal, X } from "lucide-react";
 import Select from "../shared/Select";
 import OptionGroup from "../shared/OptionGroup";
 import { assistantLogoSrc, getAssistantLogoClass } from "../../lib/assistantLogos";
@@ -28,6 +30,7 @@ export default function SessionLauncher({ onStartSession, onRunInTerminal }: Ses
   const defaultAgentInterface = useProjectSettingsStore((s) => s.settings.defaultAgentInterface);
 
   const [selectedAssistant, setSelectedAssistant] = useState<CodingAssistant | null>(null);
+  const selectedAssistantRef = useRef<string | null>(null);
   const [available, setAvailable] = useState<Record<string, boolean>>({});
   const [chatAvailable, setChatAvailable] = useState<Record<string, boolean>>({});
   const [installPopover, setInstallPopover] = useState<string | null>(null);
@@ -36,6 +39,8 @@ export default function SessionLauncher({ onStartSession, onRunInTerminal }: Ses
   const [interfaceOverride, setAgentInterface] = useState<AgentInterface | null>(null);
   const mode = modeOverride ?? defaultAgentMode;
   const [launching, setLaunching] = useState(false);
+  const [installingAdapter, setInstallingAdapter] = useState<string | null>(null);
+  const [adapterError, setAdapterError] = useState<{ assistantId: string; message: string } | null>(null);
 
   const [selectedModel, setSelectedModel] = useState<string | null>(null);
   const [availableModels, setAvailableModels] = useState<string[]>([]);
@@ -65,7 +70,7 @@ export default function SessionLauncher({ onStartSession, onRunInTerminal }: Ses
         CODING_ASSISTANTS.map(async (a) => {
           const [hasCli, hasChat] = await Promise.all([
             exists(a.command),
-            a.acp ? exists(a.acp.command) : Promise.resolve(false),
+            a.acp ? chatAdapterAvailable(a.acp) : Promise.resolve(false),
           ]);
           cli[a.id] = hasCli;
           chat[a.id] = hasChat;
@@ -115,7 +120,9 @@ export default function SessionLauncher({ onStartSession, onRunInTerminal }: Ses
   const supportsModelSelection = (id: string) => id !== "pi" && id !== "opencode";
   const supportsMode = (id: string) => id !== "pi";
   const canChat = Boolean(selectedAssistant?.acp && chatAvailable[selectedAssistant.id]);
-  const agentInterface: AgentInterface = canChat ? interfaceOverride ?? defaultAgentInterface : "terminal";
+  const canTerminal = !selectedAssistant || available[selectedAssistant.id] !== false;
+  const agentInterface: AgentInterface = !canTerminal && selectedAssistant?.acp?.managed ? "chat"
+    : canChat ? interfaceOverride ?? defaultAgentInterface : "terminal";
   const chatUnavailableReason = selectedAssistant?.acp
     ? "Chat adapter not installed"
     : `Chat isn’t available for ${selectedAssistant?.name ?? "this agent"} in Shep yet.`;
@@ -124,6 +131,8 @@ export default function SessionLauncher({ onStartSession, onRunInTerminal }: Ses
     const requestId = modelRequestRef.current + 1;
     modelRequestRef.current = requestId;
     setSelectedAssistant(assistant);
+    selectedAssistantRef.current = assistant.id;
+    setAdapterError(null);
     setSelectedModel(null);
     setSelectedPiProvider(null);
     setAvailableModels([]);
@@ -222,6 +231,17 @@ export default function SessionLauncher({ onStartSession, onRunInTerminal }: Ses
 
   const setUpChat = (assistant: CodingAssistant) => {
     if (!assistant.acp) return;
+    if (assistant.acp.managed) {
+      if (installingAdapter) return;
+      setAdapterError(null);
+      setInstallingAdapter(assistant.id);
+      void installManagedAcpAdapter(assistant.acp.managed).then(() => {
+        setChatAvailable(current => ({ ...current, [assistant.id]: true }));
+        if (selectedAssistantRef.current === assistant.id) setAgentInterface("chat");
+      }).catch(error => setAdapterError({ assistantId: assistant.id, message: getErrorMessage(error) }))
+        .finally(() => setInstallingAdapter(null));
+      return;
+    }
     const script = [
       `echo "Installing ${assistant.name}'s chat adapter"`,
       `echo "+ ${assistant.acp.install}"`,
@@ -247,7 +267,7 @@ export default function SessionLauncher({ onStartSession, onRunInTerminal }: Ses
         <div className="agent-grid" role="group" aria-label="Choose an agent">
           {CODING_ASSISTANTS.map((assistant) => {
             const logoUrl = assistantLogoSrc[assistant.id];
-            const isAvailable = available[assistant.id] !== false;
+            const isAvailable = available[assistant.id] !== false || Boolean(assistant.acp?.managed);
             const logoClassName = [getAssistantLogoClass(assistant.id), !isAvailable ? "logo-unavailable" : null]
               .filter(Boolean)
               .join(" ");
@@ -272,7 +292,9 @@ export default function SessionLauncher({ onStartSession, onRunInTerminal }: Ses
                   {logoUrl && <img src={logoUrl} alt="" width={22} height={22} className={logoClassName || undefined} />}
                   <span className="agent-choice__body">
                     <span className="agent-choice__name">{assistant.name}</span>
-                    <span className="agent-choice__meta">{!isAvailable ? "Set up agent" : assistant.acp && chatAvailable[assistant.id] ? "Chat & terminal" : "Terminal"}</span>
+                    <span className="agent-choice__meta">{!isAvailable ? "Set up agent"
+                      : chatAvailable[assistant.id] ? available[assistant.id] === false ? "Chat" : "Chat & terminal"
+                        : available[assistant.id] === false ? "Set up chat" : "Terminal"}</span>
                   </span>
                   {isSelected && <Check size={15} className="agent-choice__check" />}
                 </button>
@@ -419,7 +441,7 @@ export default function SessionLauncher({ onStartSession, onRunInTerminal }: Ses
             onChange={setAgentInterface}
             options={[
               { value: "chat", label: "Chat", disabled: !canChat, title: canChat ? "A conversation with messages, tool calls, and changes" : chatUnavailableReason },
-              { value: "terminal", label: "Terminal" },
+              { value: "terminal", label: "Terminal", disabled: !canTerminal, title: canTerminal ? undefined : "Install the agent’s CLI to use Terminal" },
             ]}
           />
           <p className="field-note">{!selectedAssistant.acp
@@ -432,24 +454,27 @@ export default function SessionLauncher({ onStartSession, onRunInTerminal }: Ses
               <MessageSquare size={15} />
               <div className="callout__body">
                 <div>Set up {selectedAssistant.name} to use chat.</div>
-                <code className="inline-code select-all">{selectedAssistant.acp.install}</code>
+                {selectedAssistant.acp.managed
+                  ? <p className="field-note">Downloads Google’s chat runtime. Sign in with your Google account when you start a chat.</p>
+                  : <code className="inline-code select-all">{selectedAssistant.acp.install}</code>}
               </div>
               <div className="callout__actions">
-                <button
+                {!selectedAssistant.acp.managed && <button
                   className="icon-btn"
                   onClick={() => copyInstall(selectedAssistant.acp!.install)}
                   title="Copy command"
                   aria-label="Copy install command"
                 >
                   {copied ? <Check size={15} /> : <Copy size={15} />}
-                </button>
-                <button className="btn-secondary" onClick={() => setUpChat(selectedAssistant)}>
-                  <SquareTerminal size={14} />
-                  Set up in terminal
+                </button>}
+                <button className="btn-secondary" disabled={Boolean(installingAdapter)} onClick={() => setUpChat(selectedAssistant)}>
+                  {selectedAssistant.acp.managed ? <Download size={14} /> : <SquareTerminal size={14} />}
+                  {installingAdapter === selectedAssistant.id ? "Installing…" : selectedAssistant.acp.managed ? "Install chat runtime" : "Set up in terminal"}
                 </button>
               </div>
             </div>
           )}
+          {adapterError?.assistantId === selectedAssistant.id && <div className="command-form__error mt-3" role="alert">{adapterError.message}</div>}
         </div>
       )}
 
@@ -491,7 +516,7 @@ export default function SessionLauncher({ onStartSession, onRunInTerminal }: Ses
         <div className="page__section">
           <button
             className="btn-primary"
-            disabled={launching}
+            disabled={launching || (agentInterface === "chat" ? !canChat : !canTerminal)}
             aria-busy={launching}
             onClick={handleStart}
           >

@@ -17,6 +17,7 @@ export interface AcpHandlers {
   onRequest: (method: string, params: unknown) => Promise<unknown>;
   onNotification: (method: string, params: unknown) => void;
   onExit: (code: number, stderr: string) => void;
+  onStderr?: (line: string) => void;
 }
 
 /**
@@ -86,6 +87,10 @@ export class AcpConnection {
 
   private receive(msg: AcpOutput) {
     if (this.exited) return;
+    if (msg.event === "stderr") {
+      this.handlers.onStderr?.(msg.data);
+      return;
+    }
     if (msg.event === "exit") {
       this.disconnect("Agent exited");
       this.handlers.onExit(msg.data.code, msg.data.stderr);

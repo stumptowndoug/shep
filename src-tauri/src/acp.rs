@@ -17,6 +17,9 @@ use tauri::ipc::Channel;
 /// Stderr kept for the exit event, so launch failures (missing auth, bad
 /// flags) can be shown to the user instead of a bare exit code.
 const STDERR_TAIL_LINES: usize = 20;
+// Bound a single protocol frame before JSON parsing or forwarding it over IPC.
+const MAX_FRAME_BYTES: usize = 8 * 1024 * 1024;
+const MAX_STDERR_LINE_BYTES: usize = 24_000;
 const KILL_GRACE: Duration = Duration::from_millis(1500);
 
 #[derive(Clone, Serialize)]
@@ -24,6 +27,8 @@ const KILL_GRACE: Duration = Duration::from_millis(1500);
 pub enum AcpOutput {
     #[serde(rename = "line")]
     Line(String),
+    #[serde(rename = "stderr")]
+    Stderr(String),
     #[serde(rename = "exit")]
     Exit { code: i32, stderr: String },
 }
@@ -86,28 +91,48 @@ impl AcpManager {
         );
 
         let stderr_tail = Arc::new(Mutex::new(VecDeque::new()));
-        spawn_stderr_reader(stderr, Arc::clone(&stderr_tail));
+        spawn_stderr_reader(stderr, Arc::clone(&stderr_tail), channel.clone());
 
         let processes = Arc::clone(&self.processes);
         std::thread::spawn(move || {
-            for line in BufReader::new(stdout).lines() {
-                let Ok(line) = line else { break };
+            let mut reader = BufReader::new(stdout);
+            let mut bridge_error = None;
+            loop {
+                let line = match read_acp_line(&mut reader) {
+                    Ok(Some(line)) => line,
+                    Ok(None) => break,
+                    Err(error) => {
+                        bridge_error =
+                            Some(format!("Chat adapter output could not be read: {error}"));
+                        terminate_group(child.id());
+                        break;
+                    }
+                };
                 if line.trim().is_empty() {
                     continue;
                 }
                 if channel.send(AcpOutput::Line(line)).is_err() {
+                    terminate_group(child.id());
                     break;
                 }
             }
-            let code = wait_for_exit(&mut child);
+            let exit_code = wait_for_exit(&mut child);
+            let code = if bridge_error.is_some() {
+                -1
+            } else {
+                exit_code
+            };
             processes.lock().unwrap().remove(&id);
-            let stderr = stderr_tail
+            let mut stderr = stderr_tail
                 .lock()
                 .unwrap()
                 .iter()
                 .cloned()
                 .collect::<Vec<_>>()
                 .join("\n");
+            if let Some(error) = bridge_error {
+                stderr.push_str(&format!("\n{error}"));
+            }
             let _ = channel.send(AcpOutput::Exit { code, stderr });
         });
 
@@ -147,10 +172,53 @@ impl AcpManager {
     }
 }
 
-fn spawn_stderr_reader(stderr: impl Read + Send + 'static, tail: Arc<Mutex<VecDeque<String>>>) {
+fn read_acp_line(reader: &mut impl BufRead) -> std::io::Result<Option<String>> {
+    let mut bytes = Vec::new();
+    reader
+        .take((MAX_FRAME_BYTES + 1) as u64)
+        .read_until(b'\n', &mut bytes)?;
+    if bytes.is_empty() {
+        return Ok(None);
+    }
+    if bytes.len() > MAX_FRAME_BYTES {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "A single agent message exceeded 8 MiB. Start a new chat and request a smaller output.",
+        ));
+    }
+    if bytes.last() == Some(&b'\n') {
+        bytes.pop();
+    }
+    if bytes.last() == Some(&b'\r') {
+        bytes.pop();
+    }
+    String::from_utf8(bytes)
+        .map(Some)
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))
+}
+
+fn spawn_stderr_reader(
+    stderr: impl Read + Send + 'static,
+    tail: Arc<Mutex<VecDeque<String>>>,
+    channel: Channel<AcpOutput>,
+) {
     std::thread::spawn(move || {
-        for line in BufReader::new(stderr).lines() {
-            let Ok(line) = line else { break };
+        let mut reader = BufReader::new(stderr);
+        loop {
+            // A CLI can log an arbitrarily long line. Drain it in bounded pieces.
+            let mut bytes = Vec::new();
+            match (&mut reader)
+                .take(MAX_STDERR_LINE_BYTES as u64)
+                .read_until(b'\n', &mut bytes)
+            {
+                Ok(0) | Err(_) => break,
+                Ok(_) => {}
+            }
+            let line = String::from_utf8_lossy(&bytes).trim_end().to_owned();
+            // Only forward the bounded sign-in instruction, not verbose agent logs.
+            if line.starts_with("Open the following link to authenticate the ACP server: ") {
+                let _ = channel.send(AcpOutput::Stderr(line.clone()));
+            }
             let mut tail = tail.lock().unwrap();
             if tail.len() == STDERR_TAIL_LINES {
                 tail.pop_front();
@@ -189,6 +257,31 @@ fn terminate_group(pid: u32) {
 mod tests {
     use super::*;
     use std::sync::mpsc;
+
+    #[test]
+    fn bounded_frames_preserve_line_framing() {
+        let mut reader = std::io::Cursor::new(b"first\r\nsecond\nlast");
+        assert_eq!(
+            read_acp_line(&mut reader).unwrap().as_deref(),
+            Some("first")
+        );
+        assert_eq!(
+            read_acp_line(&mut reader).unwrap().as_deref(),
+            Some("second")
+        );
+        assert_eq!(read_acp_line(&mut reader).unwrap().as_deref(), Some("last"));
+        assert_eq!(read_acp_line(&mut reader).unwrap(), None);
+    }
+
+    #[test]
+    fn oversized_frames_fail_even_without_a_newline() {
+        let mut reader = std::io::Cursor::new(vec![b'x'; MAX_FRAME_BYTES + 100]);
+        assert_eq!(
+            read_acp_line(&mut reader).unwrap_err().kind(),
+            std::io::ErrorKind::InvalidData
+        );
+        assert_eq!(reader.position(), (MAX_FRAME_BYTES + 1) as u64);
+    }
 
     fn close_with_stalled_stdin(close_all: bool) {
         let manager = Arc::new(AcpManager::new());

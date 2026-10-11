@@ -4,6 +4,7 @@ import { CODING_ASSISTANTS } from "../sidebar/constants";
 import { assistantLogoSrc, getAssistantLogoClass } from "../../lib/assistantLogos";
 import { getErrorMessage } from "../../lib/errors";
 import { checkCommandExists, listSessionHistory } from "../../lib/tauri";
+import { chatAdapterAvailable } from "../../lib/acp/adapters";
 import type { SessionHistoryEntry } from "../../lib/types";
 import { supportsSessionResume } from "../../lib/sessionResume";
 import { useTerminalStore } from "../../stores/useTerminalStore";
@@ -86,7 +87,7 @@ export default function HistoryPanel({
   const [sessions, setSessions] = useState<SessionHistoryEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [availableProviders, setAvailableProviders] = useState<Record<string, boolean>>({});
+  const [availableProviders, setAvailableProviders] = useState<Record<string, { terminal: boolean; chat: boolean }>>({});
   const [resumingKey, setResumingKey] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const searchInput = useRef<HTMLInputElement>(null);
@@ -127,10 +128,13 @@ export default function HistoryPanel({
   useEffect(() => {
     let cancelled = false;
     void Promise.all(
-      CODING_ASSISTANTS.map(async (assistant) => [
-        assistant.id,
-        await checkCommandExists(assistant.command).catch(() => false),
-      ] as const),
+      CODING_ASSISTANTS.map(async (assistant) => {
+        const [terminal, chat] = await Promise.all([
+          checkCommandExists(assistant.command).catch(() => false),
+          assistant.acp ? chatAdapterAvailable(assistant.acp) : Promise.resolve(false),
+        ]);
+        return [assistant.id, { terminal, chat }] as const;
+      }),
     ).then((results) => {
       if (!cancelled) setAvailableProviders(Object.fromEntries(results));
     });
@@ -177,7 +181,6 @@ export default function HistoryPanel({
     <div className="page history-page">
       <header className="page__heading page__heading--actions">
         <div>
-          <div className="page__eyebrow">Conversations</div>
           <h1 className="page__title">History.</h1>
           <p className="page__lede">Pick up where you left off.</p>
         </div>
@@ -249,10 +252,12 @@ export default function HistoryPanel({
                 const isActive = activeSessions.has(key);
                 const logoSrc = assistantLogoSrc[session.provider];
                 const providerAvailable = availableProviders[session.provider];
+                const canResume = providerAvailable && (session.agentInterface
+                  ? providerAvailable[session.agentInterface] : providerAvailable.terminal || providerAvailable.chat);
                 const disabledReason = isActive ? null
                   : !supportsSessionResume(session.provider) ? "This provider does not support resume yet"
-                  : providerAvailable === undefined ? "Checking whether the CLI is installed"
-                  : !providerAvailable ? `${providerLabel(session.provider)} CLI is not installed`
+                  : providerAvailable === undefined ? "Checking whether the agent is installed"
+                  : !canResume ? `Set up ${providerLabel(session.provider)}${session.agentInterface === "chat" ? " chat" : ""} in New agent first`
                   : !knownProjects.has(session.projectPath) ? "Add this project to Shep before resuming"
                   : null;
                 const isResuming = resumingKey === key;

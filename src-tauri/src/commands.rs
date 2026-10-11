@@ -312,6 +312,22 @@ pub fn kill_pty(pty_id: u32, pty_manager: State<'_, PtyManager>) -> Result<(), S
 // ── ACP agent commands ──────────────────────────────────────────────
 
 #[tauri::command]
+pub fn get_managed_acp_adapter(
+    adapter: &str,
+) -> Result<Option<crate::acp_runtime::RuntimeCommand>, String> {
+    crate::acp_runtime::get(adapter)
+}
+
+#[tauri::command]
+pub async fn install_managed_acp_adapter(
+    adapter: String,
+) -> Result<crate::acp_runtime::RuntimeCommand, String> {
+    tauri::async_runtime::spawn_blocking(move || crate::acp_runtime::install(&adapter))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
 pub async fn spawn_acp_agent(
     command: String,
     args: Vec<String>,

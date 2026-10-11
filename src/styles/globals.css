@@ -62,9 +62,9 @@ body,
 
   /* ── Design tokens ──────────────────────────────────────
      Springroll's system: a theme is a ground (--bg), ink (--fg) and an
-     accent. Everything else is mixed toward the ground, never toward
-     white or black, so every theme restyles the app without per-theme
-     tuning. No resting borders: depth comes from fills. */
+     accent. Surfaces and secondary text mix ink with the ground, so every
+     theme restyles the app without per-theme tuning. Dark themes lift the
+     ink slightly for readable chrome. Depth comes primarily from fills. */
 
   --bg: var(--frame-tint);          /* main panel */
   --fg: var(--app-fg);
@@ -185,9 +185,10 @@ body.theme-clear {
 
 /* Dark grounds need 2-3x the pigment for tints to read as tints. */
 html[data-theme-tone="dark"] {
+  --fg: color-mix(in srgb, var(--app-fg) 85%, white);
   --surface: color-mix(in srgb, var(--fg) 6%, var(--bg));
   --surface-hover: color-mix(in srgb, var(--fg) 10%, var(--bg));
-  --surface-strong: color-mix(in srgb, var(--fg) 14%, var(--bg));
+  --surface-strong: color-mix(in srgb, var(--fg) 16%, var(--bg));
   --surface-recessed: color-mix(in srgb, black 18%, var(--bg));
   --surface-overlay: color-mix(in srgb, var(--fg) 5%, var(--bg));
   --surface-selected: color-mix(in srgb, var(--accent) 22%, var(--bg));
@@ -195,8 +196,8 @@ html[data-theme-tone="dark"] {
   --attention-ground: color-mix(in srgb, var(--warn) 16%, var(--bg));
   --danger-ground: color-mix(in srgb, var(--danger) 18%, var(--bg));
   --line: color-mix(in srgb, var(--fg) 12%, var(--bg));
-  --muted: color-mix(in srgb, var(--fg) 58%, var(--app-bg));
-  --faint: color-mix(in srgb, var(--fg) 36%, var(--app-bg));
+  --muted: color-mix(in srgb, var(--fg) 68%, var(--app-bg));
+  --faint: color-mix(in srgb, var(--fg) 44%, var(--app-bg));
   --shadow-sm: 0 1px 2px rgb(0 0 0 / 30%);
   --shadow: 0 8px 26px rgb(0 0 0 / 30%);
   --shadow-lg: 0 12px 36px rgb(0 0 0 / 45%), 0 2px 6px rgb(0 0 0 / 25%);
@@ -384,31 +385,6 @@ body.theme-clear .app-shell__frame {
   height: var(--titlebar-height);
   flex-shrink: 0;
   user-select: none;
-}
-
-.sidebar-top {
-  display: flex;
-  align-items: center;
-  min-height: 36px;
-  flex-shrink: 0;
-  padding: 0 10px;
-  user-select: none;
-}
-
-.brand {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: var(--text-base);
-  font-weight: 750;
-  letter-spacing: -0.02em;
-  color: var(--fg);
-  pointer-events: none;
-}
-.brand__mark {
-  width: 24px;
-  height: auto;
-  flex-shrink: 0;
 }
 
 .side-nav {
@@ -982,7 +958,7 @@ body.theme-clear .app-shell__frame {
 .popover__item--highlight,
 .font-picker-item:hover,
 .font-picker-item--active {
-  background: var(--surface);
+  background: var(--surface-hover);
   outline: none;
 }
 .context-menu__item--danger,
@@ -1111,6 +1087,8 @@ body.theme-clear .app-shell__frame {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.select__label { flex-shrink: 0; }
+.select__description { display: block; margin-top: 3px; color: var(--muted); font-size: var(--text-2xs); font-weight: 400; line-height: 1.4; white-space: normal; }
 .select__chevron {
   flex-shrink: 0;
 }
@@ -1467,6 +1445,13 @@ body.theme-clear .app-shell__frame {
   border-top: 1px solid var(--glass-border);
   margin: 24px 0;
 }
+.settings-chat-models__note { margin-bottom: 14px; }
+.settings-chat-model { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; padding: 10px 0; font-size: var(--text-sm); }
+.settings-chat-model__agent { display: flex; align-items: center; gap: 8px; width: 140px; flex-shrink: 0; }
+.settings-chat-model__agent img { flex-shrink: 0; }
+.settings-chat-model__value { flex: 1; min-width: 120px; overflow-wrap: anywhere; color: var(--muted); }
+.settings-chat-model .btn-secondary { flex-shrink: 0; font-size: var(--text-xs); }
+
 .settings-row {
   flex-wrap: wrap;
   display: flex;

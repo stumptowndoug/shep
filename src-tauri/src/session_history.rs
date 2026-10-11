@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "camelCase")]
 pub struct SessionHistoryUpsert {
     pub provider: String,
+    pub agent_interface: Option<String>,
     pub session_id: String,
     pub project_path: String,
     pub title: Option<String>,
@@ -18,6 +19,7 @@ pub struct SessionHistoryUpsert {
 #[serde(rename_all = "camelCase")]
 pub struct SessionHistoryEntry {
     pub provider: String,
+    pub agent_interface: Option<String>,
     pub session_id: String,
     pub project_path: String,
     pub title: Option<String>,
@@ -44,6 +46,11 @@ fn clean_optional(value: Option<String>, max_chars: usize) -> Option<String> {
 }
 
 pub fn upsert(db: &UsageDb, record: SessionHistoryUpsert) -> Result<(), String> {
+    if let Some(interface) = record.agent_interface.as_deref() {
+        if interface != "chat" && interface != "terminal" {
+            return Err("Session history interface must be chat or terminal".into());
+        }
+    }
     let provider = clean_required(&record.provider, "provider")?;
     let session_id = clean_required(&record.session_id, "session ID")?;
     let project_path = clean_required(&record.project_path, "project path")?;
@@ -61,12 +68,13 @@ pub fn upsert(db: &UsageDb, record: SessionHistoryUpsert) -> Result<(), String> 
     conn.execute(
         "INSERT INTO session_history (
             provider, session_id, project_path, title, model, started_at,
-            last_activity_at, ended_at, created_at, updated_at
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL, ?6, ?7)
+            last_activity_at, ended_at, created_at, updated_at, agent_interface
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL, ?6, ?7, ?8)
          ON CONFLICT(provider, session_id) DO UPDATE SET
             project_path = excluded.project_path,
             title = COALESCE(excluded.title, session_history.title),
             model = COALESCE(excluded.model, session_history.model),
+            agent_interface = COALESCE(excluded.agent_interface, session_history.agent_interface),
             started_at = MIN(session_history.started_at, excluded.started_at),
             last_activity_at = MAX(session_history.last_activity_at, excluded.last_activity_at),
             ended_at = NULL,
@@ -79,6 +87,7 @@ pub fn upsert(db: &UsageDb, record: SessionHistoryUpsert) -> Result<(), String> 
             model,
             record.started_at,
             last_activity_at,
+            record.agent_interface,
         ],
     )
     .map_err(|error| format!("Failed to save session history: {error}"))?;
@@ -135,7 +144,7 @@ fn list_from_connection(
 ) -> Result<Vec<SessionHistoryEntry>, String> {
     let limit = i64::from(limit.unwrap_or(50).clamp(1, 200));
     let columns = "provider, session_id, project_path, title, model,
-                   started_at, last_activity_at, ended_at";
+                   started_at, last_activity_at, ended_at, agent_interface";
     let project = project_path.map(str::trim).filter(|path| !path.is_empty());
     let query = query.map(str::trim).filter(|value| !value.is_empty());
     let mut filters = Vec::new();
@@ -185,6 +194,7 @@ fn list_from_connection(
             started_at: row.get(5)?,
             last_activity_at: row.get(6)?,
             ended_at: row.get(7)?,
+            agent_interface: row.get(8)?,
         })
     };
     let rows = statement
@@ -199,6 +209,37 @@ fn list_from_connection(
 mod tests {
     use super::*;
 
+    #[test]
+    fn keeps_the_recorded_interface_when_older_clients_update_history() {
+        let db = UsageDb::open_in_memory();
+        let mut chat = record("antigravity", "chat-1", "/repo", None, None, 1_000, 1_100);
+        chat.agent_interface = Some("chat".into());
+        upsert(&db, chat).unwrap();
+        upsert(
+            &db,
+            record(
+                "antigravity",
+                "chat-1",
+                "/repo",
+                Some("Title"),
+                None,
+                1_000,
+                1_200,
+            ),
+        )
+        .unwrap();
+        assert_eq!(
+            list(&db, None, None, None).unwrap()[0]
+                .agent_interface
+                .as_deref(),
+            Some("chat")
+        );
+        let mut invalid = record("antigravity", "bad", "/repo", None, None, 1_000, 1_100);
+        invalid.agent_interface = Some("unknown".into());
+        assert!(upsert(&db, invalid).is_err());
+        assert_eq!(list(&db, None, None, None).unwrap().len(), 1);
+    }
+
     fn record(
         provider: &str,
         session_id: &str,
@@ -210,6 +251,7 @@ mod tests {
     ) -> SessionHistoryUpsert {
         SessionHistoryUpsert {
             provider: provider.to_string(),
+            agent_interface: None,
             session_id: session_id.to_string(),
             project_path: project_path.to_string(),
             title: title.map(ToString::to_string),
@@ -261,6 +303,7 @@ mod tests {
             project_rows[0],
             SessionHistoryEntry {
                 provider: "codex".to_string(),
+                agent_interface: None,
                 session_id: "session-1".to_string(),
                 project_path: "/repo".to_string(),
                 title: Some("Fix auth tokens".to_string()),

@@ -29,9 +29,11 @@ async function until(predicate: () => boolean) {
 let nextId = 0;
 const channels = new Map<number, Channel<AcpOutput>>();
 let writes: string[] = [];
+let requestIds = new Map<string, number>();
 let killCalls = 0;
 let historyCalls = 0;
 let holdInitialize = false;
+let holdNewSession = false;
 let failKill = false;
 let killGate = deferred();
 let historyGate = deferred();
@@ -49,8 +51,9 @@ mockIPC((cmd, payload) => {
   if (cmd === "write_acp_agent") {
     const message = JSON.parse(String(args.line));
     writes.push(message.method);
+    requestIds.set(message.method, message.id);
     if (writeGate) return writeGate.promise;
-    if ((message.method === "initialize" && !holdInitialize) || message.method === "session/new") {
+    if ((message.method === "initialize" && !holdInitialize) || (message.method === "session/new" && !holdNewSession)) {
       queueMicrotask(() => channels.get(Number(args.agentId))!.onmessage({
         event: "line",
         data: JSON.stringify({ jsonrpc: "2.0", id: message.id, result: message.method === "initialize" ? {} : { sessionId: `session-${args.agentId}` } }),
@@ -72,8 +75,9 @@ mockIPC((cmd, payload) => {
 
 function reset() {
   writes = [];
+  requestIds = new Map();
   killCalls = historyCalls = 0;
-  holdInitialize = failKill = false;
+  holdInitialize = holdNewSession = failKill = false;
   writeGate = upsertGate = null;
   killGate = deferred();
   historyGate = deferred();
@@ -155,7 +159,62 @@ function Harness() {
       await new Promise((resolve) => setTimeout(resolve, 0));
       assert(writes.length === 1, "queued write was sent after close");
       pass("PASS: blocked input — close bypasses queued writes and rejects pending requests");
-      setStatus("All 5 checks passed");
+
+      for (const method of ["initialize", "session/new"]) {
+        reset();
+        holdInitialize = method === "initialize";
+        holdNewSession = method === "session/new";
+        // Advance only the real startup deadline, without waiting a minute.
+        const schedule = window.setTimeout;
+        let expireStartup: (() => void) | undefined;
+        window.setTimeout = (handler, delay, ...args) => {
+          const timer = schedule(handler, delay, ...args);
+          if (delay === 60_000 && typeof handler === "function") expireStartup = () => {
+            window.clearTimeout(timer);
+            handler(...args);
+          };
+          return timer;
+        };
+        let chatId: number;
+        try {
+          chatId = await startChat({ assistant: CODING_ASSISTANTS.find((a) => a.id === "claude")!, repoPath: "/test/project", mode: "standard" });
+        } finally {
+          window.setTimeout = schedule;
+        }
+        await until(() => writes.includes(method));
+        assert(useChatStore.getState().chats[chatId].status === "starting", "fixture did not stall startup");
+        assert(expireStartup, "startup had no deadline");
+        expireStartup();
+        const failed = useChatStore.getState().chats[chatId];
+        assert(failed.status === "exited" && failed.error?.includes("60 seconds"), "startup stayed stuck or lost its recovery message");
+        assert(killCalls === 1, "startup timeout did not stop the adapter");
+        channels.get(chatId)!.onmessage({ event: "line", data: JSON.stringify({ id: requestIds.get(method), result: { sessionId: "late-session" } }) });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        assert(useChatStore.getState().chats[chatId].error === failed.error, "late reply or rejected request replaced the timeout error");
+        assert(useChatStore.getState().chats[chatId].status === "exited", "late reply revived a timed-out chat");
+        killGate.resolve();
+        const tab = useTerminalStore.getState().findTabByPtyId(chatId)!;
+        await closeTab(tab.id);
+        holdInitialize = holdNewSession = false;
+        const retryId = await startChat({ assistant: CODING_ASSISTANTS.find((a) => a.id === "claude")!, repoPath: "/test/project", mode: "standard" });
+        await until(() => useChatStore.getState().chats[retryId]?.status === "ready");
+        historyGate.resolve();
+        await closeTab(useTerminalStore.getState().findTabByPtyId(retryId)!.id);
+        pass(`PASS: stalled ${method} — times out, ignores late replies, and a new chat starts`);
+      }
+      reset();
+      const orphan = await AcpConnection.spawn("mock", [], "/test/project", { onRequest: async () => null, onNotification: () => {}, onExit: () => {} });
+      useChatStore.getState().init(orphan.id);
+      useTerminalStore.getState().addTab({ id: "orphan-chat", kind: "assistant", label: "OpenCode", ptyId: orphan.id,
+        repoPath: "/test/project", commandName: null, assistantId: "opencode", providerSessionId: null,
+        sessionMode: "standard", labelSource: "default", agentInterface: "chat" });
+      const orphanClosing = closeTab("orphan-chat");
+      assert(killCalls === 1, "Closing a tab with lost frontend state did not stop its native agent");
+      assert(!useTerminalStore.getState().findTabByPtyId(orphan.id), "Orphan tab did not close immediately");
+      killGate.resolve();
+      await orphanClosing;
+      pass("PASS: lost frontend state — tab close still stops the native agent");
+      setStatus("All 8 checks passed");
     } catch (error) {
       setStatus(`FAIL: ${error instanceof Error ? error.message : error}`);
     } finally {
