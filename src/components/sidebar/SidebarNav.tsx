@@ -1,17 +1,10 @@
 import { ChartNoAxesCombined, History, Radio, Settings } from "lucide-react";
 import { useUIStore } from "../../stores/useUIStore";
 import { useTerminalStore } from "../../stores/useTerminalStore";
-import { panelTabId } from "../../lib/types";
 import tabKindMeta from "../../lib/tabKindMeta";
 
 /** Opens the project's launcher: agents first, plus terminal, commands, files, to-dos. */
 export function SidebarNewAgent({ hasProject }: { hasProject: boolean }) {
-  const anyOverlay = useUIStore((s) => s.settingsActive || s.usagePanelActive || s.portsPanelActive || s.historyPanelActive || s.projectsPanelActive);
-  const launcherActive = useTerminalStore((s) => {
-    const project = s.activeProjectPath ? s.projectState[s.activeProjectPath] : null;
-    return project?.activeTabId === panelTabId("launcher");
-  });
-  const on = launcherActive && !anyOverlay;
   const startAgent = () => {
     useUIStore.getState().deactivateAllOverlays();
     useTerminalStore.getState().addPanelTab("launcher");
@@ -20,10 +13,9 @@ export function SidebarNewAgent({ hasProject }: { hasProject: boolean }) {
   return (
     <div className="side-nav side-nav--primary">
       <button
-        className={`nav-item ${on ? "on" : ""}`}
+        className="nav-item"
         onClick={hasProject ? startAgent : undefined}
         aria-disabled={!hasProject}
-        aria-pressed={on}
         title={hasProject ? undefined : "Add a project first"}
       >
         {tabKindMeta.launcher.icon(16)}
