@@ -5,14 +5,14 @@ use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 use tauri::ipc::Channel;
-use tauri::{Emitter, State};
+use tauri::{Emitter, Manager, State};
 use url::Url;
 
 use crate::acp::{AcpManager, AcpOutput};
 use crate::agent_status::{self, AgentRuntimeStatus};
 use crate::fonts::{self, FontFaceData, FontFamily};
 use crate::git;
-use crate::git::{ChangedFile, CreatedWorktree, DiffFileStat, GitStatus, WorktreeEntry};
+use crate::git::{ChangedFile, CreatedWorktree, DiffFileStat, GitChanges, GitStatus, WorktreeEntry};
 use crate::pty::manager::PtyManager;
 use crate::pty::session::{PtyColorTheme, PtyOutput};
 use crate::session_history::{self, SessionHistoryEntry, SessionHistoryUpsert};
@@ -24,7 +24,7 @@ use crate::usage::{
 };
 use crate::watcher::GitWatcher;
 use crate::workspace::config::{
-    normalize_terminal_settings, EditorSettings, GroupEntry, KeybindingSettings, ProjectSettings,
+    normalize_terminal_settings, EditorSettings, GroupInfo, KeybindingSettings, ProjectSettings,
     RegisteredRepo, RepoInfo, TerminalSettings, UsageSettings, WorkspaceConfig,
 };
 use crate::workspace::manager::WorkspaceManager;
@@ -258,16 +258,16 @@ pub fn open_url(url: &str, workspace: State<'_, WorkspaceManager>) -> Result<(),
 // ── Group commands ─────────────────────────────────────────────────
 
 #[tauri::command]
-pub fn list_groups(workspace: State<'_, WorkspaceManager>) -> Result<Vec<GroupEntry>, String> {
-    workspace.list_groups()
+pub fn list_groups(workspace: State<'_, WorkspaceManager>) -> Result<Vec<GroupInfo>, String> {
+    Ok(workspace.list_groups()?.into_iter().map(GroupInfo::from).collect())
 }
 
 #[tauri::command]
 pub fn create_group(
     name: &str,
     workspace: State<'_, WorkspaceManager>,
-) -> Result<GroupEntry, String> {
-    workspace.create_group(name)
+) -> Result<GroupInfo, String> {
+    workspace.create_group(name).map(GroupInfo::from)
 }
 
 #[tauri::command]
@@ -532,6 +532,11 @@ pub async fn list_session_history(
 // ── App lifecycle commands ────────────────────────────────────────
 
 #[tauri::command]
+pub fn get_storage_warning(db: State<'_, UsageDb>) -> Option<String> {
+    db.storage_warning.clone()
+}
+
+#[tauri::command]
 pub fn get_pty_session_count(
     pty_manager: State<'_, PtyManager>,
     acp_manager: State<'_, AcpManager>,
@@ -540,19 +545,26 @@ pub fn get_pty_session_count(
 }
 
 #[tauri::command]
-pub fn shutdown_and_quit(
+pub async fn shutdown_and_quit(
     app: tauri::AppHandle,
-    pty_manager: State<'_, PtyManager>,
-    acp_manager: State<'_, AcpManager>,
-    watcher: State<'_, GitWatcher>,
-) {
-    if !pty_manager.begin_shutdown() {
-        return;
+    restart: Option<bool>,
+) -> Result<(), String> {
+    if !app.state::<PtyManager>().begin_shutdown() {
+        return Ok(());
     }
-    watcher.shutdown();
-    pty_manager.kill_all();
-    acp_manager.kill_all();
-    app.exit(0);
+    app.state::<GitWatcher>().shutdown();
+    let cleanup_app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        cleanup_app.state::<PtyManager>().kill_all();
+        cleanup_app.state::<AcpManager>().shutdown();
+    }).await.map_err(|error| format!("Session cleanup failed: {error}"))?;
+    app.state::<PtyManager>().finish_shutdown();
+    if restart.unwrap_or(false) {
+        app.request_restart();
+    } else {
+        app.exit(0);
+    }
+    Ok(())
 }
 
 // ── File watcher commands ─────────────────────────────────────────
@@ -606,17 +618,17 @@ pub async fn git_create_worktree(path: String, branch_name: String) -> Result<Cr
 
 #[tauri::command]
 pub async fn git_status(path: String) -> GitStatus {
-    git::status(&path)
+    tauri::async_runtime::spawn_blocking(move || git::status(&path)).await.unwrap_or_default()
 }
 
 #[tauri::command]
 pub async fn git_changed_files(path: String) -> Result<Vec<ChangedFile>, String> {
-    git::changed_files(&path)
+    tauri::async_runtime::spawn_blocking(move || git::changed_files(&path)).await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
 pub async fn git_file_diff(path: String, file_path: String, staged: bool) -> Result<String, String> {
-    git::file_diff(&path, &file_path, staged)
+    tauri::async_runtime::spawn_blocking(move || git::file_diff(&path, &file_path, staged)).await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -656,7 +668,12 @@ pub async fn git_create_branch(path: String, branch_name: String) -> Result<(), 
 
 #[tauri::command]
 pub async fn git_diff_stats(path: String) -> Result<Vec<DiffFileStat>, String> {
-    git::diff_stats(&path)
+    tauri::async_runtime::spawn_blocking(move || git::diff_stats(&path)).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn git_changes(path: String) -> Result<GitChanges, String> {
+    tauri::async_runtime::spawn_blocking(move || git::changes(&path)).await.map_err(|e| e.to_string())?
 }
 
 // ── System commands ────────────────────────────────────────────────

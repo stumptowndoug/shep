@@ -20,10 +20,9 @@ export function supportsSessionResume(provider: string): boolean {
 /** Chat and CLI session stores can differ, so a known interface must never be substituted. */
 export function sessionResumeInterface(
   session: Pick<SessionHistoryEntry, "agentInterface">,
-  preferred: AgentInterface,
   available: { chat: boolean; terminal: boolean },
 ): AgentInterface | null {
   if (session.agentInterface) return available[session.agentInterface] ? session.agentInterface : null;
-  if (preferred === "chat" && available.chat) return "chat";
-  return available.terminal ? "terminal" : available.chat ? "chat" : null;
+  // History without an interface predates chat support. Its IDs belong to the CLI.
+  return available.terminal ? "terminal" : null;
 }

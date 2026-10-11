@@ -11,7 +11,7 @@ const DEBOUNCE_MS: u64 = 500;
 const FALLBACK_POLL_SECS: u64 = 60;
 
 /// Paths inside `.git/` to allow through the filter (branch switches, new commits, worktree changes).
-const GIT_PASSTHROUGH: &[&str] = &["HEAD", "refs", "worktrees"];
+const GIT_PASSTHROUGH: &[&str] = &["HEAD", "refs", "worktrees", "index"];
 
 /// Directories to ignore entirely — high-churn build artifacts.
 const IGNORED_DIRS: &[&str] = &[
@@ -42,6 +42,7 @@ struct WatchSignal {
 pub struct GitWatcher {
     watcher: Mutex<Option<RecommendedWatcher>>,
     watched_paths: Arc<Mutex<HashSet<PathBuf>>>,
+    git_dirs: Arc<Mutex<HashMap<PathBuf, PathBuf>>>,
     shutdown: Arc<AtomicBool>,
 }
 
@@ -49,6 +50,7 @@ impl GitWatcher {
     pub fn new(app_handle: tauri::AppHandle) -> Self {
         let shutdown = Arc::new(AtomicBool::new(false));
         let watched_paths = Arc::new(Mutex::new(HashSet::<PathBuf>::new()));
+        let git_dirs = Arc::new(Mutex::new(HashMap::<PathBuf, PathBuf>::new()));
 
         // Channel for raw FS events → debounce thread
         let (tx, rx) = std::sync::mpsc::channel::<WatchSignal>();
@@ -129,6 +131,7 @@ impl GitWatcher {
 
         // --- Create notify watcher ---
         let watcher_watched = Arc::clone(&watched_paths);
+        let watcher_git_dirs = Arc::clone(&git_dirs);
         let watcher = notify::recommended_watcher(move |res: Result<Event, notify::Error>| {
             let event = match res {
                 Ok(e) => e,
@@ -140,15 +143,16 @@ impl GitWatcher {
                     continue;
                 }
 
-                // Map the event path back to a watched repo root
+                // Metadata can belong to both a main checkout and an external
+                // worktree. Notify every matching root, independent of map order.
                 let watched = watcher_watched.lock().unwrap();
+                let git_dirs = watcher_git_dirs.lock().unwrap();
                 for root in watched.iter() {
-                    if path.starts_with(root) {
+                    if event_belongs_to_repo(path, root, git_dirs.get(root)) {
                         let _ = tx.send(WatchSignal {
                             repo_root: root.clone(),
                             todo_changed: is_todo_path(path),
                         });
-                        break;
                     }
                 }
             }
@@ -158,6 +162,7 @@ impl GitWatcher {
         GitWatcher {
             watcher: Mutex::new(watcher),
             watched_paths,
+            git_dirs,
             shutdown,
         }
     }
@@ -175,6 +180,13 @@ impl GitWatcher {
             watcher
                 .watch(&path_buf, RecursiveMode::Recursive)
                 .map_err(|e| format!("Failed to watch {path}: {e}"))?;
+            if let Some(git_dir) = external_git_dir(&path_buf) {
+                if let Err(error) = watcher.watch(&git_dir, RecursiveMode::NonRecursive) {
+                    let _ = watcher.unwatch(&path_buf);
+                    return Err(format!("Failed to watch worktree metadata: {error}"));
+                }
+                self.git_dirs.lock().unwrap().insert(path_buf.clone(), git_dir);
+            }
         }
 
         watched.insert(path_buf);
@@ -192,6 +204,9 @@ impl GitWatcher {
         let mut watcher_guard = self.watcher.lock().unwrap();
         if let Some(ref mut watcher) = *watcher_guard {
             let _ = watcher.unwatch(&path_buf);
+            if let Some(git_dir) = self.git_dirs.lock().unwrap().remove(&path_buf) {
+                let _ = watcher.unwatch(&git_dir);
+            }
         }
 
         Ok(())
@@ -199,10 +214,32 @@ impl GitWatcher {
 
     pub fn shutdown(&self) {
         self.shutdown.store(true, Ordering::Relaxed);
-        let mut watcher_guard = self.watcher.lock().unwrap();
-        *watcher_guard = None;
-        self.watched_paths.lock().unwrap().clear();
+        let watcher = {
+            let mut watched = self.watched_paths.lock().unwrap();
+            let mut watcher_guard = self.watcher.lock().unwrap();
+            watched.clear();
+            self.git_dirs.lock().unwrap().clear();
+            watcher_guard.take()
+        };
+        // Dropping notify can join its callback thread. Release callback locks first.
+        drop(watcher);
     }
+}
+
+fn external_git_dir(repo: &Path) -> Option<PathBuf> {
+    use std::io::Read;
+    let dot_git = repo.join(".git");
+    if !dot_git.is_file() { return None; }
+    let mut content = String::new();
+    std::fs::File::open(dot_git).ok()?.take(8192).read_to_string(&mut content).ok()?;
+    let target = content.trim().strip_prefix("gitdir:")?.trim();
+    repo.join(target).canonicalize().ok().filter(|path| !path.starts_with(repo))
+}
+
+fn event_belongs_to_repo(path: &Path, repo: &Path, git_dir: Option<&PathBuf>) -> bool {
+    path.starts_with(repo) || git_dir.is_some_and(|dir| {
+        path.parent() == Some(dir.as_path()) && path.file_name().is_some_and(|name| name == "index" || name == "HEAD")
+    })
 }
 
 fn drain_pending(pending: &mut HashMap<PathBuf, bool>) -> (Vec<String>, Vec<String>) {
@@ -236,7 +273,7 @@ fn should_watch_path(path: &Path) -> bool {
             return false;
         }
 
-        // Inside .git: only allow HEAD and refs through
+        // Inside .git: allow only state that changes the displayed repository.
         if *comp == ".git" {
             if i + 1 >= components.len() {
                 return false;
@@ -259,6 +296,23 @@ mod tests {
         assert!(is_todo_path(Path::new("/repo/docs/todos.MD")));
         assert!(!is_todo_path(Path::new("/repo/notes.md")));
         assert!(!is_todo_path(Path::new("/repo/todo.txt")));
+    }
+
+    #[test]
+    fn index_updates_pass_for_checkouts_and_worktree_metadata() {
+        assert!(should_watch_path(Path::new("/repo/.git/index")));
+        assert!(should_watch_path(Path::new("/repo/.git/worktrees/feature/index")));
+        assert!(!should_watch_path(Path::new("/repo/.git/objects/ab/123")));
+    }
+
+    #[test]
+    fn external_worktree_index_events_reach_the_worktree() {
+        let repo = Path::new("/worktrees/feature");
+        let git_dir = PathBuf::from("/repo/.git/worktrees/feature");
+        assert!(event_belongs_to_repo(&git_dir.join("index"), repo, Some(&git_dir)));
+        assert!(event_belongs_to_repo(&git_dir.join("HEAD"), repo, Some(&git_dir)));
+        assert!(!event_belongs_to_repo(Path::new("/repo/.git/index"), repo, Some(&git_dir)));
+        assert!(!event_belongs_to_repo(&git_dir.join("index.lock"), repo, Some(&git_dir)));
     }
 
     #[test]

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Folder, RefreshCcw } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
 import { getUsageOverview, refreshUsageData } from "../../lib/tauri";
@@ -25,6 +25,7 @@ import {
   type PaceStatus,
 } from "./usageHelpers";
 import { groupModels, matchProjects, type UsageTotals } from "./usageLabels";
+import { getErrorMessage } from "../../lib/errors";
 
 const TIME_WINDOWS: { key: TimeWindow; label: string }[] = [
   { key: "24h", label: "24h" },
@@ -349,8 +350,14 @@ function Overview({ overview, snapshots }: { overview: UsageOverview; snapshots:
         muted: true,
       });
     }
+    const cursor = overview.providers.find(provider => provider.provider === "cursor");
+    if (cursor && cursor.tokens > 0) list.push({
+      key: "cursor-unassigned", name: "Cursor — project unavailable", icon: <ProviderLogo provider="cursor" />,
+      tokens: cursor.tokens, input: cursor.tokensInput, output: cursor.tokensOutput,
+      cache: cursor.tokensCacheRead + cursor.tokensCacheWrite, muted: true,
+    });
     return list;
-  }, [overview.topProjects, repos, gitStatuses]);
+  }, [overview.topProjects, overview.providers, repos, gitStatuses]);
 
   return (
     <>
@@ -389,19 +396,28 @@ export default function UsagePanel() {
 
   const [overview, setOverview] = useState<UsageOverview | null>(null);
   const [overviewLoading, setOverviewLoading] = useState(false);
+  const [overviewError, setOverviewError] = useState<string | null>(null);
+  const overviewRequest = useRef(0);
 
   const loadOverview = useCallback(async (key: TimeWindow) => {
+    const request = ++overviewRequest.current;
     setOverviewLoading(true);
+    setOverviewError(null);
+    setOverview(previous => previous?.window === key ? previous : null);
     try {
-      setOverview(await getUsageOverview(key));
+      const result = await getUsageOverview(key);
+      if (request === overviewRequest.current) setOverview(result);
+    } catch (error) {
+      if (request === overviewRequest.current) setOverviewError(getErrorMessage(error));
     } finally {
-      setOverviewLoading(false);
+      if (request === overviewRequest.current) setOverviewLoading(false);
     }
   }, []);
 
   // Fetch overview on initial mount
   useEffect(() => {
     void loadOverview(useUsageStore.getState().window);
+    return () => { overviewRequest.current++; };
   }, [loadOverview]);
 
   // Auto-refresh when background ingest completes
@@ -413,9 +429,13 @@ export default function UsagePanel() {
   }, [loadOverview]);
 
   const handleRefresh = async () => {
-    await refreshUsageData();
-    void fetchSnapshots();
-    void loadOverview(window);
+    try {
+      await refreshUsageData();
+      void fetchSnapshots();
+      void loadOverview(useUsageStore.getState().window);
+    } catch (error) {
+      setOverviewError(getErrorMessage(error));
+    }
   };
 
   const isBusy = loading || overviewLoading;
@@ -450,9 +470,13 @@ export default function UsagePanel() {
         </div>
       </header>
 
+      {overviewError && <div className="usage-empty" role="alert">
+        <p>Couldn’t load usage: {overviewError}</p>
+        <button className="btn-secondary" onClick={() => void loadOverview(window)}>Retry</button>
+      </div>}
       {overview ? (
         <Overview overview={overview} snapshots={snapshots} />
-      ) : (
+      ) : !overviewError && (
         <p className="usage-empty">Loading usage…</p>
       )}
     </div>

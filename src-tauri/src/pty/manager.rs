@@ -9,6 +9,7 @@ pub struct PtyManager {
     sessions: Mutex<HashMap<u32, PtySession>>,
     next_id: Mutex<u32>,
     shutting_down: AtomicBool,
+    ready_to_exit: AtomicBool,
 }
 
 impl PtyManager {
@@ -17,6 +18,7 @@ impl PtyManager {
             sessions: Mutex::new(HashMap::new()),
             next_id: Mutex::new(1),
             shutting_down: AtomicBool::new(false),
+            ready_to_exit: AtomicBool::new(false),
         }
     }
 
@@ -41,6 +43,14 @@ impl PtyManager {
         self.shutting_down.load(Ordering::SeqCst)
     }
 
+    pub fn finish_shutdown(&self) {
+        self.ready_to_exit.store(true, Ordering::SeqCst);
+    }
+
+    pub fn can_exit(&self) -> bool {
+        self.ready_to_exit.load(Ordering::SeqCst)
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn spawn(
         &self,
@@ -53,9 +63,13 @@ impl PtyManager {
         color_theme: PtyColorTheme,
         channel: Channel<PtyOutput>,
     ) -> Result<u32, String> {
+        let mut sessions = self.sessions.lock().unwrap();
+        if self.is_shutting_down() {
+            return Err("Shep is shutting down".into());
+        }
         let session = PtySession::spawn(command, args, cwd, env, cols, rows, color_theme, channel)?;
         let id = self.allocate_id();
-        self.sessions.lock().unwrap().insert(id, session);
+        sessions.insert(id, session);
         Ok(id)
     }
 

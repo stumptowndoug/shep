@@ -786,18 +786,22 @@ export default function SettingsPanel() {
 
         {updateStatus === "ready" && (
           <div className="mb-4">
-            <div className="text-sm text-[var(--text-secondary)] mb-2">Update downloaded and ready to install.</div>
+            <div className="text-sm text-[var(--text-secondary)] mb-2">Update installed. Restart to use the new version.</div>
             <button className="btn-primary" onClick={() => void restartApp()}>
               Restart Now
             </button>
           </div>
         )}
 
-        {updateStatus === "error" && updateError && (
+        {updateStatus === "installing" && (
+          <p className="text-sm text-[var(--text-secondary)] mb-4">Verifying and installing update…</p>
+        )}
+
+        {updateError && (
           <div className="text-sm text-red-300 mb-4">{updateError}</div>
         )}
 
-        {updateStatus !== "downloading" && updateStatus !== "ready" && (
+        {updateStatus !== "downloading" && updateStatus !== "installing" && updateStatus !== "ready" && (
           <button
             className="btn-primary"
             disabled={updateStatus === "checking"}

@@ -15,9 +15,9 @@ interface TerminalStore {
   tabActivity: Record<number, TabActivity>;
   switchProject: (repoPath: string) => void;
   removeProject: (repoPath: string) => void;
-  addTab: (tab: UnifiedTab) => void;
-  removeTab: (id: string) => void;
-  setActiveTab: (id: string) => void;
+  addTab: (tab: UnifiedTab) => boolean;
+  removeTab: (id: string, repoPath?: string) => void;
+  setActiveTab: (id: string, repoPath?: string) => void;
   updateTab: (id: string, patch: Partial<Pick<UnifiedTab, "label">>) => void;
   setTabSessionMode: (ptyId: number, mode: SessionMode) => void;
   setTabTitleFromPty: (ptyId: number, title: string) => void;
@@ -26,7 +26,7 @@ interface TerminalStore {
   addPanelTab: (kind: PanelTabKind) => void;
   removePanelTab: (kind: PanelTabKind) => void;
   togglePanelTab: (kind: PanelTabKind) => void;
-  findTabByCommand: (commandName: string) => TerminalTabData | undefined;
+  findTabByCommand: (commandName: string, repoPath?: string) => TerminalTabData | undefined;
   findTabByPtyId: (ptyId: number) => TerminalTabData | undefined;
   initActivity: (ptyId: number) => void;
   setTabActive: (ptyId: number, active: boolean) => void;
@@ -154,10 +154,13 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
   },
 
   addTab: (tab: UnifiedTab) => {
+    let added = false;
     set((state) => {
-      const path = state.activeProjectPath;
+      const path = isSessionTab(tab) ? tab.repoPath : state.activeProjectPath;
       if (!path) return state;
-      const ps = state.projectState[path] ?? emptyState();
+      const ps = state.projectState[path];
+      if (!ps) return state; // The originating project may have been removed during launch.
+      added = true;
       return {
         projectState: {
           ...state.projectState,
@@ -168,11 +171,12 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
         },
       };
     });
+    return added;
   },
 
-  removeTab: (id: string) => {
+  removeTab: (id: string, repoPath?: string) => {
     set((state) => {
-      const path = state.activeProjectPath;
+      const path = repoPath ?? state.activeProjectPath;
       if (!path) return state;
       const ps = state.projectState[path];
       if (!ps) return state;
@@ -196,9 +200,9 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
     });
   },
 
-  setActiveTab: (id: string) => {
+  setActiveTab: (id: string, repoPath?: string) => {
     set((state) => {
-      const path = state.activeProjectPath;
+      const path = repoPath ?? state.activeProjectPath;
       if (!path) return state;
       const ps = state.projectState[path];
       if (!ps || !ps.tabs.some((t) => t.id === id)) return state;
@@ -415,10 +419,11 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
     }
   },
 
-  findTabByCommand: (commandName: string) => {
+  findTabByCommand: (commandName: string, repoPath?: string) => {
     const state = get();
-    if (!state.activeProjectPath) return undefined;
-    const ps = state.projectState[state.activeProjectPath];
+    const path = repoPath ?? state.activeProjectPath;
+    if (!path) return undefined;
+    const ps = state.projectState[path];
     return ps?.tabs.find(
       (t): t is TerminalTabData => isSessionTab(t) && t.commandName === commandName,
     );

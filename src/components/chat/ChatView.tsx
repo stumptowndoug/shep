@@ -65,11 +65,11 @@ const Turn = memo(function Turn({ turn }: { turn: ChatTurn }) {
             <span className="chat-worked__facts">{facts}</span>
           </summary>
           <div className="chat-worked__items">
-            {work.map((item) => <ChatItemView key={item.id} item={item} />)}
+            {work.map((item) => <ChatItemView key={item.id} item={item} streaming={turn.endedAt === null} />)}
           </div>
         </details>
       )}
-      {answer.map((item) => <ChatItemView key={item.id} item={item} />)}
+      {answer.map((item) => <ChatItemView key={item.id} item={item} streaming={turn.endedAt === null} />)}
       {stopMessage && <div className="chat-notice">{stopMessage}</div>}
     </div>
   );

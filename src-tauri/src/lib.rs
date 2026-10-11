@@ -36,8 +36,19 @@ pub fn run() {
         .manage(WorkspaceManager::new())
         .manage(UsageDb::open().unwrap_or_else(|e| {
             eprintln!("Usage database failed to open ({e}), using in-memory fallback");
-            UsageDb::open_in_memory()
+            let mut db = UsageDb::open_in_memory();
+            db.storage_warning = Some(format!("Session history and usage are temporary and will be lost when Shep closes. Fix the storage problem and restart Shep. {e}"));
+            db
         }))
+        .on_page_load(|webview, payload| {
+            if webview.label() == "main"
+                && matches!(payload.event(), tauri::webview::PageLoadEvent::Started)
+            {
+                // The old page owns ACP protocol state; a replacement page cannot
+                // reconnect those transports. Remove them before it opens new chats.
+                webview.state::<AcpManager>().kill_all();
+            }
+        })
         .setup(|app| {
             // Run migration from old project-based config
             let workspace = app.state::<WorkspaceManager>();
@@ -132,6 +143,7 @@ pub fn run() {
             commands::record_session_history_activity,
             commands::list_session_history,
             commands::get_pty_session_count,
+            commands::get_storage_warning,
             commands::shutdown_and_quit,
             commands::get_username,
             commands::get_home_directory,
@@ -155,6 +167,7 @@ pub fn run() {
             commands::git_switch_branch,
             commands::git_create_branch,
             commands::git_diff_stats,
+            commands::git_changes,
             commands::read_todos,
             commands::toggle_todo,
             commands::add_todo,
@@ -190,16 +203,22 @@ pub fn run() {
         if let RunEvent::ExitRequested { api, .. } = &event {
             let pty = app_handle.state::<PtyManager>();
             if pty.is_shutting_down() {
+                if !pty.can_exit() {
+                    api.prevent_exit();
+                }
                 return;
             }
             let acp = app_handle.state::<AcpManager>();
             let count = pty.session_count() + acp.session_count();
+            api.prevent_exit();
             if count > 0 {
-                api.prevent_exit();
                 let _ = app_handle.emit("quit-requested", count);
             } else {
-                app_handle.state::<GitWatcher>().shutdown();
-                pty.kill_all();
+                // Closed tabs can still have termination workers in flight.
+                let app = app_handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    let _ = commands::shutdown_and_quit(app, None).await;
+                });
             }
         }
     });

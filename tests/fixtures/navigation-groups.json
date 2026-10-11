@@ -1,0 +1,4 @@
+[
+  { "id": "workspace", "name": "Workspace", "order": 0, "pinned": true },
+  { "id": "projects", "name": "Projects", "order": 1, "pinned": false }
+]

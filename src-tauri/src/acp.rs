@@ -9,7 +9,7 @@ use std::collections::{HashMap, VecDeque};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use tauri::ipc::Channel;
@@ -40,18 +40,34 @@ struct AcpProcess {
 
 #[derive(Clone)]
 pub struct AcpManager {
-    processes: Arc<Mutex<HashMap<u32, AcpProcess>>>,
+    state: Arc<Mutex<AcpState>>,
+}
+
+#[derive(Default)]
+struct AcpState {
+    processes: HashMap<u32, AcpProcess>,
+    terminations: Vec<std::thread::JoinHandle<()>>,
+    shutting_down: bool,
+}
+
+impl AcpState {
+    fn terminate(&mut self, id: u32) {
+        if let Some(process) = self.processes.remove(&id) {
+            self.terminations.retain(|worker| !worker.is_finished());
+            self.terminations.push(terminate_group(process.pid));
+        }
+    }
 }
 
 impl AcpManager {
     pub fn new() -> Self {
         AcpManager {
-            processes: Arc::new(Mutex::new(HashMap::new())),
+            state: Arc::new(Mutex::new(AcpState::default())),
         }
     }
 
     pub fn session_count(&self) -> usize {
-        self.processes.lock().unwrap().len()
+        self.state.lock().unwrap().processes.len()
     }
 
     pub fn spawn(
@@ -62,6 +78,11 @@ impl AcpManager {
         cwd: &str,
         channel: Channel<AcpOutput>,
     ) -> Result<(), String> {
+        // Keep insertion and shutdown ordered: no process may appear after the drain.
+        let mut state = self.state.lock().unwrap();
+        if state.shutting_down {
+            return Err("Shep is shutting down".into());
+        }
         let mut cmd = Command::new(command);
         cmd.args(&args)
             .current_dir(cwd)
@@ -82,18 +103,19 @@ impl AcpManager {
         let stdout = child.stdout.take().ok_or("Agent stdout unavailable")?;
         let stderr = child.stderr.take().ok_or("Agent stderr unavailable")?;
 
-        self.processes.lock().unwrap().insert(
+        state.processes.insert(
             id,
             AcpProcess {
                 pid: child.id(),
                 stdin: Arc::new(Mutex::new(stdin)),
             },
         );
+        drop(state);
 
         let stderr_tail = Arc::new(Mutex::new(VecDeque::new()));
         spawn_stderr_reader(stderr, Arc::clone(&stderr_tail), channel.clone());
 
-        let processes = Arc::clone(&self.processes);
+        let manager = self.clone();
         std::thread::spawn(move || {
             let mut reader = BufReader::new(stdout);
             let mut bridge_error = None;
@@ -104,7 +126,7 @@ impl AcpManager {
                     Err(error) => {
                         bridge_error =
                             Some(format!("Chat adapter output could not be read: {error}"));
-                        terminate_group(child.id());
+                        manager.kill(id);
                         break;
                     }
                 };
@@ -112,7 +134,7 @@ impl AcpManager {
                     continue;
                 }
                 if channel.send(AcpOutput::Line(line)).is_err() {
-                    terminate_group(child.id());
+                    manager.kill(id);
                     break;
                 }
             }
@@ -122,7 +144,7 @@ impl AcpManager {
             } else {
                 exit_code
             };
-            processes.lock().unwrap().remove(&id);
+            manager.kill(id);
             let mut stderr = stderr_tail
                 .lock()
                 .unwrap()
@@ -143,9 +165,10 @@ impl AcpManager {
         // A full pipe may block until the agent reads again. Never keep the
         // process registry locked: close must still be able to kill that agent.
         let stdin = self
-            .processes
+            .state
             .lock()
             .unwrap()
+            .processes
             .get(&id)
             .map(|process| Arc::clone(&process.stdin))
             .ok_or_else(|| format!("Agent {id} is not running"))?;
@@ -158,16 +181,24 @@ impl AcpManager {
     }
 
     pub fn kill(&self, id: u32) {
-        let process = self.processes.lock().unwrap().remove(&id);
-        if let Some(process) = process {
-            terminate_group(process.pid);
-        }
+        self.state.lock().unwrap().terminate(id);
     }
 
     pub fn kill_all(&self) {
-        let drained: Vec<_> = self.processes.lock().unwrap().drain().collect();
-        for (_, process) in drained {
-            terminate_group(process.pid);
+        let mut state = self.state.lock().unwrap();
+        let ids: Vec<_> = state.processes.keys().copied().collect();
+        for id in ids {
+            state.terminate(id);
+        }
+    }
+
+    /// Used before process exit, including cleanup already started by closed tabs.
+    pub fn shutdown(&self) {
+        self.state.lock().unwrap().shutting_down = true;
+        self.kill_all();
+        let workers = std::mem::take(&mut self.state.lock().unwrap().terminations);
+        for worker in workers {
+            let _ = worker.join();
         }
     }
 }
@@ -237,20 +268,37 @@ fn wait_for_exit(child: &mut Child) -> i32 {
 }
 
 /// SIGTERM the agent's process group, then SIGKILL whatever ignores it.
-fn terminate_group(pid: u32) {
-    #[cfg(unix)]
-    {
-        let group = -(pid as i32);
-        unsafe {
-            libc::kill(group, libc::SIGTERM);
-        }
-        std::thread::spawn(move || {
-            std::thread::sleep(KILL_GRACE);
+fn terminate_group(pid: u32) -> std::thread::JoinHandle<()> {
+    std::thread::spawn(move || {
+        #[cfg(unix)]
+        {
+            let descendants = crate::pty::session::get_all_descendants(pid as i32);
+            let group = -(pid as i32);
+            unsafe {
+                libc::kill(group, libc::SIGTERM);
+                for &child in &descendants {
+                    libc::kill(child, libc::SIGTERM);
+                }
+            }
+            let deadline = Instant::now() + KILL_GRACE;
+            while Instant::now() < deadline {
+                let alive = unsafe {
+                    libc::kill(group, 0) == 0
+                        || descendants.iter().any(|&child| libc::kill(child, 0) == 0)
+                };
+                if !alive {
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            }
             unsafe {
                 libc::kill(group, libc::SIGKILL);
+                for &child in &descendants {
+                    libc::kill(child, libc::SIGKILL);
+                }
             }
-        });
-    }
+        }
+    })
 }
 
 #[cfg(all(test, unix))]
@@ -294,7 +342,7 @@ mod tests {
                 Channel::new(|_| Ok(())),
             )
             .unwrap();
-        let pid = manager.processes.lock().unwrap()[&1].pid;
+        let pid = manager.state.lock().unwrap().processes[&1].pid;
         let (written_tx, written_rx) = mpsc::channel();
         let writer_manager = Arc::clone(&manager);
         let writer = std::thread::spawn(move || {
@@ -330,5 +378,57 @@ mod tests {
     #[test]
     fn close_all_does_not_wait_for_stalled_stdin() {
         close_with_stalled_stdin(true);
+    }
+
+    #[test]
+    fn shutdown_waits_for_resistant_agents_and_previously_closed_tabs() {
+        for close_first in [false, true] {
+            let manager = AcpManager::new();
+            let (ready_tx, ready_rx) = mpsc::channel();
+            manager
+                .spawn(
+                    1,
+                    "/bin/sh",
+                    vec![
+                        "-c".into(),
+                        "trap '' TERM; echo ready; exec sleep 30".into(),
+                    ],
+                    "/",
+                    Channel::new(move |_| {
+                        let _ = ready_tx.send(());
+                        Ok(())
+                    }),
+                )
+                .unwrap();
+            let pid = manager.state.lock().unwrap().processes[&1].pid;
+            ready_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+            if close_first {
+                manager.kill(1);
+            }
+            manager.shutdown();
+            let deadline = Instant::now() + Duration::from_secs(1);
+            while unsafe { libc::kill(pid as i32, 0) == 0 } && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            let alive = unsafe { libc::kill(pid as i32, 0) == 0 };
+            if alive {
+                unsafe {
+                    libc::kill(-(pid as i32), libc::SIGKILL);
+                }
+            }
+            assert!(
+                !alive,
+                "shutdown returned before the resistant agent stopped"
+            );
+            assert!(manager
+                .spawn(
+                    2,
+                    "/bin/sleep",
+                    vec!["30".into()],
+                    "/",
+                    Channel::new(|_| Ok(()))
+                )
+                .is_err());
+        }
     }
 }

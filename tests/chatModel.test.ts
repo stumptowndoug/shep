@@ -65,6 +65,22 @@ test("message chunks with different ids stay separate", () => {
   assert.equal(chat.turns[0].items.length, 2);
 });
 
+test("late chunks and tool updates do not reopen turns or duplicate tools", () => {
+  let chat = startTurn(emptyChat(), "first");
+  chat = applySessionUpdate(chat, OPENCODE_TURN[2]);
+  chat = endTurn(chat, "end_turn");
+  const endedAt = chat.turns[0].endedAt;
+  chat = applySessionUpdate(chat, OPENCODE_TURN[4]);
+  chat = applySessionUpdate(chat, {sessionUpdate:"agent_message_chunk",content:{type:"text",text:"Late answer"}});
+  assert.equal(chat.turns.length, 1);
+  assert.equal(chat.turns[0].endedAt, endedAt);
+  assert.equal(chat.turns[0].items.filter(item => item.kind === "tool").length, 1);
+  chat = startTurn(chat, "second");
+  chat = applySessionUpdate(chat, OPENCODE_TURN[4]);
+  assert.equal(chat.turns[1].items.length, 0);
+  assert.equal(chat.turns[0].endedAt, endedAt);
+});
+
 test("replayed history opens a turn per user message", () => {
   let chat = emptyChat();
   chat = applySessionUpdate(chat, { sessionUpdate: "user_message_chunk", content: { type: "text", text: "first" } });

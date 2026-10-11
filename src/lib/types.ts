@@ -318,6 +318,12 @@ export interface DiffFileStat {
   deletions: number;
 }
 
+export interface GitChanges {
+  files: ChangedFile[];
+  stats: DiffFileStat[];
+  statsComplete: boolean;
+}
+
 // ── Git changed files ────────────────────────────────────────────────
 
 export interface ChangedFile {
@@ -500,10 +506,7 @@ export interface UsageBreakdownItem {
   tokensCacheRead: number;
   tokensCacheWrite: number;
   tokensThoughts: number;
-  cost: number | null;
-  costDetail: UsageCost;
   sessions: number | null;
-  trend: number[];
 }
 
 export interface UsageOverview {

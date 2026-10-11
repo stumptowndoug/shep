@@ -465,7 +465,7 @@ fn decode_utf8_chunks(pending: &mut Vec<u8>, incoming: &[u8]) -> Vec<String> {
 
 /// Find all descendant PIDs of the given root PID by walking the process tree.
 /// Uses `pgrep -P <pid>` to find direct children, then recurses.
-fn get_all_descendants(root_pid: i32) -> Vec<i32> {
+pub(crate) fn get_all_descendants(root_pid: i32) -> Vec<i32> {
     let mut descendants = Vec::new();
     let mut queue = vec![root_pid];
 

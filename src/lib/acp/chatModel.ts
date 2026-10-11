@@ -133,11 +133,16 @@ function replaceLastTurn(state: ChatState, turn: ChatTurn): ChatState {
   return { ...state, turns: [...state.turns.slice(0, -1), turn] };
 }
 
-/** Apply `fn` to the current turn's items, opening a turn if none is open. */
-function updateItems(state: ChatState, fn: (items: ChatItem[]) => ChatItem[]): ChatState {
-  const base = lastOf(state.turns)?.endedAt === null ? state : startTurn(state, null);
-  const turn = lastOf(base.turns)!;
-  return replaceLastTurn(base, { ...turn, items: fn(turn.items) });
+/** Late updates amend their completed turn; only explicit prompts open another turn. */
+function updateItems(state: ChatState, fn: (items: ChatItem[]) => ChatItem[], existingItemId?: string): ChatState {
+  const base = state.turns.length ? state : startTurn(state, null);
+  let index = base.turns.length - 1;
+  if (existingItemId) {
+    for (let i = index; i >= 0; i--) {
+      if (base.turns[i].items.some(item => item.id === existingItemId)) { index = i; break; }
+    }
+  }
+  return { ...base, turns: base.turns.map((turn, i) => i === index ? { ...turn, items: fn(turn.items) } : turn) };
 }
 
 let itemCounter = 0;
@@ -340,7 +345,7 @@ function upsertTool(state: ChatState, update: SessionUpdate): ChatState {
     const copy = [...items];
     copy[index] = next;
     return copy;
-  });
+  }, update.sessionUpdate === "tool_call_update" ? id : undefined);
 }
 
 function upsertPlan(state: ChatState, entries: PlanEntry[]): ChatState {

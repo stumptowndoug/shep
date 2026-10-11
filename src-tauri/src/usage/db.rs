@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 #[derive(Clone)]
 pub struct UsageDb {
     pub conn: Arc<Mutex<Connection>>,
+    pub storage_warning: Option<String>,
 }
 
 impl UsageDb {
@@ -20,6 +21,7 @@ impl UsageDb {
         let _ = seed_pricing(&conn);
         Self {
             conn: Arc::new(Mutex::new(conn)),
+            storage_warning: Some("Session history and usage are temporary and will be lost when Shep closes.".into()),
         }
     }
 
@@ -40,6 +42,7 @@ impl UsageDb {
 
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
+            storage_warning: None,
         })
     }
 }
@@ -327,6 +330,16 @@ fn migrate(conn: &Connection) -> Result<(), String> {
             .map_err(|e| format!("Failed to run migration v13: {e}"))?;
     }
 
+    if version < 14 {
+        // Before interface tracking, every saved Shep session used the CLI.
+        // Also repair databases already opened by the first chat development builds.
+        conn.execute_batch(
+            "UPDATE session_history SET agent_interface = 'terminal' WHERE agent_interface IS NULL;
+             INSERT INTO schema_version (version) VALUES (14);",
+        )
+        .map_err(|e| format!("Failed to run migration v14: {e}"))?;
+    }
+
     Ok(())
 }
 
@@ -441,13 +454,13 @@ mod tests {
             )
             .unwrap();
 
-        assert_eq!(version, 13);
+        assert_eq!(version, 14);
         assert_eq!(history_table, 1);
         assert!(pricing_rows > 0);
     }
 
     #[test]
-    fn v13_preserves_legacy_history_and_is_repeatable() {
+    fn migrations_preserve_legacy_terminal_history_and_are_repeatable() {
         let conn = Connection::open_in_memory().unwrap();
         migrate(&conn).unwrap();
         conn.execute_batch(
@@ -463,7 +476,24 @@ mod tests {
             "SELECT title, agent_interface FROM session_history WHERE session_id = 'old-session'",
             [], |row| Ok((row.get(0)?, row.get(1)?))
         ).unwrap();
-        assert_eq!(row, ("Keep this".into(), None));
+        assert_eq!(row, ("Keep this".into(), Some("terminal".into())));
+    }
+
+    #[test]
+    fn v14_preserves_recorded_chat_interfaces() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate(&conn).unwrap();
+        conn.execute_batch(
+            "DELETE FROM schema_version WHERE version >= 14;
+             INSERT INTO session_history (provider, session_id, project_path, started_at, last_activity_at, created_at, updated_at, agent_interface)
+             VALUES ('claude', 'chat-session', '/repo', 1, 2, 1, 2, 'chat'),
+                    ('claude', 'legacy-session', '/repo', 1, 2, 1, 2, NULL);",
+        ).unwrap();
+        migrate(&conn).unwrap();
+        migrate(&conn).unwrap();
+        let mut stmt = conn.prepare("SELECT agent_interface FROM session_history ORDER BY session_id").unwrap();
+        let interfaces: Vec<String> = stmt.query_map([], |row| row.get(0)).unwrap().map(Result::unwrap).collect();
+        assert_eq!(interfaces, ["chat", "terminal"]);
     }
 
     #[test]
@@ -501,7 +531,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(stale_count, 0);
-        assert_eq!(version, 13);
+        assert_eq!(version, 14);
     }
 
     #[test]
@@ -557,7 +587,7 @@ mod tests {
 
         assert_eq!(codex_rows, 0);
         assert_eq!(claude_rows, 3);
-        assert_eq!(version, 13);
+        assert_eq!(version, 14);
     }
 
     #[test]
@@ -613,7 +643,7 @@ mod tests {
 
         assert_eq!(antigravity_rows, 0);
         assert_eq!(claude_rows, 3);
-        assert_eq!(version, 13);
+        assert_eq!(version, 14);
     }
 
     #[test]
@@ -677,6 +707,6 @@ mod tests {
         assert_eq!(google_rows, 2);
         assert_eq!(anthropic_rows, 2);
         assert_eq!(unknown_rows, 1);
-        assert_eq!(version, 13);
+        assert_eq!(version, 14);
     }
 }

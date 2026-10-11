@@ -178,10 +178,10 @@ function PermissionResult({ item }: { item: ItemOf<"permission"> }) {
   );
 }
 
-export const ChatItemView = memo(function ChatItemView({ item }: { item: ChatItem }) {
+export const ChatItemView = memo(function ChatItemView({ item, streaming = false }: { item: ChatItem; streaming?: boolean }) {
   switch (item.kind) {
     case "message":
-      return <ChatMarkdown text={item.text} />;
+      return <ChatMarkdown text={item.text} streaming={streaming} />;
     case "media":
       return item.content.type === "image"
         ? <img className="chat-media" src={`data:${item.content.mimeType};base64,${item.content.data}`} alt="Agent output" loading="lazy" decoding="async" />

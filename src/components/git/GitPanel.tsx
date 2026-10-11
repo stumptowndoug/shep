@@ -1,16 +1,15 @@
 import { Suspense, lazy, useEffect, useMemo, useState } from "react";
-import { listen } from "@tauri-apps/api/event";
 import { GitBranch } from "lucide-react";
 import { useGitStore } from "../../stores/useGitStore";
 import { useTerminalStore } from "../../stores/useTerminalStore";
 import { useGitPanelStore, type DiffArea } from "../../stores/useGitPanelStore";
 import { useEditorStore } from "../../stores/useEditorStore";
 import { useNoticeStore } from "../../stores/useNoticeStore";
-import { gitChangedFiles, gitDiffStats, gitFileDiff, openFileInEditor, readMarkdownFile } from "../../lib/tauri";
+import { gitFileDiff, openFileInEditor, readMarkdownFile } from "../../lib/tauri";
+import { useGitChanges } from "../../hooks/useGitChanges";
 import { getEditorLabel } from "../../lib/editors";
 import { getErrorMessage } from "../../lib/errors";
 import { summarizeChanges } from "../../lib/gitChangeSummary";
-import type { ChangedFile, DiffFileStat } from "../../lib/types";
 import ErrorBoundary from "../shared/ErrorBoundary";
 import EditorIcon from "../shared/EditorIcon";
 import { getCodeViewCSSVariables } from "./codeViewTheme";
@@ -22,15 +21,9 @@ const ChatMarkdown = lazy(() => import("../chat/ChatMarkdown"));
 
 const isMarkdown = (path: string) => /\.(md|markdown)$/i.test(path);
 
-const STATUS_LABEL: Record<string, string> = { M: "Modified", A: "Added", D: "Deleted", R: "Renamed", "?": "New" };
+const STATUS_LABEL: Record<string, string> = { M: "Modified", A: "Added", D: "Deleted", R: "Renamed", U: "Merge conflict", "?": "New" };
 const AREA_LABEL: Record<DiffArea, string> = { unstaged: "Working", staged: "Staged", untracked: "New" };
 const AREA_ORDER: DiffArea[] = ["unstaged", "untracked", "staged"];
-
-interface Changes {
-  repo: string;
-  files: ChangedFile[];
-  stats: DiffFileStat[];
-}
 
 /** Changed files in the active project and the diff of the selected one. */
 export default function GitPanel() {
@@ -38,42 +31,14 @@ export default function GitPanel() {
   const status = useGitStore((s) => (repo ? s.projectGitStatus[repo] : undefined));
   const selection = useGitPanelStore((s) => (repo ? s.perRepo[repo] : undefined));
   const editorLabel = getEditorLabel(useEditorStore((s) => s.settings.preferredEditor));
-  const [changes, setChanges] = useState<Changes | null>(null);
   const [diff, setDiff] = useState<{ key: string; text: string; error: string | null } | null>(null);
   // Markdown files can show a rendered preview instead of the diff.
   const [previewPath, setPreviewPath] = useState<string | null>(null);
   const [preview, setPreview] = useState<{ path: string; text: string; error: string | null } | null>(null);
   const isGitRepo = !!status?.is_git_repo;
 
-  // Load the changed files, and reload when the working tree changes.
-  useEffect(() => {
-    if (!repo || !isGitRepo) return;
-    let disposed = false;
-    let request = 0;
-    let debounce: ReturnType<typeof setTimeout> | undefined;
-    const refresh = async () => {
-      const current = ++request;
-      try {
-        const [files, stats] = await Promise.all([gitChangedFiles(repo), gitDiffStats(repo)]);
-        if (!disposed && current === request) setChanges({ repo, files, stats });
-      } catch {
-        // Keep the last list until the next filesystem refresh.
-      }
-    };
-    void refresh();
-    const unlisten = listen<{ paths: string[] }>("git-fs-changed", (event) => {
-      if (disposed || !event.payload.paths.includes(repo)) return;
-      clearTimeout(debounce);
-      debounce = setTimeout(() => void refresh(), 300);
-    });
-    return () => {
-      disposed = true;
-      clearTimeout(debounce);
-      void unlisten.then((stop) => stop()).catch(() => {});
-    };
-  }, [repo, isGitRepo]);
-
-  const current = changes && changes.repo === repo ? changes : null;
+  const snapshot = useGitChanges(isGitRepo ? repo : null);
+  const current = snapshot?.data;
   const summary = useMemo(() => (current ? summarizeChanges(current.files, current.stats) : null), [current]);
   const statsByPath = useMemo(() => new Map((current?.stats ?? []).map((stat) => [stat.path, stat])), [current]);
 
@@ -143,6 +108,7 @@ export default function GitPanel() {
               {files.length === 0 ? "No changes" : `${files.length} ${files.length === 1 ? "file" : "files"} changed`}
               {files.length > 0 && <span className="changes__add">+{summary.additions}</span>}
               {files.length > 0 && <span className="changes__del">−{summary.deletions}</span>}
+              {current?.statsComplete === false && <span title="Some large files are excluded from line totals">Partial totals</span>}
             </div>
           )}
         </header>
@@ -171,7 +137,7 @@ export default function GitPanel() {
                   }}
                 >
                   <span className={`changes__status changes__status--${file.status === "?" ? "new" : file.status.toLowerCase()}`} title={STATUS_LABEL[file.status] ?? file.status}>
-                    {file.status === "?" ? "U" : file.status}
+                    {file.status === "?" ? "N" : file.status === "U" ? "!" : file.status}
                   </span>
                   <span className="changes__path">
                     <span className="changes__name">{name}</span>
@@ -233,6 +199,7 @@ export default function GitPanel() {
                 </div>
               )}
             </div>
+            {selectedFile.status === "U" && <p className="changes-empty">Merge conflict: the working copy is compared with ours. Resolve the conflict markers in your editor.</p>}
             {previewing ? (
               <div className="changes__preview">
                 {preview && preview.path === selectedPath ? (
@@ -259,7 +226,7 @@ export default function GitPanel() {
             </ErrorBoundary>}
           </>
         ) : (
-          <div className="changes-empty">{summary ? "Nothing to review." : "Loading changes…"}</div>
+          <div className="changes-empty">{snapshot?.error ?? (summary ? "Nothing to review." : "Loading changes…")}</div>
         )}
       </section>
     </div>

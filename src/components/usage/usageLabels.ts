@@ -23,7 +23,7 @@ const WORD_CASE: Record<string, string> = { gpt: "GPT", glm: "GLM", oss: "OSS", 
 
 /**
  * A readable model name from what the agent logged: "claude-opus-5-5" is
- * "Opus 5.5", "~deepseek/deepseek-flash-latest" is "DeepSeek Flash". Placeholder
+ * "Opus 5.5", "~deepseek/deepseek-flash-latest" is "DeepSeek Flash Latest". Placeholder
  * names ("unknown", "<synthetic>") return null.
  */
 export function formatModelName(raw: string): string | null {
@@ -32,7 +32,6 @@ export function formatModelName(raw: string): string | null {
   name = name.slice(name.lastIndexOf("/") + 1);
   // Effort levels like "(Low)" are the same model; logs sometimes cut the closing paren.
   name = name.replace(/\s*\([^)]*\)?\s*$/, "");
-  name = name.replace(/[-_](latest|preview|\d{8})$/i, "");
   if (!name) return null;
   // Agents that already log a display name ("Gemini 3.7 Flash") keep it.
   if (/\s/.test(name) || /[A-Z]/.test(name)) return name;
@@ -58,35 +57,18 @@ export interface ModelRow extends UsageTotals {
   provider: UsageProvider;
 }
 
-/** Models by readable name, with effort variants and truncated names folded together. */
+/** Fold explicit effort variants, preserving model names and snapshot versions. */
 export function groupModels(items: UsageBreakdownItem[]): ModelRow[] {
   const rows = new Map<string, ModelRow>();
   for (const item of items) {
-    const name = formatModelName(item.label);
-    if (!name || item.tokens <= 0) continue;
+    const name = formatModelName(item.label) ?? "Unspecified model";
+    if (item.tokens <= 0) continue;
     const key = `${item.provider}\0${name}`;
     const row = rows.get(key) ?? { key, name, provider: item.provider, ...emptyTotals() };
     addTotals(row, item);
     rows.set(key, row);
   }
 
-  // A name cut off mid-word ("Gemini 3.7 Fl") joins the full one from the same agent.
-  const list = [...rows.values()];
-  for (const row of list) {
-    const full = list.find((other) =>
-      other !== row
-      && other.provider === row.provider
-      && other.name.length > row.name.length
-      && other.name.startsWith(row.name)
-      && /[a-z]/i.test(other.name.charAt(row.name.length)),
-    );
-    if (!full) continue;
-    full.tokens += row.tokens;
-    full.input += row.input;
-    full.output += row.output;
-    full.cache += row.cache;
-    rows.delete(row.key);
-  }
   return [...rows.values()].sort((a, b) => b.tokens - a.tokens);
 }
 

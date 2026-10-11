@@ -32,6 +32,7 @@ let previewPorts: PortInfo[] = params.get('ports') === 'empty' ? [] : [
   {port:8080,pid:3456,process:'python3',framework:'',project:'',cwd:'/preview/tools/local-development/long-running-preview-server',memory_kb:24576,uptime:'12-03:08:14'},
 ];
 let portScans = 0;
+let repoScans = 0;
 const changedFiles = params.get('changes') === 'empty' ? [] : [
   { path: 'src/App.tsx', status: 'M', area: 'unstaged', old_path: null },
   { path: 'src/styles/globals.css', status: 'M', area: 'unstaged', old_path: null },
@@ -78,7 +79,7 @@ const usageOverview = (window: string) => {
   const trend = Array.from({length:count},(_,i)=>({start:now-(count-i)*unit,end:now-(count-1-i)*unit,label:'',tokens:Math.round(Math.max(0,Math.sin(i*1.7)+Math.sin(i*0.37)*0.8+0.4)*totalTokens/count),cost:null,costDetail:cost,providers:[]}));
   return {window,totalTokens,totalCost:null,totalCostDetail:cost,activeProjects:6,activeSessions:Math.round(80*scale)+1,providers,trend,topModels,topProjects};
 };
-const config = { name: 'shep', commands: [], assistants: [] };
+const config = { name: 'shep', commands: params.has('autostart') ? [{name:'serve',command:'echo fixture',autostart:true,env:{},cwd:'app'}] : [], assistants: [] };
 const git = { is_git_repo: true, branch: 'design/springroll', dirty: changedFiles.length > 0, staged: 0, unstaged: changedFiles.filter(file => file.area === 'unstaged').length, untracked: changedFiles.filter(file => file.area === 'untracked').length, ahead: 0, behind: 0, worktree_parent: null };
 mockWindows('main');
 mockIPC((cmd, payload) => {
@@ -100,7 +101,13 @@ mockIPC((cmd, payload) => {
   const repoChanges = args?.path === '/preview/springroll-website' ? []
     : args?.path === '/preview/springroll' ? changedFiles.slice(0, 2) : changedFiles;
   switch (cmd) {
-    case 'list_repos': return repos.map(repo => ({...repo}));
+    case 'list_repos': {
+      repoScans++;
+      if (params.get('repos') === 'error' && repoScans === 1) return Promise.reject('Cannot read existing config');
+      if (params.get('repos') === 'empty') return [];
+      if (params.get('repos') === 'slow') return new Promise(resolve => { (window as any).releasePreviewRepos = () => resolve(repos.map(repo => ({...repo}))); });
+      return repos.map(repo => ({...repo}));
+    }
     case 'list_groups': return groups.map(group => ({...group}));
     case 'suggest_project_folders': return params.get('suggest') === 'none' ? [] : [
       {path:'/Users/designer/dev/affix-pipeline',name:'affix-pipeline',lastUsed:Date.now()-2*86400000,agent:'codex'},
@@ -128,17 +135,20 @@ mockIPC((cmd, payload) => {
     case 'get_usage_settings': return useUsageSettingsStore.getState().settings;
     case 'get_editor_settings': return { preferredEditor: 'vscode' };
     case 'get_username': return 'Designer';
+    case 'get_storage_warning': return params.get('storage') === 'error' ? 'Session history and usage are temporary and will be lost when Shep closes.' : null;
     case 'get_computer_name': return 'Local preview';
     case 'get_home_directory': return '/preview';
     case 'git_status': return {...git,worktree_parent:String(args?.path).includes('.shep-worktrees/shep/') ? 'shep' : null,dirty:repoChanges.length > 0,unstaged:repoChanges.filter(file => file.area === 'unstaged').length,untracked:repoChanges.filter(file => file.area === 'untracked').length};
     case 'is_git_repo': return true;
     case 'git_current_branch': return git.branch;
     case 'git_changed_files': return repoChanges;
+    case 'git_changes':
     case 'git_diff_stats': {
       const scale = params.get('changes') === 'large' ? 1000 : 1;
       const stats = repoChanges.map((file, i) => ({path:file.path,additions:[48,24,8,3,16][i]*scale,deletions:[12,9,1,1,0][i]*scale}));
+      const result = cmd === 'git_changes' ? {files:repoChanges,stats,statsComplete:true} : stats;
       return params.has('delay') && args?.path === '/preview/shep'
-        ? new Promise(resolve => setTimeout(() => resolve(stats), 2000)) : stats;
+        ? new Promise(resolve => setTimeout(() => resolve(result), 2000)) : result;
     }
     case 'git_list_files': return changedFiles.map(file => file.path);
     case 'git_file_contents': return previewFile;
@@ -165,6 +175,7 @@ mockIPC((cmd, payload) => {
     }
     case 'spawn_pty': {
       document.documentElement.dataset.previewLastSession = JSON.stringify({command:args?.command,args:args?.args,cwd:args?.cwd});
+      if (params.get('pty') === 'exit') (args?.onData as any).onmessage({event:'exit',data:{code:0}});
       return ++previewPtyId;
     }
     case 'get_usage_overview': return usageOverview(String(args?.window ?? '24h'));
@@ -208,6 +219,10 @@ if (theme) useThemeStore.getState().setTheme(theme);
 // Rust config is excluded from Vite's watcher; read it fresh on preview reload.
 const tauriConfig = await fetch('/src-tauri/tauri.conf.json', {cache:'no-store'}).then(response => response.json());
 const trafficLights = tauriConfig.app.windows[0].trafficLightPosition;
+if (params.has('cold') || params.has('repos')) {
+  useRepoStore.setState({repos:[],activeRepoPath:null,activeConfig:null});
+  useTerminalStore.setState({projectState:{},activeProjectPath:null,tabActivity:{}});
+}
 createRoot(document.getElementById('root')!).render(<>
   <App />
   <div data-preview-traffic-lights aria-hidden="true" style={{position:'absolute',left:trafficLights.x,top:trafficLights.y-6,display:'flex',gap:8,pointerEvents:'none',zIndex:3}}>

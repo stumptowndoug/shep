@@ -24,7 +24,8 @@ import { useGitWatcher } from "../../hooks/useGitWatcher";
 import { computeTerminalSize } from "../../lib/terminalMeasure";
 import { listen } from "@tauri-apps/api/event";
 import { ask, open } from "@tauri-apps/plugin-dialog";
-import { checkCommandExists, getUsername, getComputerName, openInEditor, saveWorkspace, shutdownAndQuit, refreshUsageData } from "../../lib/tauri";
+import { checkCommandExists, getUsername, getComputerName, getStorageWarning, openInEditor, saveWorkspace, refreshUsageData } from "../../lib/tauri";
+import { requestAppShutdown } from "../../lib/appLifecycle";
 import { chatAdapterAvailable } from "../../lib/acp/adapters";
 import { sessionResumeInterface } from "../../lib/sessionResume";
 import { useEditorStore } from "../../stores/useEditorStore";
@@ -83,6 +84,8 @@ export default function AppShell() {
   const { repos, groups, activeRepoPath, fetchRepos, fetchGroups, openRepo, addRepo, removeRepo, renameGroup, deleteGroup, moveRepoToGroup } =
     useRepoStore();
   const activeConfig = useRepoStore((s) => s.activeConfig);
+  const repoLoadStatus = useRepoStore((s) => s.loadStatus);
+  const repoLoadError = useRepoStore((s) => s.loadError);
   const setActiveConfig = useRepoStore((s) => s.setActiveConfig);
   const pushNotice = useNoticeStore((s) => s.pushNotice);
   const { startCommand, stopCommand, spawnBlankShell, runInTerminal, launchAssistant, resumeAssistant, closeTab, killProjectPtys } =
@@ -188,8 +191,11 @@ export default function AppShell() {
   const { loadSettings: loadUsageSettings } = useUsageSettingsStore.getState();
 
   useEffect(() => {
-    fetchRepos();
-    fetchGroups();
+    void fetchRepos();
+    void getStorageWarning().then((warning) => {
+      if (warning) pushNotice({ tone: "error", title: "History isn’t being saved", message: warning }, { durationMs: 0 });
+    }).catch((error) => pushNotice({ tone: "error", title: "Couldn’t check history storage", message: getErrorMessage(error) }));
+    void fetchGroups().catch((error) => pushNotice({ tone: "error", title: "Couldn’t load project groups", message: getErrorMessage(error) }));
     void loadEditorSettings();
     void loadProjectSettings();
     void loadTerminalSettings();
@@ -275,7 +281,7 @@ export default function AppShell() {
           for (const cmd of config.commands) {
             if (cmd.autostart) {
               const { cols, rows } = getTerminalDimensions();
-              await startCommand(cmd, cols, rows);
+              await startCommand(cmd, cols, rows, repoPath);
             }
           }
         }
@@ -541,13 +547,12 @@ export default function AppShell() {
 
       const assistant = CODING_ASSISTANTS.find((entry) => entry.id === session.provider);
       const adapter = assistant?.acp;
-      const preferred = useProjectSettingsStore.getState().settings.defaultAgentInterface;
       let sessionId: number | null | undefined;
       const [terminal, chat] = await Promise.all([
         assistant ? checkCommandExists(assistant.command).catch(() => false) : Promise.resolve(false),
         adapter ? chatAdapterAvailable(adapter) : Promise.resolve(false),
       ]);
-      const target = sessionResumeInterface(session, preferred, { terminal, chat });
+      const target = sessionResumeInterface(session, { terminal, chat });
       if (!target) {
         pushNotice({ tone: "error", title: "Agent setup needed", message: `Set up ${assistant?.name ?? session.provider}${session.agentInterface === "chat" ? " chat" : ""} in a new tab before resuming.` });
         return false;
@@ -730,23 +735,9 @@ export default function AppShell() {
   }, [repos, activeRepoPath, handleSelectRepo]);
 
   // Listen for backend "quit-requested" event (red close button or Cmd+Q with active PTYs)
-  const quitDialogOpenRef = useRef(false);
   useEffect(() => {
-    const unlisten = listen<number>("quit-requested", async (event) => {
-      if (quitDialogOpenRef.current) return;
-      quitDialogOpenRef.current = true;
-      try {
-        const count = event.payload;
-        const confirmed = await ask(
-          `Quit Shep and stop ${count} running session${count === 1 ? "" : "s"}?`,
-          { title: "Quit Shep", kind: "warning", okLabel: "Quit", cancelLabel: "Cancel" },
-        );
-        if (confirmed) {
-          await shutdownAndQuit();
-        }
-      } finally {
-        quitDialogOpenRef.current = false;
-      }
+    const unlisten = listen<number>("quit-requested", (event) => {
+      void requestAppShutdown(false, event.payload);
     });
     return () => { unlisten.then((f) => f()); };
   }, []);
@@ -926,6 +917,14 @@ export default function AppShell() {
               <Suspense fallback={<PanelLoader />}>
                 <SessionLauncher onStartSession={handleStartSession} onRunInTerminal={handleRunInTerminal} onOpen={(action) => void handleLauncherOpen(action)} onOpenInEditor={() => { if (activeRepoPath) void handleOpenInEditor(activeRepoPath); }} />
               </Suspense>
+            ) : repoLoadStatus === "error" ? (
+              <div className="empty-state" role="alert">
+                <h2 className="empty-state__title">Couldn’t load projects</h2>
+                <p>{repoLoadError}</p>
+                <button className="btn-primary" onClick={() => void fetchRepos()}>Retry</button>
+              </div>
+            ) : repoLoadStatus !== "ready" ? (
+              <div className="terminal-empty" role="status">Loading projects…</div>
             ) : repos.length === 0 ? (
               <Suspense fallback={<PanelLoader />}>
                 <Welcome

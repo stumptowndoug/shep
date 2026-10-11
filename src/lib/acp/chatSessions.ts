@@ -30,6 +30,7 @@ import { antigravitySignInUrl } from "./antigravityProtocol";
 const TITLE_MAX_CHARS = 60;
 const STARTUP_TIMEOUT_MS = 60_000;
 const SIGN_IN_TIMEOUT_MS = 5 * 60_000;
+const CANCEL_TIMEOUT_MS = 5_000;
 
 interface LiveChat {
   connection: AcpConnection;
@@ -44,6 +45,7 @@ interface LiveChat {
   permissions: Map<string, (optionId: string | null) => void>;
   interactions?: Map<string, (outcome: CursorOutcome) => void>;
   cancelling?: boolean;
+  cancelTimer?: number;
   startupMessage: string | null;
 }
 
@@ -124,7 +126,7 @@ export async function startChat(options: StartChatOptions): Promise<number> {
   useChatStore.getState().update(chatId, (chat) => ({ ...chat, draftKey }));
   const terminals = useTerminalStore.getState();
   terminals.initActivity(chatId);
-  terminals.addTab({
+  const added = terminals.addTab({
     id: nextTabId(),
     kind: "assistant",
     label: resume?.title ?? assistant.name,
@@ -137,6 +139,10 @@ export async function startChat(options: StartChatOptions): Promise<number> {
     labelSource: resume?.title ? "session" : "default",
     agentInterface: "chat",
   });
+  if (!added) {
+    await closeChat(chatId);
+    throw new Error("The project was closed while the agent was starting.");
+  }
   setAgentState(chatId, "working", "Starting agent");
 
   let startupTimer: number;
@@ -185,6 +191,12 @@ export function cancelTurn(chatId: number) {
   useChatStore.getState().update(chatId, (state) => ({ ...state, queued: [] }));
   setAgentState(chatId, "idle", "Stopped");
   session.connection.notify("session/cancel", { sessionId: session.sessionId });
+  if (session.cancelTimer === undefined && useChatStore.getState().chats[chatId]?.status === "working") {
+    session.cancelTimer = window.setTimeout(() => {
+      if (live.get(chatId) !== session) return;
+      failChat(chatId, "The agent did not respond to Stop and was closed. Resume this conversation from History or start a new chat.", 0);
+    }, CANCEL_TIMEOUT_MS);
+  }
 }
 
 export function answerPermission(chatId: number, itemId: string, optionId: string) {
@@ -274,6 +286,7 @@ export async function closeChat(chatId: number) {
   useChatStore.getState().remove(chatId);
   useTerminalStore.getState().removeActivity(chatId);
   if (session) {
+    window.clearTimeout(session.cancelTimer);
     cancelPendingRequests(session);
     await session.connection.kill().catch(() => {});
     if (session.sessionId) {
@@ -418,6 +431,9 @@ async function runTurn(chatId: number, prompt: string) {
     if (!live.has(chatId)) return;
     stopReason = session.cancelling ? "cancelled" : "error";
     if (!session.cancelling) turnError = errorText(error);
+  } finally {
+    window.clearTimeout(session.cancelTimer);
+    session.cancelTimer = undefined;
   }
   if (!live.has(chatId)) return;
 
@@ -526,6 +542,7 @@ function failChat(chatId: number, error: string | null, exitCode = 1) {
   }));
   const session = live.get(chatId);
   if (session) {
+    window.clearTimeout(session.cancelTimer);
     cancelPendingRequests(session);
     live.delete(chatId);
     void session.connection.kill().catch(() => {});

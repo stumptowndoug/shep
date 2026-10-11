@@ -4,7 +4,7 @@ import { Channel } from "@tauri-apps/api/core";
 import { mockIPC } from "@tauri-apps/api/mocks";
 import { usePty } from "../../src/hooks/usePty";
 import { AcpConnection } from "../../src/lib/acp/connection";
-import { startChat, sendPrompt } from "../../src/lib/acp/chatSessions";
+import { startChat, sendPrompt, cancelTurn } from "../../src/lib/acp/chatSessions";
 import { CODING_ASSISTANTS } from "../../src/components/sidebar/constants";
 import { useTerminalStore } from "../../src/stores/useTerminalStore";
 import { useChatStore } from "../../src/stores/useChatStore";
@@ -203,6 +203,26 @@ function Harness() {
         pass(`PASS: stalled ${method} — times out, ignores late replies, and a new chat starts`);
       }
       reset();
+      const stuck = await startChat({assistant:CODING_ASSISTANTS.find(a => a.id === "claude")!,repoPath:"/test/project",mode:"standard"});
+      await until(() => useChatStore.getState().chats[stuck]?.status === "ready");
+      sendPrompt(stuck, "Never respond");
+      await until(() => writes.includes("session/prompt"));
+      let expireCancel: (() => void) | undefined;
+      const scheduleCancel = window.setTimeout;
+      window.setTimeout = ((handler: TimerHandler, delay?: number, ...args: unknown[]) => {
+        if (delay === 5000 && typeof handler === "function") { expireCancel = handler as () => void; return 0; }
+        return scheduleCancel(handler, delay, ...args);
+      }) as typeof window.setTimeout;
+      try { cancelTurn(stuck); } finally { window.setTimeout = scheduleCancel; }
+      assert(expireCancel, "Stop had no deadline");
+      expireCancel();
+      assert(useChatStore.getState().chats[stuck].status === "exited", "unresponsive agent stayed working");
+      assert(useChatStore.getState().chats[stuck].error?.includes("History"), "Stop timeout omitted recovery guidance");
+      assert(killCalls === 1, "Stop timeout did not stop the adapter");
+      killGate.resolve(); historyGate.resolve();
+      await closeTab(useTerminalStore.getState().findTabByPtyId(stuck)!.id);
+      pass("PASS: unresponsive Stop — closes the adapter with recovery guidance");
+      reset();
       const orphan = await AcpConnection.spawn("mock", [], "/test/project", { onRequest: async () => null, onNotification: () => {}, onExit: () => {} });
       useChatStore.getState().init(orphan.id);
       useTerminalStore.getState().addTab({ id: "orphan-chat", kind: "assistant", label: "OpenCode", ptyId: orphan.id,
@@ -214,7 +234,7 @@ function Harness() {
       killGate.resolve();
       await orphanClosing;
       pass("PASS: lost frontend state — tab close still stops the native agent");
-      setStatus("All 8 checks passed");
+      setStatus("All 9 checks passed");
     } catch (error) {
       setStatus(`FAIL: ${error instanceof Error ? error.message : error}`);
     } finally {

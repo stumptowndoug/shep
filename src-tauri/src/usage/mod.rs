@@ -533,16 +533,12 @@ fn merge_cursor_overview(overview: &mut UsageOverview) {
             tokens_cache_read: model.tokens_cache_read,
             tokens_cache_write: model.tokens_cache_write,
             tokens_thoughts: 0,
-            cost: model.cost,
-            cost_detail: cursor_included_cost(model.cost),
             sessions: None,
-            trend: overview.trend.iter().map(|_| 0).collect(),
         });
     }
 
     overview.providers.sort_by(|a, b| b.tokens.cmp(&a.tokens));
     overview.top_models.sort_by(|a, b| b.tokens.cmp(&a.tokens));
-    overview.top_models.truncate(25);
 
     overview.total_tokens = overview.providers.iter().map(|provider| provider.tokens).sum();
     let total_cost_value: f64 = overview.providers.iter().filter_map(|provider| provider.cost).sum();

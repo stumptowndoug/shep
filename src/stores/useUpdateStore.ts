@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { check, type Update } from "@tauri-apps/plugin-updater";
-import { relaunch } from "@tauri-apps/plugin-process";
+import { requestAppShutdown } from "../lib/appLifecycle";
 import { getErrorMessage } from "../lib/errors";
 
 type UpdateStatus =
@@ -8,6 +8,7 @@ type UpdateStatus =
   | "checking"
   | "available"
   | "downloading"
+  | "installing"
   | "ready"
   | "error";
 
@@ -34,6 +35,7 @@ export const useUpdateStore = create<UpdateStore>((set, get) => ({
   _update: null,
 
   checkForUpdate: async () => {
+    if (["checking", "downloading", "installing", "ready"].includes(get().status)) return;
     set({ status: "checking", error: null });
     try {
       const update = await check();
@@ -65,7 +67,7 @@ export const useUpdateStore = create<UpdateStore>((set, get) => ({
 
   downloadAndInstall: async () => {
     const update = get()._update;
-    if (!update) return;
+    if (!update || get().status !== "available") return;
 
     set({ status: "downloading", downloadProgress: 0, error: null });
     let totalLength = 0;
@@ -83,7 +85,7 @@ export const useUpdateStore = create<UpdateStore>((set, get) => ({
             });
           }
         } else if (event.event === "Finished") {
-          set({ status: "ready", downloadProgress: 100 });
+          set({ status: "installing", downloadProgress: 100 });
         }
       });
       set({ status: "ready", downloadProgress: 100 });
@@ -97,6 +99,7 @@ export const useUpdateStore = create<UpdateStore>((set, get) => ({
   },
 
   restartApp: async () => {
-    await relaunch();
+    if (get().status !== "ready") return;
+    await requestAppShutdown(true);
   },
 }));

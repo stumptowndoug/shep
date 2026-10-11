@@ -30,7 +30,7 @@ export const useNoticeStore = create<NoticeStore>((set) => ({
     set((state) => ({ notices: [...state.notices, nextNotice] }));
 
     const durationMs = options?.durationMs ?? 3600;
-    window.setTimeout(() => {
+    if (durationMs > 0) window.setTimeout(() => {
       set((state) => ({
         notices: state.notices.filter((entry) => entry.id !== id),
       }));

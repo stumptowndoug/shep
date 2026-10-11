@@ -6,7 +6,7 @@ import { getErrorMessage } from "../../lib/errors";
 import { checkCommandExists, listSessionHistory } from "../../lib/tauri";
 import { chatAdapterAvailable } from "../../lib/acp/adapters";
 import type { SessionHistoryEntry } from "../../lib/types";
-import { supportsSessionResume } from "../../lib/sessionResume";
+import { sessionResumeInterface, supportsSessionResume } from "../../lib/sessionResume";
 import { useTerminalStore } from "../../stores/useTerminalStore";
 import { groupSessionHistory } from "../../lib/sessionHistory";
 import OptionGroup from "../shared/OptionGroup";
@@ -252,8 +252,7 @@ export default function HistoryPanel({
                 const isActive = activeSessions.has(key);
                 const logoSrc = assistantLogoSrc[session.provider];
                 const providerAvailable = availableProviders[session.provider];
-                const canResume = providerAvailable && (session.agentInterface
-                  ? providerAvailable[session.agentInterface] : providerAvailable.terminal || providerAvailable.chat);
+                const canResume = providerAvailable && sessionResumeInterface(session, providerAvailable) !== null;
                 const disabledReason = isActive ? null
                   : !supportsSessionResume(session.provider) ? "This provider does not support resume yet"
                   : providerAvailable === undefined ? "Checking whether the agent is installed"

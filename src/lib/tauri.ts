@@ -26,6 +26,7 @@ import type { FolderSuggestion,
   PiConfig,
   PiSettings,
   DiffFileStat,
+  GitChanges,
   TodoFile,
   SkillInfo,
   SessionHistoryEntry,
@@ -311,8 +312,16 @@ export function listSessionHistory(
 
 // ── App lifecycle commands ────────────────────────────────────────
 
-export function shutdownAndQuit(): Promise<void> {
-  return invoke("shutdown_and_quit");
+export function shutdownAndQuit(restart = false): Promise<void> {
+  return invoke("shutdown_and_quit", { restart });
+}
+
+export function getSessionCount(): Promise<number> {
+  return invoke("get_pty_session_count");
+}
+
+export function getStorageWarning(): Promise<string | null> {
+  return invoke("get_storage_warning");
 }
 
 // ── File watcher commands ─────────────────────────────────────────
@@ -420,6 +429,10 @@ export function gitCreateBranch(path: string, branchName: string): Promise<void>
 
 export function gitDiffStats(path: string): Promise<DiffFileStat[]> {
   return invoke("git_diff_stats", { path });
+}
+
+export function gitChanges(path: string): Promise<GitChanges> {
+  return invoke("git_changes", { path });
 }
 
 // ── System commands ────────────────────────────────────────────────
