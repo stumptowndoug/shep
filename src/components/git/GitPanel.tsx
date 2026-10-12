@@ -15,6 +15,7 @@ import EditorIcon from "../shared/EditorIcon";
 import { getCodeViewCSSVariables } from "./codeViewTheme";
 // The preview renders with chat's Markdown styles.
 import "../chat/chat.css";
+import { ChatProjectPath } from "../chat/chatProjectPath";
 
 const DiffViewer = lazy(() => import("./DiffViewer"));
 const ChatMarkdown = lazy(() => import("../chat/ChatMarkdown"));
@@ -205,7 +206,10 @@ export default function GitPanel() {
                 {preview && preview.path === selectedPath ? (
                   preview.error ? <p className="changes-empty">{preview.error}</p> : (
                     <Suspense fallback={null}>
-                      <ChatMarkdown text={preview.text} />
+                      {/* Relative images in a Markdown file are relative to its folder. */}
+                      <ChatProjectPath value={`${repo}/${selectedPath.split("/").slice(0, -1).join("/")}`}>
+                        <ChatMarkdown text={preview.text} />
+                      </ChatProjectPath>
                     </Suspense>
                   )
                 ) : <p className="changes-empty">Loading preview…</p>}

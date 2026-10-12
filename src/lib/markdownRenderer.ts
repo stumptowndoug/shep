@@ -2,6 +2,7 @@ import markdownit, { type MarkdownIt, type RendererRule } from "markdown-it";
 import { fromHighlighter } from "@shikijs/markdown-it/core";
 import type { HighlighterGeneric } from "shiki";
 import { getHighlighter } from "./shikiHighlighter";
+import { chatImageHtml } from "./acp/chatImages";
 
 const cached = new Map<string, Promise<MarkdownIt>>();
 let plainRenderer: MarkdownIt | null = null;
@@ -20,6 +21,16 @@ function createMarkdownRenderer(): MarkdownIt {
   const defaultLinkOpen: RendererRule =
     markdown.renderer.rules.link_open ??
     ((tokens, idx, options, _env, self) => self.renderToken(tokens, idx, options));
+
+  // Agents often reference screenshots by file:// URL; markdown-it rejects that scheme.
+  const defaultValidateLink = markdown.validateLink;
+  markdown.validateLink = (url) => defaultValidateLink(url) || /^file:\/\//i.test(url.trim());
+
+  markdown.renderer.rules.image = (tokens, idx, options, env, self) => {
+    const token = tokens[idx];
+    const alt = self.renderInlineAsText(token.children ?? [], options, env);
+    return chatImageHtml(String(token.attrGet("src") ?? ""), alt, markdown.utils.escapeHtml);
+  };
 
   markdown.renderer.rules.link_open = (tokens, idx, options, env, self) => {
     const token = tokens[idx];

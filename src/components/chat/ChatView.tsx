@@ -1,13 +1,19 @@
-import { memo, useCallback, useRef, useState } from "react";
+import { memo, useCallback, useRef, useState, type CSSProperties } from "react";
 import { ChevronRight, CircleAlert, ShieldAlert, X } from "lucide-react";
 import { ChatItemView } from "./ChatItems";
 import ChatComposer from "./ChatComposer";
+import { ChatProjectPath } from "./chatProjectPath";
 import CursorRequestCard from "./CursorRequestCard";
 import { useChatStore } from "../../stores/useChatStore";
-import { answerPermission, cancelChatStartup } from "../../lib/acp/chatSessions";
+import { useChatAppearanceStore } from "../../stores/useChatAppearanceStore";
+import { useTerminalSettingsStore } from "../../stores/useTerminalSettingsStore";
+import { answerPermission, cancelChatStartup, cancelTurn } from "../../lib/acp/chatSessions";
+import { isStopShortcut } from "../../lib/acp/chatKeys";
 import { openUrl } from "../../lib/tauri";
 import { pendingRequest, RECENT_TURN_LIMIT, type ChatTurn } from "../../lib/acp/chatModel";
 import { splitTurn, turnStopMessage } from "../../lib/acp/chatPresentation";
+import { chatAppearanceStyle } from "../../lib/chatAppearance";
+import { buildCSSFontFamily } from "../../lib/terminalConfig";
 import { assistantLogoSrc, getAssistantLogoClass } from "../../lib/assistantLogos";
 import { CODING_ASSISTANTS } from "../sidebar/constants";
 import "./chat.css";
@@ -89,6 +95,8 @@ interface ChatViewProps {
 
 export default function ChatView({ chatId, assistantId, repoPath, fullAccess, onOpenTerminal }: ChatViewProps) {
   const chat = useChatStore((s) => s.chats[chatId]);
+  const appearance = useChatAppearanceStore((s) => s.appearance);
+  const codeFont = useTerminalSettingsStore((s) => s.settings.fontFamily);
   const assistant = CODING_ASSISTANTS.find((entry) => entry.id === assistantId);
   const agentName = assistant?.name ?? "Agent";
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -106,7 +114,26 @@ export default function ChatView({ chatId, assistantId, repoPath, fullAccess, on
     return () => observer.disconnect();
   }, []);
 
+  // Esc or Ctrl+C stops the agent from anywhere in this chat, or when nothing
+  // has focus. Hidden chats (other tabs, overlays) and other focused UI are left alone.
+  const rootRef = useCallback((node: HTMLDivElement | null) => {
+    if (!node) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.isComposing || !isStopShortcut(event)) return;
+      if (useChatStore.getState().chats[chatId]?.status !== "working") return;
+      if (node.getClientRects().length === 0) return;
+      const target = event.target;
+      const unfocused = target === document.body || target === document.documentElement;
+      if (!unfocused && !(target instanceof Node && node.contains(target))) return;
+      event.preventDefault();
+      cancelTurn(chatId);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [chatId]);
+
   if (!chat) return null;
+  const appearanceStyle = chatAppearanceStyle(appearance, buildCSSFontFamily(codeFont));
   const notices = chat.notices ?? [];
   const request = pendingRequest(chat);
   const permission = request?.kind === "permission" ? request : undefined;
@@ -114,7 +141,8 @@ export default function ChatView({ chatId, assistantId, repoPath, fullAccess, on
   const projectName = repoPath.split("/").filter(Boolean).pop() ?? repoPath;
 
   return (
-    <div className="chat-view">
+    <ChatProjectPath value={repoPath}>
+    <div ref={rootRef} className="chat-view" style={appearanceStyle as CSSProperties}>
       <div
         ref={scrollRef}
         className="chat-view__scroll"
@@ -192,5 +220,6 @@ export default function ChatView({ chatId, assistantId, repoPath, fullAccess, on
         <ChatComposer chatId={chatId} chat={chat} assistantId={assistantId} agentName={agentName} fullAccess={fullAccess} onOpenTerminal={onOpenTerminal} />
       </div>
     </div>
+    </ChatProjectPath>
   );
 }

@@ -5,6 +5,7 @@ import ChatSettings from "./ChatSettings";
 import { useChatDraftStore } from "../../stores/useChatDraftStore";
 import type { ChatState } from "../../lib/acp/chatModel";
 import { cancelTurn, sendPrompt, setChatOption } from "../../lib/acp/chatSessions";
+import { recallStep, sentPrompts } from "../../lib/acp/chatKeys";
 import { assistantLogoSrc, getAssistantLogoClass } from "../../lib/assistantLogos";
 import { chatOptionChoices, chatOptionName, isAccessOption, isFullAccessMode, isModelOption, isReasoningOption } from "../../lib/acp/chatOptions";
 
@@ -51,6 +52,8 @@ export default function ChatComposer({ chatId, chat, assistantId, agentName, ful
   // A slash command chat doesn't offer: point to the CLI instead of sending.
   const [cliOnly, setCliOnly] = useState<string | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  // ↑/↓ prompt recall: how far back we are, and the text we put in the box.
+  const recallRef = useRef<{ index: number; text: string } | null>(null);
   useEffect(() => { useChatDraftStore.getState().load(draftKey); }, [draftKey]);
   useEffect(() => { if (inputRef.current) fitHeight(inputRef.current); }, [text, draftKey]);
   const working = chat.status === "working";
@@ -85,6 +88,7 @@ export default function ChatComposer({ chatId, chat, assistantId, agentName, ful
     }
     setCliOnly(null);
     if (!sendPrompt(chatId, text)) return;
+    recallRef.current = null;
     setText("");
     if (inputRef.current) inputRef.current.style.height = "auto";
   };
@@ -110,12 +114,27 @@ export default function ChatComposer({ chatId, chat, assistantId, agentName, ful
         return;
       }
     }
+    // Esc while picking a slash command shouldn't also stop the agent (ChatView handles Esc).
+    if (event.key === "Escape" && suggestions.length) {
+      event.preventDefault();
+      return;
+    }
+    if ((event.key === "ArrowUp" || event.key === "ArrowDown") && !event.shiftKey && !event.altKey && !event.metaKey && !event.ctrlKey) {
+      // Like a shell: recall only from an empty box or an unedited recalled prompt.
+      const recall = recallRef.current;
+      if (text === "" || (recall && text === recall.text)) {
+        const step = recallStep(sentPrompts(chat.turns), recall?.index ?? null, event.key === "ArrowUp" ? "older" : "newer");
+        if (step) {
+          event.preventDefault();
+          recallRef.current = step.index === null ? null : { index: step.index, text: step.text };
+          setText(step.text);
+          return;
+        }
+      }
+    }
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
       submit();
-    } else if (event.key === "Escape" && working) {
-      event.preventDefault();
-      cancelTurn(chatId);
     }
   };
 
@@ -124,7 +143,7 @@ export default function ChatComposer({ chatId, chat, assistantId, agentName, ful
     : chat.status === "starting"
       ? `Starting ${agentName}…`
       : working
-        ? "Queue a follow-up…"
+        ? "Queue a follow-up · Esc to stop"
         : `Ask ${agentName} anything`;
 
   return (
@@ -179,6 +198,7 @@ export default function ChatComposer({ chatId, chat, assistantId, agentName, ful
         aria-label={`Message ${agentName}`}
         onChange={(event) => {
           setText(event.target.value);
+          recallRef.current = null;
           setCliOnly(null);
           setHighlight(0);
           fitHeight(event.target);
@@ -233,7 +253,7 @@ export default function ChatComposer({ chatId, chat, assistantId, agentName, ful
         <div className="chat-composer__actions">
           {extraOptions.length > 0 && <ChatSettings options={extraOptions} disabled={settingsDisabled} onChange={changeOption} />}
           {working && (
-            <button type="button" className="chat-composer__send chat-composer__send--stop" onClick={() => cancelTurn(chatId)} title="Stop (Esc)" aria-label="Stop response">
+            <button type="button" className="chat-composer__send chat-composer__send--stop" onClick={() => cancelTurn(chatId)} title="Stop (Esc or ⌃C)" aria-label="Stop response">
               <Square size={12} fill="currentColor" aria-hidden="true" />
             </button>
           )}

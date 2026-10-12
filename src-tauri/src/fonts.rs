@@ -86,6 +86,39 @@ pub struct FontFaceData {
 /// Cached list of installed monospace families. Populated once per process.
 static MONO_FAMILIES: OnceLock<Vec<FontFamily>> = OnceLock::new();
 
+/// Every installed family, for the chat font picker. Populated once per process.
+static ALL_FAMILIES: OnceLock<Vec<ChatFontFamily>> = OnceLock::new();
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatFontFamily {
+    pub family: String,
+    /// Ships with macOS, so the webview can use it by name without loading it.
+    pub is_system: bool,
+}
+
+/// Return every installed font family (alphabetical), enumerating on first call.
+pub fn list_font_families() -> Vec<ChatFontFamily> {
+    ALL_FAMILIES.get_or_init(enumerate_font_families).clone()
+}
+
+fn enumerate_font_families() -> Vec<ChatFontFamily> {
+    let mut result: Vec<ChatFontFamily> = all_family_names()
+        .into_iter()
+        // Dot-prefixed families are private system UI fonts.
+        .filter(|name| !name.starts_with('.'))
+        .filter_map(|name| {
+            let collection = font_collection::create_for_family(&name)?;
+            let descriptors = collection.get_descriptors()?;
+            let first = descriptors.iter().next()?;
+            let is_system = read_font_path(&first).is_some_and(|path| path.starts_with("/System/"));
+            Some(ChatFontFamily { family: name, is_system })
+        })
+        .collect();
+    result.sort_by_key(|family| family.family.to_lowercase());
+    result
+}
+
 /// Return the cached list of installed monospace families, enumerating on
 /// first call. The result is stable for the lifetime of the process; an app
 /// restart is required to pick up newly-installed fonts.
@@ -309,5 +342,18 @@ fn css_stretch_from_trait(raw: f64) -> u16 {
         8
     } else {
         9
+    }
+}
+
+#[cfg(test)]
+mod chat_font_tests {
+    use super::*;
+
+    #[test]
+    fn lists_system_families_without_private_ones() {
+        let families = list_font_families();
+        let helvetica = families.iter().find(|family| family.family == "Helvetica").expect("Helvetica is installed");
+        assert!(helvetica.is_system);
+        assert!(families.iter().all(|family| !family.family.starts_with('.')));
     }
 }

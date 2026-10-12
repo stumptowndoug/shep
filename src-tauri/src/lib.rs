@@ -1,6 +1,7 @@
 mod acp;
 mod acp_runtime;
 mod agent_status;
+mod chat_images;
 mod commands;
 mod fonts;
 mod git;
@@ -121,10 +122,12 @@ pub fn run() {
             commands::get_terminal_settings,
             commands::save_terminal_settings,
             commands::list_monospace_families,
+            commands::list_font_families,
             commands::load_font_family,
             commands::open_in_editor,
             commands::open_file_in_editor,
             commands::read_markdown_file,
+            commands::read_chat_image,
             commands::reveal_in_finder,
             commands::spawn_pty,
             commands::write_pty,

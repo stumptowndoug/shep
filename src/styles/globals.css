@@ -1316,6 +1316,7 @@ body.theme-clear .app-shell__frame {
   font-size: var(--text-xs);
   overflow-wrap: anywhere;
 }
+.callout__body .field-note { margin-top: 0; }
 .callout .inline-code {
   background: var(--bg);
   justify-self: start;
