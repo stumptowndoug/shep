@@ -1,4 +1,4 @@
-import { FolderOpen } from "lucide-react";
+import { FolderOpen, Plus } from "lucide-react";
 import ContextMenu, { type ContextMenuItem } from "./ContextMenu";
 import EditorIcon from "./EditorIcon";
 import tabKindMeta from "../../lib/tabKindMeta";
@@ -23,12 +23,18 @@ interface ProjectOpenMenuProps {
   actions: ProjectOpenActions;
   onClose: () => void;
   anchor?: HTMLElement | null;
+  /** Leads with New agent, for menus that stand in for the + button. */
+  onNewAgent?: () => void;
 }
 
-/** Shared by the sidebar's More button and the tab bar's menu. */
-export default function ProjectOpenMenu({ x, y, actions, onClose, anchor }: ProjectOpenMenuProps) {
+/** Shared by the sidebar's More button and the tab bar's + menu. */
+export default function ProjectOpenMenu({ x, y, actions, onClose, anchor, onNewAgent }: ProjectOpenMenuProps) {
   const editorLabel = getEditorLabel(useEditorStore((s) => s.settings.preferredEditor));
   const items: ContextMenuItem[] = [
+    ...(onNewAgent ? [
+      { label: tabKindMeta.launcher.label, icon: <Plus size={14} />, shortcut: tabKindMeta.launcher.shortcut, onClick: onNewAgent },
+      { label: "", separator: true },
+    ] : []),
     ...OPEN_KINDS.map((kind) => ({
       label: tabKindMeta[kind].label,
       icon: tabKindMeta[kind].icon(14),

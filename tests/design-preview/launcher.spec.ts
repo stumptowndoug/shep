@@ -16,15 +16,12 @@ test("the launcher opens on the agent started last, with its options in one card
   await expect(page.getByRole("button", { name: "Claude Code", exact: true })).toHaveAttribute("aria-pressed", "true");
 });
 
-test("with the sidebar hidden, the tab bar menu opens the project's other tabs", async ({ page }) => {
+test("the tab bar's + opens a menu that leads with New agent, then the project's other tabs", async ({ page }) => {
   await page.goto("/tests/design-preview/?agents=installed");
-  const toggle = page.getByRole("button", { name: "Open something else", exact: true });
-  // The sidebar's More covers this while the sidebar is showing.
-  await expect(toggle).toHaveCount(0);
-  await page.evaluate(async () => (await import("/src/stores/useUIStore.ts")).useUIStore.getState().toggleSidebar());
+  const toggle = page.getByRole("button", { name: "New", exact: true });
   await toggle.click();
   const menu = page.getByRole("menu", { name: "Open in this project" });
-  await expect(menu.getByRole("menuitem")).toHaveText([/Terminal/, /Commands/, /Changes/, /To-dos/, /Open in/, /Show in Finder/]);
+  await expect(menu.getByRole("menuitem")).toHaveText([/New agent/, /Terminal/, /Commands/, /Changes/, /To-dos/, /Open in/, /Show in Finder/]);
   // The toggle closes its own menu instead of reopening it.
   await toggle.click();
   await expect(menu).toHaveCount(0);

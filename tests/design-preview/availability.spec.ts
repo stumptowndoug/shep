@@ -35,7 +35,7 @@ test("returning from a working chat preserves installation results during a rech
     void (await import("/src/stores/useAgentAvailabilityStore.ts")).useAgentAvailabilityStore.getState().refresh(true);
   });
   await expect(claude).toHaveCount(0);
-  await page.getByRole("button", { name: "New agent", exact: true }).first().click();
+  await page.locator(".side-nav--primary").getByRole("button", { name: /New agent/ }).click();
   await expect(claude).toContainText("Chat & terminal");
   await claude.click();
   await expect(page.getByRole("button", { name: "Chat", exact: true })).toBeEnabled();

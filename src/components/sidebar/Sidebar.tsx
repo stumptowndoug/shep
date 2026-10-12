@@ -121,7 +121,7 @@ export default function Sidebar({
         <div className="side-island">
           <SidebarUsage />
         </div>
-        <div className="side-island">
+        <div className="side-island sidebar-toolbar">
           <SidebarNav />
         </div>
       </div>

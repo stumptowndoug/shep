@@ -2,7 +2,7 @@ import { useCallback, useRef, useState } from "react";
 import { useTerminalStore } from "../../stores/useTerminalStore";
 import { useUIStore } from "../../stores/useUIStore";
 import { useShallow } from "zustand/shallow";
-import { ChevronDown, Plus, X } from "lucide-react";
+import { Plus, X } from "lucide-react";
 import { assistantLogoSrc, getAssistantLogoClass } from "../../lib/assistantLogos";
 import { handleActionKey } from "../../lib/a11y";
 import tabKindMeta from "../../lib/tabKindMeta";
@@ -47,8 +47,10 @@ export default function TabBar({
 
   const [editingTabId, setEditingTabId] = useState<string | null>(null);
   const [openMenu, setOpenMenu] = useState<{ x: number; y: number; anchor: HTMLElement } | null>(null);
-  // The sidebar's More button already offers this menu; the tab bar only needs it when the sidebar is hidden.
-  const sidebarVisible = useUIStore((s) => s.sidebarVisible);
+  const startAgent = () => {
+    useUIStore.getState().deactivateAllOverlays();
+    useTerminalStore.getState().addPanelTab("launcher");
+  };
   const [dragTabId, setDragTabId] = useState<string | null>(null);
   const [dropIndex, setDropIndex] = useState<number | null>(null);
   const dragRef = useRef({ startX: 0, didDrag: false, dropIndex: null as number | null });
@@ -213,43 +215,31 @@ export default function TabBar({
           );
         })}
 
-        <div className="tab-new" onPointerDown={(event) => event.stopPropagation()}>
-          <button
-            type="button"
-            className="icon-btn"
-            onClick={() => {
-              useUIStore.getState().deactivateAllOverlays();
-              useTerminalStore.getState().addPanelTab("launcher");
-            }}
-            disabled={!activeProjectPath}
-            title={`New agent (${tabKindMeta.launcher.shortcut})`}
-            aria-label="New agent"
-          >
-            <Plus size={16} />
-          </button>
-          {!sidebarVisible && <button
-            type="button"
-            className="icon-btn tab-new__more"
-            onClick={(event) => {
-              const anchor = event.currentTarget;
-              const rect = anchor.getBoundingClientRect();
-              setOpenMenu(openMenu ? null : { x: rect.left, y: rect.bottom + 4, anchor });
-            }}
-            disabled={!activeProjectPath}
-            title="Open terminal, changes, and more"
-            aria-label="Open something else"
-            aria-haspopup="menu"
-            aria-expanded={openMenu !== null}
-          >
-            <ChevronDown size={13} />
-          </button>}
-        </div>
-        {openMenu && !sidebarVisible && (
+        {/* New agent leads the menu; ⇧⌘T still opens one directly. */}
+        <button
+          type="button"
+          className="icon-btn"
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={(event) => {
+            const anchor = event.currentTarget;
+            const rect = anchor.getBoundingClientRect();
+            setOpenMenu(openMenu ? null : { x: rect.left, y: rect.bottom + 4, anchor });
+          }}
+          disabled={!activeProjectPath}
+          title="New agent, terminal, changes, and more"
+          aria-label="New"
+          aria-haspopup="menu"
+          aria-expanded={openMenu !== null}
+        >
+          <Plus size={16} />
+        </button>
+        {openMenu && (
           <ProjectOpenMenu
             x={openMenu.x}
             y={openMenu.y}
             anchor={openMenu.anchor}
             actions={openActions}
+            onNewAgent={startAgent}
             onClose={() => setOpenMenu(null)}
           />
         )}
