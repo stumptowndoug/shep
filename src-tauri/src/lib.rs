@@ -122,6 +122,7 @@ pub fn run() {
             commands::get_terminal_settings,
             commands::save_terminal_settings,
             commands::list_monospace_families,
+            commands::list_font_families,
             commands::load_font_family,
             commands::open_in_editor,
             commands::open_file_in_editor,

@@ -138,6 +138,13 @@ pub fn list_monospace_families() -> Vec<FontFamily> {
 }
 
 #[tauri::command]
+pub async fn list_font_families() -> Result<Vec<fonts::ChatFontFamily>, String> {
+    tauri::async_runtime::spawn_blocking(fonts::list_font_families)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 pub async fn load_font_family(family: String) -> Vec<FontFaceData> {
     // Font file reads can total 10+ MB for a large family. Run on the blocking
     // thread pool so the Tauri runtime isn't stalled.

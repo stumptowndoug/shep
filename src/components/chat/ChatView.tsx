@@ -1,15 +1,19 @@
-import { memo, useCallback, useRef, useState } from "react";
+import { memo, useCallback, useRef, useState, type CSSProperties } from "react";
 import { ChevronRight, CircleAlert, ShieldAlert, X } from "lucide-react";
 import { ChatItemView } from "./ChatItems";
 import ChatComposer from "./ChatComposer";
 import { ChatProjectPath } from "./chatProjectPath";
 import CursorRequestCard from "./CursorRequestCard";
 import { useChatStore } from "../../stores/useChatStore";
+import { useChatAppearanceStore } from "../../stores/useChatAppearanceStore";
+import { useTerminalSettingsStore } from "../../stores/useTerminalSettingsStore";
 import { answerPermission, cancelChatStartup, cancelTurn } from "../../lib/acp/chatSessions";
 import { isStopShortcut } from "../../lib/acp/chatKeys";
 import { openUrl } from "../../lib/tauri";
 import { pendingRequest, RECENT_TURN_LIMIT, type ChatTurn } from "../../lib/acp/chatModel";
 import { splitTurn, turnStopMessage } from "../../lib/acp/chatPresentation";
+import { chatAppearanceStyle } from "../../lib/chatAppearance";
+import { buildCSSFontFamily } from "../../lib/terminalConfig";
 import { assistantLogoSrc, getAssistantLogoClass } from "../../lib/assistantLogos";
 import { CODING_ASSISTANTS } from "../sidebar/constants";
 import "./chat.css";
@@ -91,6 +95,8 @@ interface ChatViewProps {
 
 export default function ChatView({ chatId, assistantId, repoPath, fullAccess, onOpenTerminal }: ChatViewProps) {
   const chat = useChatStore((s) => s.chats[chatId]);
+  const appearance = useChatAppearanceStore((s) => s.appearance);
+  const codeFont = useTerminalSettingsStore((s) => s.settings.fontFamily);
   const assistant = CODING_ASSISTANTS.find((entry) => entry.id === assistantId);
   const agentName = assistant?.name ?? "Agent";
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -127,6 +133,7 @@ export default function ChatView({ chatId, assistantId, repoPath, fullAccess, on
   }, [chatId]);
 
   if (!chat) return null;
+  const appearanceStyle = chatAppearanceStyle(appearance, buildCSSFontFamily(codeFont));
   const notices = chat.notices ?? [];
   const request = pendingRequest(chat);
   const permission = request?.kind === "permission" ? request : undefined;
@@ -135,7 +142,7 @@ export default function ChatView({ chatId, assistantId, repoPath, fullAccess, on
 
   return (
     <ChatProjectPath value={repoPath}>
-    <div ref={rootRef} className="chat-view">
+    <div ref={rootRef} className="chat-view" style={appearanceStyle as CSSProperties}>
       <div
         ref={scrollRef}
         className="chat-view__scroll"

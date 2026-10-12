@@ -133,6 +133,16 @@ export function listMonospaceFamilies(): Promise<FontFamily[]> {
   return invoke("list_monospace_families");
 }
 
+export interface ChatFontFamily {
+  family: string;
+  /** Ships with macOS, so the webview can use it without loading it. */
+  isSystem: boolean;
+}
+
+export function listFontFamilies(): Promise<ChatFontFamily[]> {
+  return invoke("list_font_families");
+}
+
 export function loadFontFamily(family: string): Promise<FontFaceData[]> {
   return invoke("load_font_family", { family });
 }
