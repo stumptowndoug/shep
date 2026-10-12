@@ -22,6 +22,20 @@ support in their CLIs. For Antigravity, Shep downloads Google's chat runtime for
 you and verifies it against pinned checksums. It is kept separate from `agy` and
 never changes your CLI installation or `PATH`.
 
+## Queued chat messages
+
+Send a follow-up while the agent is working to queue it. Its text appears in the
+conversation with a **Queued** label. All waiting messages are sent together, in
+order, when the current turn finishes. Messages entered during startup wait until
+the agent is ready.
+
+Stop, Esc, or Ctrl+C stops the current response and marks waiting messages
+**Not sent**, keeping their text in place. Messages submitted while Stop is still
+taking effect are also marked **Not sent**; send a new message once the agent is
+idle to start again. Startup failures and agent exits preserve waiting text the
+same way. Queued and not-sent messages are kept only in the open chat tab; they
+are not restored from History after closing the tab or restarting Shep.
+
 ## Standard and YOLO
 
 | Mode | Behavior |

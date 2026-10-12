@@ -15,8 +15,9 @@ export function isStopShortcut(event: KeyLike): boolean {
 }
 
 /** Prompts sent in this chat, oldest first, for ↑/↓ recall in the composer. */
-export function sentPrompts(turns: readonly { prompt: string | null }[]): string[] {
-  return turns.flatMap((turn) => (turn.prompt?.trim() ? [turn.prompt] : []));
+export function sentPrompts(turns: readonly { prompt: string | null; additionalPrompts?: readonly string[] }[]): string[] {
+  return turns.flatMap((turn) => [turn.prompt, ...(turn.additionalPrompts ?? [])]
+    .filter((prompt): prompt is string => Boolean(prompt?.trim())));
 }
 
 /**

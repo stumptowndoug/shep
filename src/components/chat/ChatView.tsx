@@ -1,4 +1,4 @@
-import { memo, useCallback, useRef, useState, type CSSProperties } from "react";
+import { Fragment, memo, useCallback, useRef, useState, type CSSProperties } from "react";
 import { ChevronRight, CircleAlert, ShieldAlert, X } from "lucide-react";
 import { ChatItemView } from "./ChatItems";
 import ChatComposer from "./ChatComposer";
@@ -51,6 +51,15 @@ function plural(count: number, word: string): string {
   return `${count} ${word}${count === 1 ? "" : "s"}`;
 }
 
+function PendingMessage({ text, unsent = false }: { text: string; unsent?: boolean }) {
+  return <div className="chat-pending" role="group" aria-label={unsent ? "Not sent message" : "Queued message"}>
+    <span className="chat-pending__label" title={unsent ? "This message was not sent to the agent." : "Will be sent when the current turn finishes."}>
+      {unsent ? "Not sent" : "Queued"}
+    </span>
+    <div className="chat-user">{text}</div>
+  </div>;
+}
+
 const Turn = memo(function Turn({ turn }: { turn: ChatTurn }) {
   const { work, answer } = splitTurn(turn);
   const tools = work.filter((item) => item.kind === "tool");
@@ -66,6 +75,7 @@ const Turn = memo(function Turn({ turn }: { turn: ChatTurn }) {
   return (
     <div className="chat-turn">
       {turn.prompt && <div className="chat-user">{turn.prompt}</div>}
+      {turn.additionalPrompts?.map((text, index) => <div key={index} className="chat-user">{text}</div>)}
       {work.length > 0 && (
         <details className="chat-worked" open={showWork} onToggle={(event) => setWorkExpanded(event.currentTarget.open)}>
           <summary>
@@ -135,6 +145,8 @@ export default function ChatView({ chatId, assistantId, repoPath, fullAccess, on
   if (!chat) return null;
   const appearanceStyle = chatAppearanceStyle(appearance, buildCSSFontFamily(codeFont));
   const notices = chat.notices ?? [];
+  // Live chats can survive a development reload from before this field existed.
+  const unsentPrompts = chat.unsentPrompts ?? [];
   const request = pendingRequest(chat);
   const permission = request?.kind === "permission" ? request : undefined;
   const logo = assistantId ? assistantLogoSrc[assistantId] : undefined;
@@ -175,9 +187,14 @@ export default function ChatView({ chatId, assistantId, repoPath, fullAccess, on
             stuckRef.current = true;
             setVisibleTurnCount(TURN_PAGE_SIZE);
           }}>Show recent turns</button>}
-          {chat.turns.slice(-visibleTurnCount).map((turn) => <Turn key={turn.id} turn={turn} />)}
+          {unsentPrompts.filter(prompt => prompt.afterTurnId === null).map((prompt, index) => <PendingMessage key={index} text={prompt.text} unsent />)}
+          {chat.turns.slice(-visibleTurnCount).map((turn) => <Fragment key={turn.id}>
+            <Turn turn={turn} />
+            {unsentPrompts.filter(prompt => prompt.afterTurnId === turn.id).map((prompt, index) => <PendingMessage key={index} text={prompt.text} unsent />)}
+          </Fragment>)}
           {chat.status === "working" && !request && <div className="chat-working chat-shimmer">Working</div>}
           {chat.error && <div className="chat-error">{chat.error}</div>}
+          {chat.queued.map((text, index) => <PendingMessage key={index} text={text} />)}
         </div>
       </div>
 

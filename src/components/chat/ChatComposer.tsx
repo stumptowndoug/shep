@@ -247,7 +247,7 @@ export default function ChatComposer({ chatId, chat, assistantId, agentName, ful
             </span>
           )}
           {chat.queued.length > 0 && (
-            <span className="chat-composer__queued">{chat.queued.length} queued</span>
+            <span className="chat-composer__queued" role="status">{chat.queued.length} queued</span>
           )}
         </div>
         <div className="chat-composer__actions">

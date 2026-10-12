@@ -55,6 +55,8 @@ export type ChatItem =
 export interface ChatTurn {
   id: number;
   prompt: string | null;
+  /** Follow-ups sent together with the first prompt in a single agent turn. */
+  additionalPrompts?: string[];
   items: ChatItem[];
   startedAt: number;
   endedAt: number | null;
@@ -96,6 +98,8 @@ export interface ChatState {
   options: ChatOption[];
   commands: ChatCommand[];
   queued: string[];
+  /** Keep stopped follow-ups in their original place in the conversation. */
+  unsentPrompts: { text: string; afterTurnId: number | null }[];
   error: string | null;
   /** Live agent status, separate from conversation history and turn lifecycle. */
   notices: SessionNotice[];
@@ -111,10 +115,20 @@ export function lastOf<T>(items: readonly T[]): T | undefined {
 }
 
 export function emptyChat(): ChatState {
-  return { status: "starting", turns: [], options: [], commands: [], queued: [], error: null, notices: [], usage: null };
+  return { status: "starting", turns: [], options: [], commands: [], queued: [], unsentPrompts: [], error: null, notices: [], usage: null };
 }
 
 // ── Turns ────────────────────────────────────────────────────────────
+
+export function markQueuedPromptsUnsent(state: ChatState): ChatState {
+  if (state.queued.length === 0) return state;
+  const afterTurnId = lastOf(state.turns)?.id ?? null;
+  return {
+    ...state,
+    queued: [],
+    unsentPrompts: [...(state.unsentPrompts ?? []), ...state.queued.map(text => ({ text, afterTurnId }))],
+  };
+}
 
 /** Keep conversation text, but release heavy display content in older completed turns. */
 export function trimOldTurnDetails(state: ChatState): ChatState {
@@ -137,10 +151,11 @@ export function trimOldTurnDetails(state: ChatState): ChatState {
   return changed ? { ...state, turns } : state;
 }
 
-export function startTurn(state: ChatState, prompt: string | null): ChatState {
+export function startTurn(state: ChatState, prompt: string | null, additionalPrompts: string[] = []): ChatState {
   const turn: ChatTurn = {
     id: state.turns.length,
     prompt,
+    ...(additionalPrompts.length > 0 ? { additionalPrompts } : {}),
     items: [],
     startedAt: Date.now(),
     endedAt: null,
