@@ -1,4 +1,4 @@
-import { createHighlighterCore, type HighlighterCore, type ThemedToken } from "shiki/core";
+import { createHighlighterCore, type HighlighterCore, type LanguageRegistration, type ThemedToken } from "shiki/core";
 import { createOnigurumaEngine } from "shiki/engine/oniguruma";
 import { hexLuminance, type ShepTheme } from "./themes";
 
@@ -151,7 +151,6 @@ export function getHighlighter(): Promise<HighlighterCore> {
         import("shiki/langs/yaml.mjs"),
         import("shiki/langs/bash.mjs"),
         import("shiki/langs/sql.mjs"),
-        import("shiki/langs/diff.mjs"),
       ],
       engine: createOnigurumaEngine(import("shiki/wasm")),
     }).catch((error) => {
@@ -161,6 +160,104 @@ export function getHighlighter(): Promise<HighlighterCore> {
     });
   }
   return cached;
+}
+
+type LanguageModule = Promise<{ default: LanguageRegistration[] }>;
+
+/**
+ * Languages loaded only when a code block names them. Each is its own chunk,
+ * so they cost nothing at startup and only ship as small files in the app.
+ * Large, rarely seen grammars (OCaml, Objective-C, Less, ...) stay out; their
+ * blocks show as plain code.
+ */
+const ON_DEMAND_LANGS: Record<string, () => LanguageModule> = {
+  diff: () => import("shiki/langs/diff.mjs"),
+  java: () => import("shiki/langs/java.mjs"),
+  kotlin: () => import("shiki/langs/kotlin.mjs"),
+  swift: () => import("shiki/langs/swift.mjs"),
+  c: () => import("shiki/langs/c.mjs"),
+  cpp: () => import("shiki/langs/cpp.mjs"),
+  csharp: () => import("shiki/langs/csharp.mjs"),
+  ruby: () => import("shiki/langs/ruby.mjs"),
+  php: () => import("shiki/langs/php.mjs"),
+  scala: () => import("shiki/langs/scala.mjs"),
+  dart: () => import("shiki/langs/dart.mjs"),
+  lua: () => import("shiki/langs/lua.mjs"),
+  r: () => import("shiki/langs/r.mjs"),
+  docker: () => import("shiki/langs/docker.mjs"),
+  make: () => import("shiki/langs/make.mjs"),
+  graphql: () => import("shiki/langs/graphql.mjs"),
+  xml: () => import("shiki/langs/xml.mjs"),
+  ini: () => import("shiki/langs/ini.mjs"),
+  powershell: () => import("shiki/langs/powershell.mjs"),
+  shellsession: () => import("shiki/langs/shellsession.mjs"),
+  proto: () => import("shiki/langs/proto.mjs"),
+  terraform: () => import("shiki/langs/terraform.mjs"),
+  hcl: () => import("shiki/langs/hcl.mjs"),
+  scss: () => import("shiki/langs/scss.mjs"),
+  vue: () => import("shiki/langs/vue.mjs"),
+  svelte: () => import("shiki/langs/svelte.mjs"),
+  elixir: () => import("shiki/langs/elixir.mjs"),
+  zig: () => import("shiki/langs/zig.mjs"),
+  jsonc: () => import("shiki/langs/jsonc.mjs"),
+  csv: () => import("shiki/langs/csv.mjs"),
+  haskell: () => import("shiki/langs/haskell.mjs"),
+};
+
+/** Fence names agents use that a grammar only knows once loaded, or not at all. */
+const LANG_ALIASES: Record<string, string> = {
+  postgres: "sql", postgresql: "sql", psql: "sql", pgsql: "sql", plpgsql: "sql", mysql: "sql",
+  sqlite: "sql", tsql: "sql", mssql: "sql", plsql: "sql", bigquery: "sql", snowflake: "sql",
+  sparksql: "sql", redshift: "sql", duckdb: "sql",
+  patch: "diff", kt: "kotlin", kts: "kotlin", h: "c", "c++": "cpp", cc: "cpp", cxx: "cpp",
+  hpp: "cpp", "c#": "csharp", cs: "csharp", rb: "ruby", dockerfile: "docker", makefile: "make",
+  gql: "graphql", properties: "ini", ps: "powershell", ps1: "powershell", pwsh: "powershell",
+  console: "shellsession", protobuf: "proto", tf: "terraform", tfvars: "terraform", hs: "haskell",
+};
+
+/** The highlighter's name for a code fence's language, e.g. "Postgres" → "sql". */
+export function canonicalLang(lang: string): string {
+  const name = lang.trim().toLowerCase();
+  return LANG_ALIASES[name] ?? name;
+}
+
+/** Languages named by fenced code blocks in markdown. */
+export function fenceLanguages(markdown: string): string[] {
+  const names = new Set<string>();
+  for (const match of markdown.matchAll(/^ {0,3}(?:`{3,}|~{3,})[ \t]*([^\s`{]+)/gm)) {
+    names.add(canonicalLang(match[1]));
+  }
+  return [...names];
+}
+
+const loadedOnDemand = new Set<string>();
+const loading = new Map<string, Promise<void>>();
+
+/**
+ * Load the on-demand languages among `names`. Returns null when there is
+ * nothing to wait for, else the same promise per set (safe for React's `use`).
+ * A grammar that fails to load just leaves its blocks as plain code.
+ */
+export function loadLanguages(names: string[]): Promise<void> | null {
+  const needed = names.filter((name) => name in ON_DEMAND_LANGS && !loadedOnDemand.has(name)).sort();
+  if (needed.length === 0) return null;
+  const key = needed.join(",");
+  let pending = loading.get(key);
+  if (!pending) {
+    pending = getHighlighter()
+      .then((highlighter) => Promise.all(needed.map(async (name) => {
+        try {
+          await highlighter.loadLanguage(...(await ON_DEMAND_LANGS[name]()).default);
+          loadedOnDemand.add(name);
+        } catch (error) {
+          loadedOnDemand.add(name);
+          if (import.meta.env.DEV) console.error(`[shiki] failed to load ${name}`, error);
+        }
+      })))
+      .then(() => undefined, () => undefined);
+    loading.set(key, pending);
+  }
+  return pending;
 }
 
 /** Tokenize a source string. Returns one ThemedToken array per line of

@@ -1,7 +1,7 @@
 import markdownit, { type MarkdownIt, type RendererRule } from "markdown-it";
 import { fromHighlighter } from "@shikijs/markdown-it/core";
-import type { BundledLanguage, HighlighterGeneric } from "shiki";
-import { getHighlighter } from "./shikiHighlighter";
+import type { HighlighterGeneric } from "shiki";
+import { canonicalLang, getHighlighter } from "./shikiHighlighter";
 import { chatImageHtml } from "./acp/chatImages";
 
 const cached = new Map<string, Promise<MarkdownIt>>();
@@ -51,11 +51,16 @@ export function getMarkdownRenderer(theme: string): Promise<MarkdownIt> {
       markdown.use(
         fromHighlighter(highlighter as unknown as HighlighterGeneric<any, any>, {
           theme,
-          // Shiki throws on a language it hasn't loaded; agents name any language.
-          // "text" is Shiki's always-available plain language, which the option's type omits.
-          fallbackLanguage: "text" as BundledLanguage,
         }),
       );
+      // Shiki throws on a language it hasn't loaded, and agents name any language.
+      // Checked per block, not once, because languages also load on demand.
+      const highlight = markdown.options.highlight!;
+      markdown.options.highlight = (code, lang, attrs) => {
+        const name = canonicalLang(lang);
+        const known = name === "" || highlighter.getLoadedLanguages().includes(name);
+        return highlight(code, known ? name : "text", attrs);
+      };
       return markdown;
     })());
   }
