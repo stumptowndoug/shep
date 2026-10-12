@@ -369,6 +369,20 @@ fn migrate(conn: &Connection) -> Result<(), String> {
         .map_err(|e| format!("Failed to run migration v15: {e}"))?;
     }
 
+    if version < 16 {
+        // The latest limits a provider reported during use, for providers with
+        // no on-demand quota API (Muse reports them through its chat adapter).
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS provider_observations (
+                provider TEXT PRIMARY KEY,
+                payload TEXT NOT NULL,
+                observed_at INTEGER NOT NULL
+             );
+             INSERT INTO schema_version (version) VALUES (16);",
+        )
+        .map_err(|e| format!("Failed to run migration v16: {e}"))?;
+    }
+
     Ok(())
 }
 
@@ -482,7 +496,7 @@ mod tests {
             )
             .unwrap();
 
-        assert_eq!(version, 15);
+        assert_eq!(version, 16);
         assert_eq!(history_table, 1);
         assert!(pricing_rows > 0);
     }
@@ -565,7 +579,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(stale_count, 0);
-        assert_eq!(version, 15);
+        assert_eq!(version, 16);
     }
 
     #[test]
@@ -621,7 +635,7 @@ mod tests {
 
         assert_eq!(codex_rows, 0);
         assert_eq!(claude_rows, 3);
-        assert_eq!(version, 15);
+        assert_eq!(version, 16);
     }
 
     #[test]
@@ -677,7 +691,7 @@ mod tests {
 
         assert_eq!(antigravity_rows, 0);
         assert_eq!(claude_rows, 3);
-        assert_eq!(version, 15);
+        assert_eq!(version, 16);
     }
 
     #[test]
@@ -741,6 +755,6 @@ mod tests {
         assert_eq!(google_rows, 2);
         assert_eq!(anthropic_rows, 2);
         assert_eq!(unknown_rows, 1);
-        assert_eq!(version, 15);
+        assert_eq!(version, 16);
     }
 }

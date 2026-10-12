@@ -68,6 +68,20 @@ probe. If usage is unavailable, check that `/usage` works in `agy`. Refreshes
 retain the last successful values in memory; they refresh at most every five
 minutes after success and retry with backoff after failures.
 
+## Muse Code usage
+
+Shep reads Muse's token history from its session logs
+(`~/.local/share/muse/sessions`), counting each model call once, by model and by
+project. Subagent calls count toward the session that started them.
+
+Muse has no public way to ask for subscription limits on demand: a fresh
+`muse serve` only learns them from the responses to real requests. So Shep shows
+Muse's 5-hour and weekly limits from the readings its chat adapter reports
+during Muse chats, keeping the latest one. A 5-hour window whose reset time has
+passed shows as started over, and a weekly reading past its reset is dropped
+rather than shown stale. Until you've chatted with Muse in Shep, only token
+history is shown.
+
 ## Gemini CLI
 
 Gemini CLI was removed from the launcher after Google deprecated it in favor of

@@ -64,6 +64,14 @@ pub fn ingest_all(conn: &mut Connection) -> bool {
         }
         Err(e) => eprintln!("pi ingest error: {e}"),
     }
+    match ingest_muse(conn, MAX_FILES_PER_CYCLE) {
+        Ok(done) => {
+            if !done {
+                all_done = false;
+            }
+        }
+        Err(e) => eprintln!("Muse ingest error: {e}"),
+    }
     if let Err(e) = prune_old_messages(conn) {
         eprintln!("Prune error: {e}");
     }
@@ -1201,6 +1209,220 @@ fn read_pi_project(path: &Path) -> Option<String> {
     )
 }
 
+// ── Muse ──────────────────────────────────────────────────
+
+/// Muse keeps one event log per session (and per subagent, beneath it) at
+/// `sessions/YYYY/MM/DD/<session>/…/session.jsonl` under its data folder.
+fn muse_data_dir() -> Result<PathBuf, String> {
+    match std::env::var_os("XDG_DATA_HOME").filter(|value| !value.is_empty()) {
+        Some(dir) => Ok(PathBuf::from(dir).join("muse")),
+        None => home_join(".local/share/muse"),
+    }
+}
+
+fn ingest_muse(conn: &Connection, budget: usize) -> Result<bool, String> {
+    let data_dir = muse_data_dir()?;
+    ingest_muse_from(conn, &data_dir, budget)
+}
+
+fn ingest_muse_from(conn: &Connection, data_dir: &Path, budget: usize) -> Result<bool, String> {
+    let sessions_dir = data_dir.join("sessions");
+    if !sessions_dir.exists() {
+        return Ok(true);
+    }
+    let logs: Vec<_> = walk_files(&sessions_dir)
+        .into_iter()
+        .filter(|path| path.file_name().and_then(|name| name.to_str()) == Some("session.jsonl"))
+        .collect();
+
+    conn.execute_batch("BEGIN").map_err(|e| e.to_string())?;
+    let mut projects: Option<std::collections::HashMap<String, String>> = None;
+    let mut processed = 0;
+    let mut skipped_remaining = false;
+
+    for path in &logs {
+        if processed >= budget {
+            skipped_remaining = true;
+            break;
+        }
+        let meta = match fs::metadata(path) {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        let needs_work = match get_cursor(conn, &path.to_string_lossy()) {
+            Some((size, _, mtime)) => size != meta.len() as i64 || mtime != file_mtime(&meta),
+            None => true,
+        };
+        if !needs_work {
+            continue;
+        }
+        processed += 1;
+        let projects = projects.get_or_insert_with(|| muse_session_projects(data_dir));
+        if let Err(e) = ingest_muse_file(conn, &sessions_dir, path, projects) {
+            eprintln!("Muse ingest error for {}: {e}", path.display());
+        }
+    }
+
+    if !skipped_remaining {
+        clean_cursors(conn, "muse", &logs);
+    }
+    conn.execute_batch("COMMIT").map_err(|e| e.to_string())?;
+    Ok(!skipped_remaining)
+}
+
+/// Each session's workspace from Muse's own session index, as a project label.
+fn muse_session_projects(data_dir: &Path) -> std::collections::HashMap<String, String> {
+    let mut projects = std::collections::HashMap::new();
+    let Ok(index) = Connection::open_with_flags(
+        data_dir.join("session-index.db"),
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    ) else {
+        return projects;
+    };
+    let Ok(mut stmt) = index.prepare("SELECT session_id, workspace_root FROM sessions") else {
+        return projects;
+    };
+    let rows = stmt.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+    });
+    if let Ok(rows) = rows {
+        for (id, root) in rows.flatten() {
+            if let Some(name) = root
+                .as_deref()
+                .and_then(|root| root.rsplit('/').find(|s| !s.is_empty()))
+            {
+                projects.insert(id, name.to_string());
+            }
+        }
+    }
+    projects
+}
+
+fn ingest_muse_file(
+    conn: &Connection,
+    sessions_dir: &Path,
+    path: &Path,
+    projects: &std::collections::HashMap<String, String>,
+) -> Result<(), String> {
+    let path_str = path.to_string_lossy().to_string();
+    let meta = fs::metadata(path).map_err(|e| e.to_string())?;
+    let file_size = meta.len() as i64;
+    let mtime = file_mtime(&meta);
+    let offset = match get_cursor(conn, &path_str) {
+        Some((size, _, mt)) if size == file_size && mt == mtime => return Ok(()),
+        // A log that shrank was rewritten; read it again from the start.
+        Some((_, off, _)) if off <= file_size => off,
+        _ => 0,
+    };
+
+    // Subagent logs live beneath their session, so usage rolls up to it.
+    let session_id = path
+        .strip_prefix(sessions_dir)
+        .ok()
+        .and_then(|relative| relative.components().nth(3))
+        .and_then(|part| part.as_os_str().to_str())
+        .unwrap_or("unknown")
+        .to_string();
+    let project = projects
+        .get(&session_id)
+        .cloned()
+        .unwrap_or_else(|| "unknown".to_string());
+
+    let file = fs::File::open(path).map_err(|e| e.to_string())?;
+    let mut reader = BufReader::new(file);
+    reader
+        .seek(SeekFrom::Start(offset as u64))
+        .map_err(|e| e.to_string())?;
+    let mut new_offset = offset;
+    let mut line = String::new();
+    let mut session_model: Option<String> = None;
+
+    loop {
+        line.clear();
+        let bytes_read = reader.read_line(&mut line).map_err(|e| e.to_string())?;
+        if bytes_read == 0 || !line.ends_with('\n') {
+            // Leave a partially written last line for the next pass.
+            break;
+        }
+        new_offset += bytes_read as i64;
+        let row: Value = match serde_json::from_str(&line) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let payload = row.get("payload");
+        if let Some(model) = payload
+            .and_then(|p| p.get("record"))
+            .and_then(|r| r.get("model_id"))
+            .and_then(Value::as_str)
+        {
+            session_model = Some(model.to_string());
+        }
+        let Some(event) = payload.and_then(|p| p.get("event")) else {
+            continue;
+        };
+        let kind = event.get("kind").and_then(Value::as_str);
+        if !matches!(
+            kind,
+            Some("model_completed") | Some("automated_review_completed")
+        ) {
+            continue;
+        }
+        let Some(usage) = event.get("usage").filter(|u| u.is_object()) else {
+            continue;
+        };
+
+        // Muse counts cached tokens inside input and reasoning inside output.
+        let input = as_u64(usage.get("input_tokens"));
+        let output = as_u64(usage.get("output_tokens"));
+        let cache_read = match as_u64(usage.get("cache_read_tokens")) {
+            0 => as_u64(usage.get("cached_tokens")),
+            read => read,
+        }
+        .min(input);
+        let cache_write = as_u64(usage.get("cache_write_tokens"));
+        let reasoning = as_u64(usage.get("reasoning_tokens"));
+        let total = input + output;
+        if total == 0 {
+            continue;
+        }
+        let model = event
+            .get("model")
+            .and_then(Value::as_str)
+            .map(ToString::to_string)
+            .or_else(|| session_model.clone())
+            .unwrap_or_else(|| "unknown".to_string());
+        let timestamp = row
+            .get("recorded_at")
+            .and_then(Value::as_i64)
+            .map(|micros| micros / 1_000_000)
+            .unwrap_or(0);
+
+        conn.execute(
+            "INSERT INTO usage_messages (
+                provider, session_id, project, model, timestamp,
+                tokens_input, tokens_output, tokens_cache_write, tokens_cache_read,
+                tokens_thoughts, tokens_total, pricing_provider
+             ) VALUES ('muse', ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'meta')",
+            params![
+                session_id,
+                project,
+                model,
+                timestamp,
+                input.saturating_sub(cache_read) as i64,
+                output as i64,
+                cache_write as i64,
+                cache_read as i64,
+                reasoning as i64,
+                total as i64
+            ],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+
+    upsert_cursor(conn, &path_str, "muse", file_size, new_offset, mtime)?;
+    Ok(())
+}
+
 // ── Maintenance ───────────────────────────────────────────
 
 fn prune_old_messages(conn: &Connection) -> Result<(), String> {
@@ -1369,6 +1591,159 @@ fn file_mtime(meta: &fs::Metadata) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// session, project, model, timestamp, input, output, cache read, reasoning, total
+    type MuseRow = (String, String, String, i64, i64, i64, i64, i64, i64);
+
+    fn muse_fixture(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "shep-muse-ingest-{name}-{}-{}",
+            std::process::id(),
+            now_epoch_seconds()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let index = Connection::open(dir.join("session-index.db")).unwrap();
+        index
+            .execute_batch(
+                "CREATE TABLE sessions (session_id TEXT PRIMARY KEY, workspace_root TEXT);
+                 INSERT INTO sessions VALUES ('sess-1', '/Users/me/dev/shep-website');",
+            )
+            .unwrap();
+        dir
+    }
+
+    fn muse_event(sequence: u64, event: &str) -> String {
+        format!(
+            "{{\"schema_version\":1,\"sequence\":{sequence},\"recorded_at\":1791828754115894,\"payload_type\":\"runtime.session\",\"payload\":{{\"kind\":\"run\",\"event\":{event}}}}}\n"
+        )
+    }
+
+    #[test]
+    fn muse_completions_count_once_and_roll_subagents_into_their_session() {
+        let dir = muse_fixture("rollup");
+        let session = dir.join("sessions/2026/10/12/sess-1");
+        fs::create_dir_all(session.join("subagent/child-1")).unwrap();
+        fs::write(
+            session.join("session.jsonl"),
+            [
+                "{\"payload_type\":\"runtime.session.metadata\",\"payload\":{\"kind\":\"metadata\",\"record\":{\"provider_id\":\"meta\",\"model_id\":\"muse-wonder-1.0\"}}}\n".to_string(),
+                muse_event(1, "{\"kind\":\"model_completed\",\"usage\":{\"input_tokens\":24579,\"output_tokens\":139,\"cached_tokens\":3000,\"cache_write_tokens\":0,\"cache_read_tokens\":3000,\"reasoning_tokens\":47},\"duration_ms\":3644,\"model\":\"muse-wonder-1.0\"}"),
+                // Echo-provider completions report nothing and are skipped.
+                muse_event(2, "{\"kind\":\"model_completed\",\"usage\":{\"input_tokens\":0,\"output_tokens\":0,\"cached_tokens\":0,\"reasoning_tokens\":0}}"),
+                muse_event(3, "{\"kind\":\"goal_usage_attribution\",\"record\":{\"quantity\":{\"input_tokens\":24579}}}"),
+            ]
+            .concat(),
+        )
+        .unwrap();
+        // Older hosts omit the model on the completion; the session metadata supplies it.
+        fs::write(
+            session.join("subagent/child-1/session.jsonl"),
+            [
+                "{\"payload_type\":\"runtime.session.metadata\",\"payload\":{\"kind\":\"metadata\",\"record\":{\"model_id\":\"muse-spark-1.2\"}}}\n".to_string(),
+                muse_event(1, "{\"kind\":\"automated_review_completed\",\"usage\":{\"input_tokens\":1000,\"output_tokens\":20,\"cached_tokens\":0,\"reasoning_tokens\":0}}"),
+            ]
+            .concat(),
+        )
+        .unwrap();
+
+        let db = crate::usage::db::UsageDb::open_in_memory();
+        let conn = db.conn.lock().unwrap();
+        assert!(ingest_muse_from(&conn, &dir, 10).unwrap());
+        let mut stmt = conn
+            .prepare(
+                "SELECT session_id, project, model, timestamp, tokens_input, tokens_output,
+                        tokens_cache_read, tokens_thoughts, tokens_total
+                 FROM usage_messages WHERE provider = 'muse' ORDER BY tokens_total DESC",
+            )
+            .unwrap();
+        let rows: Vec<MuseRow> = stmt
+            .query_map([], |r| {
+                Ok((
+                    r.get(0)?,
+                    r.get(1)?,
+                    r.get(2)?,
+                    r.get(3)?,
+                    r.get(4)?,
+                    r.get(5)?,
+                    r.get(6)?,
+                    r.get(7)?,
+                    r.get(8)?,
+                ))
+            })
+            .unwrap()
+            .map(Result::unwrap)
+            .collect();
+        assert_eq!(
+            rows,
+            vec![
+                (
+                    "sess-1".into(),
+                    "shep-website".into(),
+                    "muse-wonder-1.0".into(),
+                    1_791_828_754,
+                    21_579,
+                    139,
+                    3_000,
+                    47,
+                    24_718
+                ),
+                (
+                    "sess-1".into(),
+                    "shep-website".into(),
+                    "muse-spark-1.2".into(),
+                    1_791_828_754,
+                    1_000,
+                    20,
+                    0,
+                    0,
+                    1_020
+                ),
+            ]
+        );
+
+        // An unchanged log is not read twice.
+        assert!(ingest_muse_from(&conn, &dir, 10).unwrap());
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM usage_messages WHERE provider = 'muse'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 2);
+        drop(stmt);
+        drop(conn);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn muse_appended_completions_are_read_from_the_last_complete_line() {
+        let dir = muse_fixture("append");
+        let session = dir.join("sessions/2026/10/12/sess-1");
+        fs::create_dir_all(&session).unwrap();
+        let log = session.join("session.jsonl");
+        let first = muse_event(1, "{\"kind\":\"model_completed\",\"usage\":{\"input_tokens\":100,\"output_tokens\":10,\"cached_tokens\":0,\"reasoning_tokens\":0},\"model\":\"m\"}");
+        let second = muse_event(2, "{\"kind\":\"model_completed\",\"usage\":{\"input_tokens\":200,\"output_tokens\":20,\"cached_tokens\":0,\"reasoning_tokens\":0},\"model\":\"m\"}");
+        // The second completion is still being written.
+        fs::write(&log, format!("{first}{}", &second[..40])).unwrap();
+
+        let db = crate::usage::db::UsageDb::open_in_memory();
+        let conn = db.conn.lock().unwrap();
+        ingest_muse_from(&conn, &dir, 10).unwrap();
+        fs::write(&log, format!("{first}{second}")).unwrap();
+        ingest_muse_from(&conn, &dir, 10).unwrap();
+        let totals: Vec<i64> = conn
+            .prepare("SELECT tokens_total FROM usage_messages WHERE provider = 'muse' ORDER BY id")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect();
+        assert_eq!(totals, vec![110, 220]);
+        drop(conn);
+        fs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn repeated_rollups_preserve_totals_and_session_identity() {

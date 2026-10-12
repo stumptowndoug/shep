@@ -61,7 +61,10 @@ pub fn now_epoch_seconds() -> u64 {
 }
 
 pub fn now_iso_string() -> String {
-    let secs = now_epoch_seconds();
+    iso_from_epoch_seconds(now_epoch_seconds())
+}
+
+pub fn iso_from_epoch_seconds(secs: u64) -> String {
     // Format as ISO 8601 without shelling out
     let days = secs / 86400;
     let time = secs % 86400;

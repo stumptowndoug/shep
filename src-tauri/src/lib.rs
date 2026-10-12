@@ -185,6 +185,7 @@ pub fn run() {
             commands::save_usage_settings,
             commands::get_all_usage_snapshots,
             commands::get_usage_snapshot,
+            commands::record_muse_subscription_usage,
             commands::get_usage_details,
             commands::get_usage_overview,
             commands::get_project_alias_review_queue,

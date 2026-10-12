@@ -20,7 +20,8 @@ import { useChatStore } from "../../stores/useChatStore";
 import { useChatModelStore } from "../../stores/useChatModelStore";
 import { chatDraftKey, useChatDraftStore } from "../../stores/useChatDraftStore";
 import { useTerminalStore, nextTabId } from "../../stores/useTerminalStore";
-import { killAcpAgent, recordSessionHistoryActivity, upsertSessionHistory } from "../tauri";
+import { killAcpAgent, recordMuseSubscriptionUsage, recordSessionHistoryActivity, upsertSessionHistory } from "../tauri";
+import { museSubscriptionUsage } from "./museUsage";
 import { notifyAgent } from "../notifications";
 import type { AgentSemanticState, CodingAssistant, SessionMode } from "../types";
 import { isAccessOption, isFullAccessMode, isModelOption } from "./chatOptions";
@@ -98,6 +99,12 @@ export async function startChat(options: StartChatOptions): Promise<number> {
             return;
           }
           stream.flush();
+          const museUsage = assistant.id === "muse" ? museSubscriptionUsage(update) : null;
+          if (museUsage) {
+            recordMuseSubscriptionUsage(museUsage).catch((error) => {
+              if (import.meta.env.DEV) console.warn("Failed to record Muse usage:", error);
+            });
+          }
           const previous = useChatStore.getState().chats[chatId]?.options.find(isAccessOption)?.value;
           useChatStore.getState().update(chatId, (chat) => applySessionUpdate(chat, update));
           const access = useChatStore.getState().chats[chatId]?.options.find(isAccessOption);

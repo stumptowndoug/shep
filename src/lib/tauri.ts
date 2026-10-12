@@ -484,6 +484,11 @@ export function getAllUsageSnapshots(): Promise<ProviderUsageSnapshot[]> {
   return invoke("get_all_usage_snapshots");
 }
 
+/** Saves the latest Muse subscription reading reported by its chat adapter. */
+export function recordMuseSubscriptionUsage(usage: Record<string, unknown>): Promise<void> {
+  return invoke("record_muse_subscription_usage", { usage });
+}
+
 export function getUsageSnapshot(provider: string): Promise<ProviderUsageSnapshot> {
   return invoke("get_usage_snapshot", { provider });
 }

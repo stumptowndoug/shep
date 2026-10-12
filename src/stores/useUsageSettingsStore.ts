@@ -12,6 +12,7 @@ const DEFAULT_SETTINGS: UsageSettings = {
   opencode: { show: true, budgetMode: "custom", monthlyBudget: 100 },
   pi: { show: false, budgetMode: "custom", monthlyBudget: null },
   grok: { show: true, budgetMode: "subscription", monthlyBudget: null },
+  muse: { show: true, budgetMode: "subscription", monthlyBudget: null },
 };
 
 interface UsageSettingsStore {
