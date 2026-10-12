@@ -10,6 +10,6 @@ export async function chatAdapterAvailable(adapter: AcpAdapter): Promise<boolean
 export async function chatAdapterCommand(adapter: AcpAdapter) {
   if (!adapter.managed) return { command: adapter.command, args: adapter.args };
   const runtime = await getManagedAcpAdapter(adapter.managed);
-  if (!runtime) throw new Error("Install the Antigravity chat runtime from a new tab first.");
+  if (!runtime) throw new Error("Set up chat for this agent from a new tab first.");
   return runtime;
 }

@@ -185,7 +185,10 @@ impl GitWatcher {
                     let _ = watcher.unwatch(&path_buf);
                     return Err(format!("Failed to watch worktree metadata: {error}"));
                 }
-                self.git_dirs.lock().unwrap().insert(path_buf.clone(), git_dir);
+                self.git_dirs
+                    .lock()
+                    .unwrap()
+                    .insert(path_buf.clone(), git_dir);
             }
         }
 
@@ -229,17 +232,30 @@ impl GitWatcher {
 fn external_git_dir(repo: &Path) -> Option<PathBuf> {
     use std::io::Read;
     let dot_git = repo.join(".git");
-    if !dot_git.is_file() { return None; }
+    if !dot_git.is_file() {
+        return None;
+    }
     let mut content = String::new();
-    std::fs::File::open(dot_git).ok()?.take(8192).read_to_string(&mut content).ok()?;
+    std::fs::File::open(dot_git)
+        .ok()?
+        .take(8192)
+        .read_to_string(&mut content)
+        .ok()?;
     let target = content.trim().strip_prefix("gitdir:")?.trim();
-    repo.join(target).canonicalize().ok().filter(|path| !path.starts_with(repo))
+    repo.join(target)
+        .canonicalize()
+        .ok()
+        .filter(|path| !path.starts_with(repo))
 }
 
 fn event_belongs_to_repo(path: &Path, repo: &Path, git_dir: Option<&PathBuf>) -> bool {
-    path.starts_with(repo) || git_dir.is_some_and(|dir| {
-        path.parent() == Some(dir.as_path()) && path.file_name().is_some_and(|name| name == "index" || name == "HEAD")
-    })
+    path.starts_with(repo)
+        || git_dir.is_some_and(|dir| {
+            path.parent() == Some(dir.as_path())
+                && path
+                    .file_name()
+                    .is_some_and(|name| name == "index" || name == "HEAD")
+        })
 }
 
 fn drain_pending(pending: &mut HashMap<PathBuf, bool>) -> (Vec<String>, Vec<String>) {
@@ -301,7 +317,9 @@ mod tests {
     #[test]
     fn index_updates_pass_for_checkouts_and_worktree_metadata() {
         assert!(should_watch_path(Path::new("/repo/.git/index")));
-        assert!(should_watch_path(Path::new("/repo/.git/worktrees/feature/index")));
+        assert!(should_watch_path(Path::new(
+            "/repo/.git/worktrees/feature/index"
+        )));
         assert!(!should_watch_path(Path::new("/repo/.git/objects/ab/123")));
     }
 
@@ -309,15 +327,33 @@ mod tests {
     fn external_worktree_index_events_reach_the_worktree() {
         let repo = Path::new("/worktrees/feature");
         let git_dir = PathBuf::from("/repo/.git/worktrees/feature");
-        assert!(event_belongs_to_repo(&git_dir.join("index"), repo, Some(&git_dir)));
-        assert!(event_belongs_to_repo(&git_dir.join("HEAD"), repo, Some(&git_dir)));
-        assert!(!event_belongs_to_repo(Path::new("/repo/.git/index"), repo, Some(&git_dir)));
-        assert!(!event_belongs_to_repo(&git_dir.join("index.lock"), repo, Some(&git_dir)));
+        assert!(event_belongs_to_repo(
+            &git_dir.join("index"),
+            repo,
+            Some(&git_dir)
+        ));
+        assert!(event_belongs_to_repo(
+            &git_dir.join("HEAD"),
+            repo,
+            Some(&git_dir)
+        ));
+        assert!(!event_belongs_to_repo(
+            Path::new("/repo/.git/index"),
+            repo,
+            Some(&git_dir)
+        ));
+        assert!(!event_belongs_to_repo(
+            &git_dir.join("index.lock"),
+            repo,
+            Some(&git_dir)
+        ));
     }
 
     #[test]
     fn ignores_high_churn_generated_directories() {
-        assert!(!should_watch_path(Path::new("/repo/output/run/result.json")));
+        assert!(!should_watch_path(Path::new(
+            "/repo/output/run/result.json"
+        )));
         assert!(!should_watch_path(Path::new("/repo/.venv/lib/module.py")));
         assert!(should_watch_path(Path::new("/repo/src/module.rs")));
     }

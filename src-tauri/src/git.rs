@@ -286,7 +286,10 @@ pub fn create_worktree(path: &str, branch_name: &str) -> Result<CreatedWorktree,
         let stdout = String::from_utf8_lossy(&out.stdout);
         stdout
             .lines()
-            .find_map(|l| l.strip_prefix("worktree ").map(|p| std::path::PathBuf::from(p.trim())))
+            .find_map(|l| {
+                l.strip_prefix("worktree ")
+                    .map(|p| std::path::PathBuf::from(p.trim()))
+            })
             .ok_or_else(|| "Could not determine main repo path".to_string())?
     };
 
@@ -319,7 +322,10 @@ pub fn create_worktree(path: &str, branch_name: &str) -> Result<CreatedWorktree,
         .join(branch_slug);
 
     if worktree_path.exists() {
-        return Err(format!("Worktree path already exists: {}", worktree_path.display()));
+        return Err(format!(
+            "Worktree path already exists: {}",
+            worktree_path.display()
+        ));
     }
 
     if let Some(parent) = worktree_path.parent() {
@@ -329,7 +335,15 @@ pub fn create_worktree(path: &str, branch_name: &str) -> Result<CreatedWorktree,
 
     let worktree_path_string = worktree_path.to_string_lossy().to_string();
     let output = Command::new("git")
-        .args(["-C", path, "worktree", "add", "-b", branch_name, &worktree_path_string])
+        .args([
+            "-C",
+            path,
+            "worktree",
+            "add",
+            "-b",
+            branch_name,
+            &worktree_path_string,
+        ])
         .output()
         .map_err(|e| e.to_string())?;
 
@@ -394,7 +408,10 @@ pub fn changed_files(path: &str) -> Result<Vec<ChangedFile>, String> {
             let parts: Vec<&str> = entry.splitn(9, ' ').collect();
             if parts.len() >= 9 {
                 let xy = parts[1].as_bytes();
-                if xy.len() < 2 { i += 1; continue; }
+                if xy.len() < 2 {
+                    i += 1;
+                    continue;
+                }
                 let file_path = parts[8].to_string();
 
                 if xy[0] != b'.' {
@@ -420,7 +437,10 @@ pub fn changed_files(path: &str) -> Result<Vec<ChangedFile>, String> {
             let parts: Vec<&str> = entry.splitn(10, ' ').collect();
             if parts.len() >= 10 {
                 let xy = parts[1].as_bytes();
-                if xy.len() < 2 { i += 1; continue; }
+                if xy.len() < 2 {
+                    i += 1;
+                    continue;
+                }
                 let file_path = parts[9].to_string();
                 // The original path follows as the next NUL-delimited field
                 let old_path = entries.get(i + 1).map(|s| s.to_string());
@@ -494,16 +514,27 @@ const DIFF_TIMEOUT: Duration = Duration::from_secs(5);
 
 fn bounded_diff(path: &str, args: &[&str]) -> Result<String, String> {
     let mut child = read_only_git()
-        .args(["-C", path, "diff", "--no-ext-diff", "--no-textconv", "--no-color"])
+        .args([
+            "-C",
+            path,
+            "diff",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--no-color",
+        ])
         .args(args)
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
-        .spawn().map_err(|e| e.to_string())?;
+        .spawn()
+        .map_err(|e| e.to_string())?;
     let stdout = child.stdout.take().ok_or("Git output unavailable")?;
     let (tx, rx) = std::sync::mpsc::channel();
     let reader = std::thread::spawn(move || {
         let mut bytes = Vec::new();
-        let result = stdout.take((MAX_DIFF_BYTES + 1) as u64).read_to_end(&mut bytes).map(|_| bytes);
+        let result = stdout
+            .take((MAX_DIFF_BYTES + 1) as u64)
+            .read_to_end(&mut bytes)
+            .map(|_| bytes);
         let _ = tx.send(result);
     });
     let result = rx.recv_timeout(DIFF_TIMEOUT);
@@ -512,7 +543,8 @@ fn bounded_diff(path: &str, args: &[&str]) -> Result<String, String> {
     }
     let status = child.wait().map_err(|e| e.to_string());
     let _ = reader.join();
-    let bytes = result.map_err(|_| "Diff took too long. Open this file in your editor.".to_string())?
+    let bytes = result
+        .map_err(|_| "Diff took too long. Open this file in your editor.".to_string())?
         .map_err(|e| e.to_string())?;
     if bytes.len() > MAX_DIFF_BYTES {
         return Err("Diff is too large to preview. Open this file in your editor.".into());
@@ -520,7 +552,9 @@ fn bounded_diff(path: &str, args: &[&str]) -> Result<String, String> {
     // --no-index returns 1 for differences.
     let code = status?.code();
     if code != Some(0) && !(code == Some(1) && args.contains(&"--no-index")) {
-        return Err("Git could not read this diff. Refresh Changes or open the file in your editor.".into());
+        return Err(
+            "Git could not read this diff. Refresh Changes or open the file in your editor.".into(),
+        );
     }
     let text = String::from_utf8_lossy(&bytes).to_string();
     if text.lines().count() > MAX_DIFF_LINES || text.lines().any(|line| line.len() > 4_000) {
@@ -538,7 +572,11 @@ pub fn file_diff(path: &str, file_path: &str, staged: bool) -> Result<String, St
         // The renderer accepts unified patches, not Git's combined conflict format.
         return bounded_diff(path, &["--ours", "--", file_path]);
     }
-    if result.is_empty() && changed_files(path)?.iter().any(|file| file.path == file_path && file.area == "untracked") {
+    if result.is_empty()
+        && changed_files(path)?
+            .iter()
+            .any(|file| file.path == file_path && file.area == "untracked")
+    {
         return bounded_diff(path, &["--no-index", "--", "/dev/null", file_path]);
     }
     Ok(result)
@@ -615,31 +653,53 @@ pub fn changes(path: &str) -> Result<GitChanges, String> {
     let mut stats_complete = true;
     for file in files.iter().filter(|file| file.area == "untracked") {
         let full_path = Path::new(path).join(&file.path);
-        let count = if Instant::now() < deadline { untracked_lines(&full_path, &mut budget) } else { None };
+        let count = if Instant::now() < deadline {
+            untracked_lines(&full_path, &mut budget)
+        } else {
+            None
+        };
         match count {
-            Some(additions) => stats.push(DiffFileStat { path: file.path.clone(), additions, deletions: 0 }),
+            Some(additions) => stats.push(DiffFileStat {
+                path: file.path.clone(),
+                additions,
+                deletions: 0,
+            }),
             None => stats_complete = false,
         }
     }
 
-    Ok(GitChanges { files, stats, stats_complete })
+    Ok(GitChanges {
+        files,
+        stats,
+        stats_complete,
+    })
 }
 
 fn untracked_lines(path: &Path, budget: &mut u64) -> Option<u32> {
     let metadata = std::fs::symlink_metadata(path).ok()?;
-    if metadata.file_type().is_symlink() { return Some(1); }
-    if !metadata.is_file() || metadata.len() > 8 * 1024 * 1024 || metadata.len() > *budget { return None; }
+    if metadata.file_type().is_symlink() {
+        return Some(1);
+    }
+    if !metadata.is_file() || metadata.len() > 8 * 1024 * 1024 || metadata.len() > *budget {
+        return None;
+    }
     let mut reader = BufReader::new(std::fs::File::open(path).ok()?.take(metadata.len() + 1));
     let mut count = 0;
     let mut last = None;
     let mut read = 0;
     loop {
         let chunk = reader.fill_buf().ok()?;
-        if chunk.is_empty() { break; }
-        if chunk.contains(&0) { return Some(0); }
+        if chunk.is_empty() {
+            break;
+        }
+        if chunk.contains(&0) {
+            return Some(0);
+        }
         let len = chunk.len();
         read += len as u64;
-        if read > metadata.len() { return None; }
+        if read > metadata.len() {
+            return None;
+        }
         count += chunk.iter().filter(|&&byte| byte == b'\n').count() as u32;
         last = chunk.last().copied();
         reader.consume(len);
@@ -749,20 +809,46 @@ mod review_tests {
     struct Repo(PathBuf);
     impl Repo {
         fn new() -> Self {
-            let path = std::env::temp_dir().join(format!("shep-git-review-{}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+            let path = std::env::temp_dir().join(format!(
+                "shep-git-review-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
             std::fs::create_dir(&path).unwrap();
             let repo = Self(path);
             repo.git(&["init", "-q", "-b", "main"]);
             repo
         }
-        fn path(&self) -> &str { self.0.to_str().unwrap() }
-        fn git(&self, args: &[&str]) {
-            assert!(Command::new("git").args(["-C", self.path(), "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid"])
-                .args(args).env("GIT_CONFIG_GLOBAL", "/dev/null").env("GIT_CONFIG_NOSYSTEM", "1").output().unwrap().status.success());
+        fn path(&self) -> &str {
+            self.0.to_str().unwrap()
         }
-        fn write(&self, file: &str, text: &[u8]) { std::fs::write(self.0.join(file), text).unwrap(); }
+        fn git(&self, args: &[&str]) {
+            assert!(Command::new("git")
+                .args([
+                    "-C",
+                    self.path(),
+                    "-c",
+                    "user.name=Fixture",
+                    "-c",
+                    "user.email=fixture@example.invalid"
+                ])
+                .args(args)
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .output()
+                .unwrap()
+                .status
+                .success());
+        }
+        fn write(&self, file: &str, text: &[u8]) {
+            std::fs::write(self.0.join(file), text).unwrap();
+        }
     }
-    impl Drop for Repo { fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.0); } }
+    impl Drop for Repo {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
 
     #[test]
     fn bounded_diffs_cover_tracked_staged_and_untracked_files() {
@@ -771,16 +857,31 @@ mod review_tests {
         repo.git(&["add", "."]);
         repo.git(&["commit", "-qm", "base"]);
         repo.write("file.txt", b"after\n");
-        assert!(file_diff(repo.path(), "file.txt", false).unwrap().contains("+after"));
+        assert!(file_diff(repo.path(), "file.txt", false)
+            .unwrap()
+            .contains("+after"));
         repo.git(&["add", "."]);
-        assert!(file_diff(repo.path(), "file.txt", true).unwrap().contains("+after"));
-        assert!(file_diff(repo.path(), "file.txt", false).unwrap().is_empty());
+        assert!(file_diff(repo.path(), "file.txt", true)
+            .unwrap()
+            .contains("+after"));
+        assert!(file_diff(repo.path(), "file.txt", false)
+            .unwrap()
+            .is_empty());
         repo.write("new.txt", b"new\n");
-        assert!(file_diff(repo.path(), "new.txt", false).unwrap().contains("+new"));
+        assert!(file_diff(repo.path(), "new.txt", false)
+            .unwrap()
+            .contains("+new"));
         repo.write("huge.txt", &vec![b'x'; MAX_DIFF_BYTES + 1]);
-        assert!(file_diff(repo.path(), "huge.txt", false).unwrap_err().contains("too large"));
-        repo.write("many-lines.txt", "x\n".repeat(MAX_DIFF_LINES + 1).as_bytes());
-        assert!(file_diff(repo.path(), "many-lines.txt", false).unwrap_err().contains("too large"));
+        assert!(file_diff(repo.path(), "huge.txt", false)
+            .unwrap_err()
+            .contains("too large"));
+        repo.write(
+            "many-lines.txt",
+            "x\n".repeat(MAX_DIFF_LINES + 1).as_bytes(),
+        );
+        assert!(file_diff(repo.path(), "many-lines.txt", false)
+            .unwrap_err()
+            .contains("too large"));
     }
 
     #[test]
@@ -790,8 +891,24 @@ mod review_tests {
         repo.write("binary", b"\0binary");
         let snapshot = changes(repo.path()).unwrap();
         assert!(snapshot.stats_complete);
-        assert_eq!(snapshot.stats.iter().find(|s| s.path == "new.txt").unwrap().additions, 2);
-        assert_eq!(snapshot.stats.iter().find(|s| s.path == "binary").unwrap().additions, 0);
+        assert_eq!(
+            snapshot
+                .stats
+                .iter()
+                .find(|s| s.path == "new.txt")
+                .unwrap()
+                .additions,
+            2
+        );
+        assert_eq!(
+            snapshot
+                .stats
+                .iter()
+                .find(|s| s.path == "binary")
+                .unwrap()
+                .additions,
+            0
+        );
         let large = std::fs::File::create(repo.0.join("large")).unwrap();
         large.set_len(9 * 1024 * 1024).unwrap();
         assert!(!changes(repo.path()).unwrap().stats_complete);
@@ -809,7 +926,19 @@ mod review_tests {
         repo.git(&["checkout", "-q", "main"]);
         repo.write("conflict.txt", b"ours\n");
         repo.git(&["commit", "-qam", "ours"]);
-        let merge = Command::new("git").args(["-C", repo.path(), "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "merge", "other"]).output().unwrap();
+        let merge = Command::new("git")
+            .args([
+                "-C",
+                repo.path(),
+                "-c",
+                "user.name=Fixture",
+                "-c",
+                "user.email=fixture@example.invalid",
+                "merge",
+                "other",
+            ])
+            .output()
+            .unwrap();
         assert!(!merge.status.success());
         let diff = file_diff(repo.path(), "conflict.txt", false).unwrap();
         assert!(diff.contains("@@ -"), "{diff}");

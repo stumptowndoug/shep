@@ -21,7 +21,9 @@ impl UsageDb {
         let _ = seed_pricing(&conn);
         Self {
             conn: Arc::new(Mutex::new(conn)),
-            storage_warning: Some("Session history and usage are temporary and will be lost when Shep closes.".into()),
+            storage_warning: Some(
+                "Session history and usage are temporary and will be lost when Shep closes.".into(),
+            ),
         }
     }
 
@@ -363,7 +365,8 @@ fn migrate(conn: &Connection) -> Result<(), String> {
              );
              CREATE INDEX IF NOT EXISTS idx_archive_date ON usage_archive(date);
              INSERT INTO schema_version (version) VALUES (15);",
-        ).map_err(|e| format!("Failed to run migration v15: {e}"))?;
+        )
+        .map_err(|e| format!("Failed to run migration v15: {e}"))?;
     }
 
     Ok(())
@@ -516,8 +519,14 @@ mod tests {
         ).unwrap();
         migrate(&conn).unwrap();
         migrate(&conn).unwrap();
-        let mut stmt = conn.prepare("SELECT agent_interface FROM session_history ORDER BY session_id").unwrap();
-        let interfaces: Vec<String> = stmt.query_map([], |row| row.get(0)).unwrap().map(Result::unwrap).collect();
+        let mut stmt = conn
+            .prepare("SELECT agent_interface FROM session_history ORDER BY session_id")
+            .unwrap();
+        let interfaces: Vec<String> = stmt
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect();
         assert_eq!(interfaces, ["chat", "terminal"]);
     }
 

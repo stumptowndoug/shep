@@ -4,9 +4,9 @@ use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::config::{
-    CommandConfig, EditorSettings, GlobalConfig, GroupEntry, KeybindingSettings, ProjectSettings, RegisteredRepo,
-    RepoEntry, RepoInfo, TerminalSettings, UsageSettings, WorkspaceConfig,
-    normalize_terminal_settings,
+    normalize_terminal_settings, CommandConfig, EditorSettings, GlobalConfig, GroupEntry,
+    KeybindingSettings, ProjectSettings, RegisteredRepo, RepoEntry, RepoInfo, TerminalSettings,
+    UsageSettings, WorkspaceConfig,
 };
 
 static CONFIG_CACHE: Mutex<Option<(GlobalConfig, SystemTime)>> = Mutex::new(None);
@@ -58,8 +58,12 @@ pub fn load_global_config() -> Result<GlobalConfig, String> {
 
     let content =
         fs::read_to_string(&path).map_err(|e| format!("Failed to read global config: {e}"))?;
-    let mut config: GlobalConfig =
-        serde_yaml::from_str(&content).map_err(|e| format!("Failed to parse global config: {e}. A previous copy may be available at {}.", path.with_extension("yml.bak").display()))?;
+    let mut config: GlobalConfig = serde_yaml::from_str(&content).map_err(|e| {
+        format!(
+            "Failed to parse global config: {e}. A previous copy may be available at {}.",
+            path.with_extension("yml.bak").display()
+        )
+    })?;
 
     if config.migrate() {
         // Persist the marker before exposing migrated data, so a later unpin is respected.
@@ -75,7 +79,9 @@ pub fn load_global_config() -> Result<GlobalConfig, String> {
 }
 
 pub fn save_global_config(config: &GlobalConfig) -> Result<(), String> {
-    let _write_guard = CONFIG_WRITE_LOCK.lock().map_err(|_| "Configuration writer is unavailable")?;
+    let _write_guard = CONFIG_WRITE_LOCK
+        .lock()
+        .map_err(|_| "Configuration writer is unavailable")?;
     let dir = shep_home()?;
     fs::create_dir_all(&dir).map_err(|e| format!("Failed to create .shep dir: {e}"))?;
 
@@ -83,11 +89,13 @@ pub fn save_global_config(config: &GlobalConfig) -> Result<(), String> {
     let yaml =
         serde_yaml::to_string(config).map_err(|e| format!("Failed to serialize config: {e}"))?;
     if path.exists() {
-        let previous = fs::read(&path).map_err(|e| format!("Failed to back up global config: {e}"))?;
+        let previous =
+            fs::read(&path).map_err(|e| format!("Failed to back up global config: {e}"))?;
         super::atomic_file::write(&path.with_extension("yml.bak"), &previous)
             .map_err(|e| format!("Failed to back up global config: {e}"))?;
     }
-    super::atomic_file::write(&path, yaml.as_bytes()).map_err(|e| format!("Failed to write global config: {e}"))?;
+    super::atomic_file::write(&path, yaml.as_bytes())
+        .map_err(|e| format!("Failed to write global config: {e}"))?;
 
     // Update cache with the config we just wrote
     if let Ok(mtime) = fs::metadata(&path).and_then(|m| m.modified()) {
@@ -173,7 +181,8 @@ pub fn save_usage_settings(settings: &UsageSettings) -> Result<(), String> {
 pub fn list_repos() -> Result<Vec<RepoInfo>, String> {
     let config = load_global_config()?;
 
-    let repos = config.repos
+    let repos = config
+        .repos
         .iter()
         .map(|entry| {
             let path = Path::new(&entry.path);
@@ -244,7 +253,8 @@ pub fn save_repo_workspace(repo_path: &str, config: &WorkspaceConfig) -> Result<
     let path = repo_workspace_file(repo_path);
     let yaml =
         serde_yaml::to_string(config).map_err(|e| format!("Failed to serialize config: {e}"))?;
-    super::atomic_file::write(&path, yaml.as_bytes()).map_err(|e| format!("Failed to write workspace file: {e}"))
+    super::atomic_file::write(&path, yaml.as_bytes())
+        .map_err(|e| format!("Failed to write workspace file: {e}"))
 }
 
 // ── Migration ───────────────────────────────────────────────────────
@@ -264,7 +274,8 @@ pub fn migrate_old_projects() -> Result<(), String> {
     let mut global_config = GlobalConfig::default();
     global_config.projects.default_agent_interface = "terminal".into();
 
-    let entries = fs::read_dir(&old_dir).map_err(|e| format!("Failed to read old projects: {e}"))?;
+    let entries =
+        fs::read_dir(&old_dir).map_err(|e| format!("Failed to read old projects: {e}"))?;
 
     for entry in entries {
         let entry = entry.map_err(|e| format!("Failed to read entry: {e}"))?;
@@ -507,10 +518,9 @@ fn ensure_repo_shep_dir(repo_path: &str) -> Result<(), String> {
 fn load_or_default_workspace(repo_path: &str) -> Result<WorkspaceConfig, String> {
     let path = repo_workspace_file(repo_path);
     if path.exists() {
-        let content = fs::read_to_string(&path)
-            .map_err(|e| format!("Failed to read workspace file: {e}"))?;
-        serde_yaml::from_str(&content)
-            .map_err(|e| format!("Failed to parse workspace YAML: {e}"))
+        let content =
+            fs::read_to_string(&path).map_err(|e| format!("Failed to read workspace file: {e}"))?;
+        serde_yaml::from_str(&content).map_err(|e| format!("Failed to parse workspace YAML: {e}"))
     } else {
         let name = Path::new(repo_path)
             .file_name()

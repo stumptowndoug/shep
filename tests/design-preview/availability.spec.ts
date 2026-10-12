@@ -107,3 +107,34 @@ test("an older missing result cannot overwrite a successful runtime installation
   await expect(page.getByRole("button", { name: "Chat", exact: true })).toBeEnabled();
   await expect(page.getByRole("button", { name: "Install chat runtime", exact: true })).toHaveCount(0);
 });
+
+for (const [name, command, owner] of [["Claude Code", "claude-agent-acp", "Claude"], ["Codex", "codex-acp", "Codex"], ["pi", "pi-acp", "pi"]]) {
+  test(`${name} chat installs inside Shep with one click instead of a terminal`, async ({ page }) => {
+    await page.goto("/tests/design-preview/");
+    await page.evaluate(async (command) => {
+      (await import("./availabilityPreview.ts")).availabilityPreview.commands.set(command, false);
+      await (await import("/src/stores/useAgentAvailabilityStore.ts")).useAgentAvailabilityStore.getState().refresh(true);
+    }, command);
+    const agent = page.getByRole("button", { name, exact: true });
+    await expect(agent.locator(".agent-choice__meta")).toHaveText("Terminal");
+    await agent.click();
+    await expect(page.getByText(`Installs ${owner}’s chat adapter inside Shep with npm. Needs Node.js.`)).toBeVisible();
+    await expect(page.getByRole("button", { name: "Set up in terminal", exact: true })).toHaveCount(0);
+    await page.getByRole("button", { name: "Install chat adapter", exact: true }).click();
+    await expect(agent).toContainText("Chat & terminal");
+    await expect(page.getByRole("button", { name: "Chat", exact: true })).toBeEnabled();
+    await expect(page.getByText(`Set up ${name} to use chat.`)).toHaveCount(0);
+  });
+}
+
+test("a missing Node.js install explains what to do", async ({ page }) => {
+  await page.goto("/tests/design-preview/?install=no-node");
+  await page.evaluate(async () => {
+    (await import("./availabilityPreview.ts")).availabilityPreview.commands.set("claude-agent-acp", false);
+    await (await import("/src/stores/useAgentAvailabilityStore.ts")).useAgentAvailabilityStore.getState().refresh(true);
+  });
+  await page.getByRole("button", { name: "Claude Code", exact: true }).click();
+  await page.getByRole("button", { name: "Install chat adapter", exact: true }).click();
+  await expect(page.getByRole("alert")).toContainText("Chat needs Node.js");
+  await expect(page.getByRole("button", { name: "Install chat adapter", exact: true })).toBeEnabled();
+});

@@ -105,7 +105,10 @@ fn legacy_agent_interface() -> String {
 }
 
 fn legacy_project_settings() -> ProjectSettings {
-    ProjectSettings { default_agent_interface: legacy_agent_interface(), ..ProjectSettings::default() }
+    ProjectSettings {
+        default_agent_interface: legacy_agent_interface(),
+        ..ProjectSettings::default()
+    }
 }
 
 impl Default for ProjectSettings {
@@ -375,7 +378,12 @@ pub struct GroupInfo {
 
 impl From<GroupEntry> for GroupInfo {
     fn from(group: GroupEntry) -> Self {
-        Self { id: group.id, name: group.name, order: group.order, pinned: group.pinned }
+        Self {
+            id: group.id,
+            name: group.name,
+            order: group.order,
+            pinned: group.pinned,
+        }
     }
 }
 
@@ -431,15 +439,24 @@ mod tests {
 
     #[test]
     fn group_ipc_matches_the_sidebar_contract() {
-        let config: GlobalConfig = serde_yaml::from_str(include_str!("../../../tests/fixtures/legacy-navigation.yml")).unwrap();
+        let config: GlobalConfig = serde_yaml::from_str(include_str!(
+            "../../../tests/fixtures/legacy-navigation.yml"
+        ))
+        .unwrap();
         let groups: Vec<GroupInfo> = config.groups.into_iter().map(GroupInfo::from).collect();
-        let expected: serde_json::Value = serde_json::from_str(include_str!("../../../tests/fixtures/navigation-groups.json")).unwrap();
+        let expected: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/navigation-groups.json"
+        ))
+        .unwrap();
         assert_eq!(serde_json::to_value(groups).unwrap(), expected);
     }
 
     #[test]
     fn legacy_navigation_pins_loose_projects_only_once() {
-        let mut config: GlobalConfig = serde_yaml::from_str(include_str!("../../../tests/fixtures/legacy-navigation.yml")).unwrap();
+        let mut config: GlobalConfig = serde_yaml::from_str(include_str!(
+            "../../../tests/fixtures/legacy-navigation.yml"
+        ))
+        .unwrap();
         assert!(config.migrate());
         assert!(config.repos[0].pinned);
         assert!(!config.repos[1].pinned);
@@ -455,14 +472,19 @@ mod tests {
 
     #[test]
     fn old_settings_keep_terminal_while_new_installs_default_to_chat() {
-        for yaml in ["version: 1\n", "version: 1\nprojects:\n  showTodos: false\n"] {
+        for yaml in [
+            "version: 1\n",
+            "version: 1\nprojects:\n  showTodos: false\n",
+        ] {
             let config: GlobalConfig = serde_yaml::from_str(yaml).unwrap();
             assert_eq!(config.projects.default_agent_interface, "terminal");
         }
-        let chosen: GlobalConfig = serde_yaml::from_str("projects:\n  defaultAgentInterface: chat\n").unwrap();
+        let chosen: GlobalConfig =
+            serde_yaml::from_str("projects:\n  defaultAgentInterface: chat\n").unwrap();
         assert_eq!(chosen.projects.default_agent_interface, "chat");
         let fresh = GlobalConfig::default();
-        let restored: GlobalConfig = serde_yaml::from_str(&serde_yaml::to_string(&fresh).unwrap()).unwrap();
+        let restored: GlobalConfig =
+            serde_yaml::from_str(&serde_yaml::to_string(&fresh).unwrap()).unwrap();
         assert_eq!(restored.projects.default_agent_interface, "chat");
     }
 
@@ -472,8 +494,12 @@ mod tests {
         assert!(group.pinned);
         assert!(!serde_yaml::to_string(&group).unwrap().contains("pinned"));
 
-        let unpinned = GroupEntry { pinned: false, ..group };
-        let round_trip: GroupEntry = serde_yaml::from_str(&serde_yaml::to_string(&unpinned).unwrap()).unwrap();
+        let unpinned = GroupEntry {
+            pinned: false,
+            ..group
+        };
+        let round_trip: GroupEntry =
+            serde_yaml::from_str(&serde_yaml::to_string(&unpinned).unwrap()).unwrap();
         assert!(!round_trip.pinned);
     }
 
@@ -484,8 +510,13 @@ mod tests {
         assert_eq!(entry.last_opened, None);
         assert_eq!(serde_yaml::to_string(&entry).unwrap(), "path: /tmp/app\n");
 
-        let pinned = RepoEntry { pinned: true, last_opened: Some(42), ..entry };
-        let round_trip: RepoEntry = serde_yaml::from_str(&serde_yaml::to_string(&pinned).unwrap()).unwrap();
+        let pinned = RepoEntry {
+            pinned: true,
+            last_opened: Some(42),
+            ..entry
+        };
+        let round_trip: RepoEntry =
+            serde_yaml::from_str(&serde_yaml::to_string(&pinned).unwrap()).unwrap();
         assert!(round_trip.pinned);
         assert_eq!(round_trip.last_opened, Some(42));
     }
@@ -530,7 +561,8 @@ mod tests {
 
     #[test]
     fn usage_limit_settings_migrate_and_round_trip() {
-        let mut settings: UsageSettings = serde_yaml::from_str("showClaudeFiveHourLimit: true\n").unwrap();
+        let mut settings: UsageSettings =
+            serde_yaml::from_str("showClaudeFiveHourLimit: true\n").unwrap();
         assert!(settings.show_claude_five_hour_limit);
         assert!(settings.show_claude_weekly_limit);
         assert!(settings.show_antigravity_gemini_weekly_limit);
@@ -544,6 +576,9 @@ mod tests {
         settings.show_antigravity_claude_five_hour_limit = true;
         let serialized = serde_yaml::to_string(&settings).unwrap();
         let restored: UsageSettings = serde_yaml::from_str(&serialized).unwrap();
-        assert_eq!(serde_json::to_value(&settings).unwrap(), serde_json::to_value(&restored).unwrap());
+        assert_eq!(
+            serde_json::to_value(&settings).unwrap(),
+            serde_json::to_value(&restored).unwrap()
+        );
     }
 }

@@ -24,7 +24,7 @@ use core_foundation::{
     dictionary::{CFDictionary, CFDictionaryGetValueIfPresent, CFDictionaryRef},
     number::{CFNumber, CFNumberRef},
     string::{CFString, CFStringRef},
-    url::{CFURL, CFURLRef},
+    url::{CFURLRef, CFURL},
 };
 use core_text::{
     font_collection,
@@ -112,7 +112,10 @@ fn enumerate_font_families() -> Vec<ChatFontFamily> {
             let descriptors = collection.get_descriptors()?;
             let first = descriptors.iter().next()?;
             let is_system = read_font_path(&first).is_some_and(|path| path.starts_with("/System/"));
-            Some(ChatFontFamily { family: name, is_system })
+            Some(ChatFontFamily {
+                family: name,
+                is_system,
+            })
         })
         .collect();
     result.sort_by_key(|family| family.family.to_lowercase());
@@ -240,9 +243,8 @@ fn read_traits(desc: &CTFontDescriptor) -> (f64, f64, f64, u32) {
     }
 
     // Take ownership of the +1 retain from Copy*; the wrapper releases on drop.
-    let traits_dict: CFDictionary<CFString, CFType> = unsafe {
-        CFDictionary::wrap_under_create_rule(traits_raw as CFDictionaryRef)
-    };
+    let traits_dict: CFDictionary<CFString, CFType> =
+        unsafe { CFDictionary::wrap_under_create_rule(traits_raw as CFDictionaryRef) };
     let dict_ref = traits_dict.as_concrete_TypeRef();
 
     unsafe {
@@ -256,11 +258,7 @@ fn read_traits(desc: &CTFontDescriptor) -> (f64, f64, f64, u32) {
 
 unsafe fn dict_get_number(dict: CFDictionaryRef, key: CFStringRef) -> Option<f64> {
     let mut value: *const std::os::raw::c_void = std::ptr::null();
-    let found = CFDictionaryGetValueIfPresent(
-        dict,
-        key as *const std::os::raw::c_void,
-        &mut value,
-    );
+    let found = CFDictionaryGetValueIfPresent(dict, key as *const std::os::raw::c_void, &mut value);
     if found == 0 || value.is_null() {
         return None;
     }
@@ -352,8 +350,13 @@ mod chat_font_tests {
     #[test]
     fn lists_system_families_without_private_ones() {
         let families = list_font_families();
-        let helvetica = families.iter().find(|family| family.family == "Helvetica").expect("Helvetica is installed");
+        let helvetica = families
+            .iter()
+            .find(|family| family.family == "Helvetica")
+            .expect("Helvetica is installed");
         assert!(helvetica.is_system);
-        assert!(families.iter().all(|family| !family.family.starts_with('.')));
+        assert!(families
+            .iter()
+            .all(|family| !family.family.starts_with('.')));
     }
 }

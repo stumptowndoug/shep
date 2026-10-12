@@ -70,8 +70,8 @@ fn load_pi_settings() -> Result<PiSettings, String> {
     if !path.exists() {
         return Ok(PiSettings::default());
     }
-    let content = fs::read_to_string(&path)
-        .map_err(|e| format!("Failed to read pi settings: {e}"))?;
+    let content =
+        fs::read_to_string(&path).map_err(|e| format!("Failed to read pi settings: {e}"))?;
     serde_json::from_str(&content).map_err(|e| format!("Failed to parse pi settings: {e}"))
 }
 
@@ -80,8 +80,7 @@ fn load_configured_providers() -> Result<Vec<String>, String> {
     if !path.exists() {
         return Ok(Vec::new());
     }
-    let content =
-        fs::read_to_string(&path).map_err(|e| format!("Failed to read pi auth: {e}"))?;
+    let content = fs::read_to_string(&path).map_err(|e| format!("Failed to read pi auth: {e}"))?;
     let auth: HashMap<String, PiAuthEntry> = serde_json::from_str(&content).unwrap_or_default();
     let mut providers: Vec<String> = auth.keys().cloned().collect();
     providers.sort();
@@ -96,8 +95,8 @@ pub fn save_pi_settings(settings: PiSettings) -> Result<(), String> {
 
     // Merge with existing to preserve fields we don't manage (e.g. theme, extensions)
     let mut merged: serde_json::Value = if path.exists() {
-        let content = fs::read_to_string(&path)
-            .map_err(|e| format!("Failed to read pi settings: {e}"))?;
+        let content =
+            fs::read_to_string(&path).map_err(|e| format!("Failed to read pi settings: {e}"))?;
         serde_json::from_str(&content)
             .unwrap_or_else(|_| serde_json::Value::Object(Default::default()))
     } else {
@@ -203,8 +202,8 @@ fn update_auth_entry(provider: &str, key_ref: &str) -> Result<(), String> {
 
     let path = pi_auth_path()?;
     let mut auth: HashMap<String, PiAuthEntry> = if path.exists() {
-        let content = fs::read_to_string(&path)
-            .map_err(|e| format!("Failed to read pi auth: {e}"))?;
+        let content =
+            fs::read_to_string(&path).map_err(|e| format!("Failed to read pi auth: {e}"))?;
         serde_json::from_str(&content).unwrap_or_default()
     } else {
         HashMap::new()
@@ -229,10 +228,8 @@ fn remove_auth_entry(provider: &str) -> Result<(), String> {
         return Ok(());
     }
 
-    let content =
-        fs::read_to_string(&path).map_err(|e| format!("Failed to read pi auth: {e}"))?;
-    let mut auth: HashMap<String, PiAuthEntry> =
-        serde_json::from_str(&content).unwrap_or_default();
+    let content = fs::read_to_string(&path).map_err(|e| format!("Failed to read pi auth: {e}"))?;
+    let mut auth: HashMap<String, PiAuthEntry> = serde_json::from_str(&content).unwrap_or_default();
     auth.remove(provider);
 
     let json = serde_json::to_string_pretty(&auth)

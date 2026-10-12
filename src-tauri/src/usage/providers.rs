@@ -25,7 +25,8 @@ pub fn codex_provider_windows() -> Result<Vec<UsageWindowSnapshot>, String> {
         "curl",
         &[
             "-sS",
-            "--max-time", "10",
+            "--max-time",
+            "10",
             "-H",
             &format!("Authorization: Bearer {token}"),
             "https://chatgpt.com/backend-api/wham/usage",
@@ -131,27 +132,47 @@ fn cursor_dashboard_post(token: &str, method: &str, body: &str) -> Result<String
     run_command(
         "curl",
         &[
-            "-sS", "--max-time", "10", "-X", "POST",
-            "-H", &authorization,
-            "-H", "Content-Type: application/json",
-            "-H", "Connect-Protocol-Version: 1",
-            "-H", "x-cursor-client-type: cli",
-            "-H", "x-cursor-client-version: cli-shep",
-            "-d", body,
+            "-sS",
+            "--max-time",
+            "10",
+            "-X",
+            "POST",
+            "-H",
+            &authorization,
+            "-H",
+            "Content-Type: application/json",
+            "-H",
+            "Connect-Protocol-Version: 1",
+            "-H",
+            "x-cursor-client-type: cli",
+            "-H",
+            "x-cursor-client-version: cli-shep",
+            "-d",
+            body,
             &url,
         ],
     )
 }
 
-fn cursor_period_usage(token: &str) -> Result<(Vec<UsageWindowSnapshot>, Vec<UsageWindowSnapshot>), String> {
-    cursor_parse_period_usage(&cursor_dashboard_post(token, "GetCurrentPeriodUsage", "{}")?)
+fn cursor_period_usage(
+    token: &str,
+) -> Result<(Vec<UsageWindowSnapshot>, Vec<UsageWindowSnapshot>), String> {
+    cursor_parse_period_usage(&cursor_dashboard_post(
+        token,
+        "GetCurrentPeriodUsage",
+        "{}",
+    )?)
 }
 
 fn cursor_window_aggregate(token: &str, window_secs: u64) -> Result<CursorWindowAggregate, String> {
     let end_ms = now_epoch_seconds().saturating_mul(1000);
     let start_ms = end_ms.saturating_sub(window_secs.saturating_mul(1000));
     let body = format!(r#"{{"startDate":"{start_ms}","endDate":"{end_ms}"}}"#);
-    cursor_parse_aggregated_usage(&cursor_dashboard_post(token, "GetAggregatedUsageEvents", &body)?)
+    cursor_parse_aggregated_usage(&cursor_dashboard_post(
+        token,
+        "GetAggregatedUsageEvents",
+        &body,
+    )?)
 }
 
 fn cursor_access_token() -> Result<String, String> {
@@ -167,7 +188,14 @@ fn cursor_access_token() -> Result<String, String> {
         for service in ["cursor-access-token", "cursor-api-key"] {
             if let Ok(value) = run_command(
                 "security",
-                &["find-generic-password", "-s", service, "-a", "cursor-user", "-w"],
+                &[
+                    "find-generic-password",
+                    "-s",
+                    service,
+                    "-a",
+                    "cursor-user",
+                    "-w",
+                ],
             ) {
                 if !value.trim().is_empty() {
                     return Ok(value);
@@ -184,17 +212,28 @@ fn cursor_access_token() -> Result<String, String> {
             continue;
         };
         for key in ["accessToken", "access_token", "apiKey", "api_key", "token"] {
-            if let Some(token) = auth.get(key).and_then(Value::as_str).filter(|value| !value.is_empty()) {
+            if let Some(token) = auth
+                .get(key)
+                .and_then(Value::as_str)
+                .filter(|value| !value.is_empty())
+            {
                 return Ok(token.to_string());
             }
         }
     }
 
-    Err("Missing Cursor login. Run `cursor-agent login` to enable subscription utilization.".to_string())
+    Err(
+        "Missing Cursor login. Run `cursor-agent login` to enable subscription utilization."
+            .to_string(),
+    )
 }
 
 fn cursor_number(value: Option<&Value>) -> Option<f64> {
-    value.and_then(|value| value.as_f64().or_else(|| value.as_str()?.parse::<f64>().ok()))
+    value.and_then(|value| {
+        value
+            .as_f64()
+            .or_else(|| value.as_str()?.parse::<f64>().ok())
+    })
 }
 
 fn cursor_percent(plan: &Value, field: &str, spend_field: &str, limit_field: &str) -> Option<f64> {
@@ -205,7 +244,12 @@ fn cursor_percent(plan: &Value, field: &str, spend_field: &str, limit_field: &st
     })
 }
 
-fn cursor_usage_window(id: &str, label: &str, used: f64, reset_at: Option<String>) -> UsageWindowSnapshot {
+fn cursor_usage_window(
+    id: &str,
+    label: &str,
+    used: f64,
+    reset_at: Option<String>,
+) -> UsageWindowSnapshot {
     UsageWindowSnapshot {
         provider: "cursor".to_string(),
         window_id: format!("cursor-{id}"),
@@ -225,32 +269,58 @@ fn cursor_usage_window(id: &str, label: &str, used: f64, reset_at: Option<String
     }
 }
 
-fn cursor_parse_period_usage(body: &str) -> Result<(Vec<UsageWindowSnapshot>, Vec<UsageWindowSnapshot>), String> {
+fn cursor_parse_period_usage(
+    body: &str,
+) -> Result<(Vec<UsageWindowSnapshot>, Vec<UsageWindowSnapshot>), String> {
     let json: Value = serde_json::from_str(body)
         .map_err(|e| format!("Failed to parse Cursor usage response: {e}"))?;
     if let Some(code) = json.get("code") {
-        let message = json.get("message").and_then(Value::as_str).unwrap_or("request failed");
-        return Err(format!("Cursor usage API returned {code}: {message}. Run `cursor-agent login` and retry."));
+        let message = json
+            .get("message")
+            .and_then(Value::as_str)
+            .unwrap_or("request failed");
+        return Err(format!(
+            "Cursor usage API returned {code}: {message}. Run `cursor-agent login` and retry."
+        ));
     }
     if json.get("enabled").and_then(Value::as_bool) == Some(false) {
         return Err("Cursor subscription utilization is not enabled for this account.".to_string());
     }
 
-    let plan = json.get("planUsage")
+    let plan = json
+        .get("planUsage")
         .or_else(|| json.get("plan_usage"))
         .ok_or_else(|| "Cursor usage response missing plan usage".to_string())?;
     let total = cursor_percent(plan, "totalPercentUsed", "totalSpend", "limit")
         .ok_or_else(|| "Cursor usage response missing included utilization".to_string())?;
-    let reset_at = cursor_number(json.get("billingCycleEnd").or_else(|| json.get("billing_cycle_end")))
-        .map(|millis| (millis / 1000.0).round().to_string());
+    let reset_at = cursor_number(
+        json.get("billingCycleEnd")
+            .or_else(|| json.get("billing_cycle_end")),
+    )
+    .map(|millis| (millis / 1000.0).round().to_string());
 
-    let summary = vec![cursor_usage_window("billing", "30d", total, reset_at.clone())];
+    let summary = vec![cursor_usage_window(
+        "billing",
+        "30d",
+        total,
+        reset_at.clone(),
+    )];
     let mut extra = Vec::new();
     if let Some(used) = cursor_percent(plan, "autoPercentUsed", "autoSpend", "autoLimit") {
-        extra.push(cursor_usage_window("billing-auto", "Auto usage", used, reset_at.clone()));
+        extra.push(cursor_usage_window(
+            "billing-auto",
+            "Auto usage",
+            used,
+            reset_at.clone(),
+        ));
     }
     if let Some(used) = cursor_percent(plan, "apiPercentUsed", "apiSpend", "apiLimit") {
-        extra.push(cursor_usage_window("billing-api", "API usage", used, reset_at));
+        extra.push(cursor_usage_window(
+            "billing-api",
+            "API usage",
+            used,
+            reset_at,
+        ));
     }
     Ok((summary, extra))
 }
@@ -259,8 +329,13 @@ fn cursor_parse_aggregated_usage(body: &str) -> Result<CursorWindowAggregate, St
     let json: Value = serde_json::from_str(body)
         .map_err(|e| format!("Failed to parse Cursor aggregate usage: {e}"))?;
     if let Some(code) = json.get("code") {
-        let message = json.get("message").and_then(Value::as_str).unwrap_or("request failed");
-        return Err(format!("Cursor aggregate usage API returned {code}: {message}"));
+        let message = json
+            .get("message")
+            .and_then(Value::as_str)
+            .unwrap_or("request failed");
+        return Err(format!(
+            "Cursor aggregate usage API returned {code}: {message}"
+        ));
     }
 
     let mut models: Vec<CursorModelAggregate> = json
@@ -304,10 +379,30 @@ fn cursor_model_aggregate(value: &Value) -> Option<CursorModelAggregate> {
         .to_string();
     Some(CursorModelAggregate {
         name,
-        tokens_input: cursor_u64(value.get("inputTokens").or_else(|| value.get("input_tokens"))).unwrap_or(0),
-        tokens_output: cursor_u64(value.get("outputTokens").or_else(|| value.get("output_tokens"))).unwrap_or(0),
-        tokens_cache_read: cursor_u64(value.get("cacheReadTokens").or_else(|| value.get("cache_read_tokens"))).unwrap_or(0),
-        tokens_cache_write: cursor_u64(value.get("cacheWriteTokens").or_else(|| value.get("cache_write_tokens"))).unwrap_or(0),
+        tokens_input: cursor_u64(
+            value
+                .get("inputTokens")
+                .or_else(|| value.get("input_tokens")),
+        )
+        .unwrap_or(0),
+        tokens_output: cursor_u64(
+            value
+                .get("outputTokens")
+                .or_else(|| value.get("output_tokens")),
+        )
+        .unwrap_or(0),
+        tokens_cache_read: cursor_u64(
+            value
+                .get("cacheReadTokens")
+                .or_else(|| value.get("cache_read_tokens")),
+        )
+        .unwrap_or(0),
+        tokens_cache_write: cursor_u64(
+            value
+                .get("cacheWriteTokens")
+                .or_else(|| value.get("cache_write_tokens")),
+        )
+        .unwrap_or(0),
         cost: cursor_cents_to_usd(value.get("totalCents").or_else(|| value.get("total_cents"))),
     })
 }
@@ -344,7 +439,9 @@ pub fn cursor_local_details(data: &CursorProviderData) -> Option<LocalUsageDetai
         tokens_input: has_type_breakdown.then_some(primary.tokens_input),
         tokens_output: has_type_breakdown.then_some(primary.tokens_output),
         tokens_cached: has_type_breakdown.then_some(
-            primary.tokens_cache_read.saturating_add(primary.tokens_cache_write),
+            primary
+                .tokens_cache_read
+                .saturating_add(primary.tokens_cache_write),
         ),
         tokens_thoughts: None,
         tokens_5h: 0,
@@ -375,7 +472,10 @@ pub fn cursor_local_details(data: &CursorProviderData) -> Option<LocalUsageDetai
     })
 }
 
-pub fn cursor_window_for_overview<'a>(data: &'a CursorProviderData, window: &str) -> Option<&'a CursorWindowAggregate> {
+pub fn cursor_window_for_overview<'a>(
+    data: &'a CursorProviderData,
+    window: &str,
+) -> Option<&'a CursorWindowAggregate> {
     let aggregate = match window {
         "24h" => &data.window_24h,
         "7d" => &data.window_7d,
@@ -389,17 +489,21 @@ pub fn cursor_window_for_overview<'a>(data: &'a CursorProviderData, window: &str
 mod cursor_tests {
     use super::{
         cursor_local_details, cursor_parse_aggregated_usage, cursor_parse_period_usage,
-        cursor_window_for_overview, CursorModelAggregate, CursorProviderData, CursorWindowAggregate,
+        cursor_window_for_overview, CursorModelAggregate, CursorProviderData,
+        CursorWindowAggregate,
     };
 
     #[test]
     fn maps_cursor_billing_percentages_and_millisecond_reset() {
-        let (summary, extra) = cursor_parse_period_usage(r#"{
+        let (summary, extra) = cursor_parse_period_usage(
+            r#"{
             "billingCycleStart":"1785542400000",
             "billingCycleEnd":"1788220800000",
             "enabled":true,
             "planUsage":{"totalPercentUsed":42.5,"autoPercentUsed":25,"apiPercentUsed":10}
-        }"#).expect("usage windows");
+        }"#,
+        )
+        .expect("usage windows");
         assert_eq!(summary[0].provider, "cursor");
         assert_eq!(summary[0].window, "billing");
         assert_eq!(summary[0].label, "30d");
@@ -410,14 +514,16 @@ mod cursor_tests {
 
     #[test]
     fn reports_connect_auth_errors_cleanly() {
-        let error = cursor_parse_period_usage(r#"{"code":"unauthenticated","message":"not logged in"}"#)
-            .expect_err("auth error");
+        let error =
+            cursor_parse_period_usage(r#"{"code":"unauthenticated","message":"not logged in"}"#)
+                .expect_err("auth error");
         assert!(error.contains("cursor-agent login"));
     }
 
     #[test]
     fn maps_cursor_aggregate_tokens_cost_and_models() {
-        let aggregate = cursor_parse_aggregated_usage(r#"{
+        let aggregate = cursor_parse_aggregated_usage(
+            r#"{
             "aggregations": [
                 {
                     "modelIntent": "cursor-grok-4.6-high-fast",
@@ -440,14 +546,19 @@ mod cursor_tests {
             "totalOutputTokens": "131171",
             "totalCacheReadTokens": "10337536",
             "totalCostCents": 763.217225
-        }"#).expect("aggregate");
+        }"#,
+        )
+        .expect("aggregate");
         assert_eq!(aggregate.tokens_input, 850192);
         assert_eq!(aggregate.tokens_output, 131171);
         assert_eq!(aggregate.tokens_cache_read, 10337536);
         assert!((aggregate.cost.unwrap() - 7.63217225).abs() < 0.0001);
         assert_eq!(aggregate.models[0].name, "cursor-grok-4.6-high-fast");
         assert_eq!(aggregate.models[1].name, "default");
-        assert_eq!(aggregate.models[0].tokens_total(), 833991 + 130654 + 10320640);
+        assert_eq!(
+            aggregate.models[0].tokens_total(),
+            833991 + 130654 + 10320640
+        );
     }
 
     #[test]
@@ -485,7 +596,12 @@ mod cursor_tests {
         assert_eq!(details.tokens_30d, 350);
         assert_eq!(details.tokens_input, Some(100));
         assert_eq!(details.top_models[0].name, "cursor-grok-4.6-high-fast");
-        assert_eq!(cursor_window_for_overview(&data, "7d").unwrap().tokens_total(), 35);
+        assert_eq!(
+            cursor_window_for_overview(&data, "7d")
+                .unwrap()
+                .tokens_total(),
+            35
+        );
         assert!(cursor_window_for_overview(&data, "365d").is_none());
     }
 }
@@ -520,8 +636,17 @@ mod codex_tests {
 }
 
 /// Fetch Claude rate limit windows from Anthropic API.
-pub fn claude_provider_windows() -> Result<(Vec<UsageWindowSnapshot>, Vec<UsageWindowSnapshot>), String> {
-    let token_json = run_command("security", &["find-generic-password", "-s", "Claude Code-credentials", "-w"])?;
+pub fn claude_provider_windows(
+) -> Result<(Vec<UsageWindowSnapshot>, Vec<UsageWindowSnapshot>), String> {
+    let token_json = run_command(
+        "security",
+        &[
+            "find-generic-password",
+            "-s",
+            "Claude Code-credentials",
+            "-w",
+        ],
+    )?;
     let credentials: Value = serde_json::from_str(&token_json)
         .map_err(|e| format!("Failed to parse Claude Keychain credentials: {e}"))?;
     let token = credentials
@@ -534,26 +659,40 @@ pub fn claude_provider_windows() -> Result<(Vec<UsageWindowSnapshot>, Vec<UsageW
         "curl",
         &[
             "-sS",
-            "--max-time", "10",
+            "--max-time",
+            "10",
             "-H",
             &format!("Authorization: Bearer {token}"),
             "-H",
             "anthropic-beta: oauth-2025-04-20",
-            "--write-out", "\n%{http_code}",
+            "--write-out",
+            "\n%{http_code}",
             "https://api.anthropic.com/api/oauth/usage",
         ],
     )?;
     parse_claude_usage_response(&body)
 }
 
-fn parse_claude_usage_response(body: &str) -> Result<(Vec<UsageWindowSnapshot>, Vec<UsageWindowSnapshot>), String> {
-    let (body, status) = body.rsplit_once('\n')
+fn parse_claude_usage_response(
+    body: &str,
+) -> Result<(Vec<UsageWindowSnapshot>, Vec<UsageWindowSnapshot>), String> {
+    let (body, status) = body
+        .rsplit_once('\n')
         .ok_or_else(|| "Claude usage request returned no HTTP status".to_string())?;
     match status.trim() {
-        "200" => {},
-        "401" | "403" => return Err("Claude authorization failed. Open Claude Code and sign in again, then refresh usage.".to_string()),
-        "429" => return Err("Claude usage is rate limited. Shep will retry automatically.".to_string()),
-        status => return Err(format!("Claude usage request failed (HTTP {status}). Shep will retry automatically.")),
+        "200" => {}
+        "401" | "403" => return Err(
+            "Claude authorization failed. Open Claude Code and sign in again, then refresh usage."
+                .to_string(),
+        ),
+        "429" => {
+            return Err("Claude usage is rate limited. Shep will retry automatically.".to_string())
+        }
+        status => {
+            return Err(format!(
+                "Claude usage request failed (HTTP {status}). Shep will retry automatically."
+            ))
+        }
     }
     let json: Value = serde_json::from_str(body)
         .map_err(|e| format!("Failed to parse Claude usage response: {e}"))?;
@@ -561,10 +700,16 @@ fn parse_claude_usage_response(body: &str) -> Result<(Vec<UsageWindowSnapshot>, 
     let mut primary = Vec::new();
     let mut extra = Vec::new();
 
-    if let Some(five_hour) = json.get("five_hour").filter(|v| v.get("utilization").and_then(Value::as_f64).is_some()) {
+    if let Some(five_hour) = json
+        .get("five_hour")
+        .filter(|v| v.get("utilization").and_then(Value::as_f64).is_some())
+    {
         primary.push(claude_window("5h", five_hour));
     }
-    if let Some(seven_day) = json.get("seven_day").filter(|v| v.get("utilization").and_then(Value::as_f64).is_some()) {
+    if let Some(seven_day) = json
+        .get("seven_day")
+        .filter(|v| v.get("utilization").and_then(Value::as_f64).is_some())
+    {
         primary.push(claude_window("7d", seven_day));
     }
     if let Some(seven_day_sonnet) = json.get("seven_day_sonnet") {
@@ -595,7 +740,10 @@ fn claude_window(window: &str, value: &Value) -> UsageWindowSnapshot {
         cost_kind: "included".to_string(),
         used_percent: used,
         remaining_percent: used.map(|v| (100.0 - v).max(0.0)),
-        reset_at: value.get("resets_at").and_then(Value::as_str).map(ToString::to_string),
+        reset_at: value
+            .get("resets_at")
+            .and_then(Value::as_str)
+            .map(ToString::to_string),
         token_total: None,
         pace_status: None,
     }
@@ -611,18 +759,25 @@ mod claude_usage_tests {
         assert_eq!(primary.len(), 1);
         assert_eq!(primary[0].used_percent, Some(12.0));
         assert!(extra.is_empty());
-        assert!(parse_claude_usage_response("{\"five_hour\":null,\"seven_day\":null}\n200").is_err());
+        assert!(
+            parse_claude_usage_response("{\"five_hour\":null,\"seven_day\":null}\n200").is_err()
+        );
     }
 
     #[test]
     fn reports_actionable_http_errors_without_response_contents() {
         for code in [401, 403] {
-            let error = parse_claude_usage_response(&format!("private response\n{code}")).unwrap_err();
+            let error =
+                parse_claude_usage_response(&format!("private response\n{code}")).unwrap_err();
             assert!(error.contains("sign in again"));
             assert!(!error.contains("private response"));
         }
-        assert!(parse_claude_usage_response("{}\n429").unwrap_err().contains("rate limited"));
-        assert!(parse_claude_usage_response("{}\n503").unwrap_err().contains("HTTP 503"));
+        assert!(parse_claude_usage_response("{}\n429")
+            .unwrap_err()
+            .contains("rate limited"));
+        assert!(parse_claude_usage_response("{}\n503")
+            .unwrap_err()
+            .contains("HTTP 503"));
         assert!(parse_claude_usage_response("invalid\n200").is_err());
     }
 }
@@ -670,7 +825,8 @@ struct AntigravityQuota {
     reset_time: Option<String>,
 }
 
-pub fn antigravity_provider_windows() -> Result<(Vec<UsageWindowSnapshot>, Vec<UsageWindowSnapshot>), String> {
+pub fn antigravity_provider_windows(
+) -> Result<(Vec<UsageWindowSnapshot>, Vec<UsageWindowSnapshot>), String> {
     // Current CLI releases own their authentication and expose a read-only report.
     // Keep the local service integration for older CLIs and desktop-only installs.
     if let Some(windows) = super::antigravity_cli::fetch_windows()? {
@@ -726,7 +882,10 @@ fn antigravity_detect_process() -> Result<AntigravityProcess, String> {
     if saw_tokenless_ide {
         Err("Antigravity language server is missing a CSRF token".to_string())
     } else {
-        Err("Antigravity language server not detected. Launch Antigravity or agy and retry.".to_string())
+        Err(
+            "Antigravity language server not detected. Launch Antigravity or agy and retry."
+                .to_string(),
+        )
     }
 }
 
@@ -788,7 +947,9 @@ fn extract_flag(flag: &str, command: &str) -> Option<String> {
     while index + flag_bytes.len() <= bytes.len() {
         if &bytes[index..index + flag_bytes.len()] == flag_bytes {
             let mut value_start = index + flag_bytes.len();
-            while value_start < bytes.len() && (bytes[value_start] == b'=' || bytes[value_start].is_ascii_whitespace()) {
+            while value_start < bytes.len()
+                && (bytes[value_start] == b'=' || bytes[value_start].is_ascii_whitespace())
+            {
                 value_start += 1;
             }
             if value_start >= bytes.len() {
@@ -810,7 +971,10 @@ fn antigravity_listening_ports(pid: i64) -> Result<Vec<i64>, String> {
         .into_iter()
         .find(|path| Path::new(path).exists())
         .ok_or_else(|| "lsof not available".to_string())?;
-    let output = run_command(lsof, &["-nP", "-iTCP", "-sTCP:LISTEN", "-a", "-p", &pid.to_string()])?;
+    let output = run_command(
+        lsof,
+        &["-nP", "-iTCP", "-sTCP:LISTEN", "-a", "-p", &pid.to_string()],
+    )?;
     let mut ports = Vec::new();
     for line in output.lines() {
         if !line.contains("(LISTEN)") {
@@ -864,14 +1028,18 @@ fn antigravity_endpoints(process: &AntigravityProcess, ports: &[i64]) -> Vec<Ant
     endpoints
 }
 
-fn antigravity_fetch_quotas(endpoints: &[AntigravityEndpoint]) -> Result<Vec<AntigravityQuota>, String> {
+fn antigravity_fetch_quotas(
+    endpoints: &[AntigravityEndpoint],
+) -> Result<Vec<AntigravityQuota>, String> {
     let mut last_error = "No Antigravity endpoint available".to_string();
     for endpoint in endpoints {
         for path in [
             "/exa.language_server_pb.LanguageServerService/GetUserStatus",
             "/exa.language_server_pb.LanguageServerService/GetCommandModelConfigs",
         ] {
-            match antigravity_request(endpoint, path).and_then(|body| antigravity_parse_quotas(&body)) {
+            match antigravity_request(endpoint, path)
+                .and_then(|body| antigravity_parse_quotas(&body))
+            {
                 Ok(quotas) if !quotas.is_empty() => return Ok(quotas),
                 Ok(_) => last_error = "Antigravity returned no quota models".to_string(),
                 Err(error) => last_error = error,
@@ -918,7 +1086,11 @@ fn antigravity_parse_quotas(body: &str) -> Result<Vec<AntigravityQuota>, String>
             .map(ToString::to_string)
             .unwrap_or_else(|| code.to_string());
         let normalized = text.trim_matches('"').to_lowercase();
-        if !normalized.is_empty() && normalized != "ok" && normalized != "success" && normalized != "0" {
+        if !normalized.is_empty()
+            && normalized != "ok"
+            && normalized != "success"
+            && normalized != "0"
+        {
             return Err(format!("Antigravity API returned code {text}"));
         }
     }
@@ -934,7 +1106,8 @@ fn antigravity_parse_quotas(body: &str) -> Result<Vec<AntigravityQuota>, String>
         let Some(quota) = config.get("quotaInfo") else {
             continue;
         };
-        let Some(remaining_fraction) = quota.get("remainingFraction").and_then(Value::as_f64) else {
+        let Some(remaining_fraction) = quota.get("remainingFraction").and_then(Value::as_f64)
+        else {
             continue;
         };
         let model_id = config
@@ -947,7 +1120,10 @@ fn antigravity_parse_quotas(body: &str) -> Result<Vec<AntigravityQuota>, String>
             .and_then(Value::as_str)
             .unwrap_or(&model_id)
             .to_string();
-        let reset_time = quota.get("resetTime").and_then(Value::as_str).map(ToString::to_string);
+        let reset_time = quota
+            .get("resetTime")
+            .and_then(Value::as_str)
+            .map(ToString::to_string);
         quotas.push(AntigravityQuota {
             label,
             model_id,
@@ -959,7 +1135,9 @@ fn antigravity_parse_quotas(body: &str) -> Result<Vec<AntigravityQuota>, String>
     Ok(quotas)
 }
 
-fn antigravity_quotas_to_windows(quotas: &[AntigravityQuota]) -> Result<(Vec<UsageWindowSnapshot>, Vec<UsageWindowSnapshot>), String> {
+fn antigravity_quotas_to_windows(
+    quotas: &[AntigravityQuota],
+) -> Result<(Vec<UsageWindowSnapshot>, Vec<UsageWindowSnapshot>), String> {
     let mut summary = Vec::new();
     let families = [
         ("claude", "24h_claude", "Claude quota"),
@@ -1059,7 +1237,13 @@ fn antigravity_window(
 fn sanitize_window_id(value: &str) -> String {
     let sanitized: String = value
         .chars()
-        .map(|ch| if ch.is_ascii_alphanumeric() { ch.to_ascii_lowercase() } else { '-' })
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() {
+                ch.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
         .collect();
     sanitized.trim_matches('-').to_string()
 }
@@ -1071,9 +1255,18 @@ mod tests {
     #[test]
     fn antigravity_process_kind_matches_cli_commands() {
         assert_eq!(antigravity_process_kind("agy --model gemini"), Some("cli"));
-        assert_eq!(antigravity_process_kind("/usr/local/bin/antigravity-cli serve"), Some("cli"));
-        assert_eq!(antigravity_process_kind("/opt/bin/antigravity_cli"), Some("cli"));
-        assert_eq!(antigravity_process_kind("/usr/bin/env agy --dangerously-skip-permissions"), Some("cli"));
+        assert_eq!(
+            antigravity_process_kind("/usr/local/bin/antigravity-cli serve"),
+            Some("cli")
+        );
+        assert_eq!(
+            antigravity_process_kind("/opt/bin/antigravity_cli"),
+            Some("cli")
+        );
+        assert_eq!(
+            antigravity_process_kind("/usr/bin/env agy --dangerously-skip-permissions"),
+            Some("cli")
+        );
     }
 
     #[test]
@@ -1084,9 +1277,18 @@ mod tests {
 
     #[test]
     fn extract_flag_accepts_space_and_equals_forms() {
-        assert_eq!(extract_flag("--csrf_token", "language_server --csrf_token abc123"), Some("abc123".to_string()));
-        assert_eq!(extract_flag("--csrf_token", "language_server --csrf_token=abc123"), Some("abc123".to_string()));
-        assert_eq!(extract_flag("--csrf_token", "language_server --other abc123"), None);
+        assert_eq!(
+            extract_flag("--csrf_token", "language_server --csrf_token abc123"),
+            Some("abc123".to_string())
+        );
+        assert_eq!(
+            extract_flag("--csrf_token", "language_server --csrf_token=abc123"),
+            Some("abc123".to_string())
+        );
+        assert_eq!(
+            extract_flag("--csrf_token", "language_server --other abc123"),
+            None
+        );
     }
 
     #[test]
@@ -1115,7 +1317,10 @@ mod tests {
         assert_eq!(quotas[0].label, "Claude Sonnet 4.5");
         assert_eq!(quotas[0].model_id, "claude-sonnet-4-5");
         assert_eq!(quotas[0].remaining_fraction, 0.42);
-        assert_eq!(quotas[0].reset_time.as_deref(), Some("2026-06-10T12:00:00Z"));
+        assert_eq!(
+            quotas[0].reset_time.as_deref(),
+            Some("2026-06-10T12:00:00Z")
+        );
     }
 
     #[test]
@@ -1142,14 +1347,14 @@ mod tests {
         assert_eq!(summary[1].remaining_percent, Some(75.0));
         assert_eq!(extra.len(), 2);
     }
-
 }
 
 // ── Gemini ────────────────────────────────────────────────
 
 // OAuth client credentials from the Gemini CLI bundle.
 // These are public values embedded in the open-source CLI.
-const GEMINI_OAUTH_CLIENT_ID: &str = "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com";
+const GEMINI_OAUTH_CLIENT_ID: &str =
+    "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com";
 const GEMINI_OAUTH_CLIENT_SECRET: &str = "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";
 
 /// Fetch Gemini quota windows from Google's internal API.
@@ -1164,7 +1369,11 @@ pub fn gemini_provider_windows() -> Result<Vec<UsageWindowSnapshot>, String> {
             .and_then(Value::as_str)
             .unwrap_or("oauth-personal");
         match auth_type {
-            "api-key" | "vertex-ai" => return Err(format!("Gemini auth type '{auth_type}' not supported for quota")),
+            "api-key" | "vertex-ai" => {
+                return Err(format!(
+                    "Gemini auth type '{auth_type}' not supported for quota"
+                ))
+            }
             _ => {} // oauth-personal or unknown — proceed
         }
     }
@@ -1183,7 +1392,10 @@ fn gemini_get_access_token() -> Result<String, String> {
     let creds: Value = serde_json::from_str(&creds_text)
         .map_err(|e| format!("Failed to parse Gemini OAuth creds: {e}"))?;
 
-    let expiry = creds.get("expiry_date").and_then(Value::as_u64).unwrap_or(0);
+    let expiry = creds
+        .get("expiry_date")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
@@ -1191,14 +1403,16 @@ fn gemini_get_access_token() -> Result<String, String> {
 
     if now_ms < expiry.saturating_sub(60_000) {
         // Token still valid (with 60s buffer)
-        return creds.get("access_token")
+        return creds
+            .get("access_token")
             .and_then(Value::as_str)
             .map(ToString::to_string)
             .ok_or_else(|| "Missing access_token in Gemini OAuth creds".to_string());
     }
 
     // Refresh the token
-    let refresh_token = creds.get("refresh_token")
+    let refresh_token = creds
+        .get("refresh_token")
         .and_then(Value::as_str)
         .ok_or_else(|| "Missing refresh_token in Gemini OAuth creds".to_string())?;
 
@@ -1207,39 +1421,61 @@ fn gemini_get_access_token() -> Result<String, String> {
         GEMINI_OAUTH_CLIENT_ID, GEMINI_OAUTH_CLIENT_SECRET, refresh_token
     );
 
-    let response = run_command("curl", &[
-        "-sS", "--max-time", "10",
-        "-X", "POST",
-        "-H", "Content-Type: application/x-www-form-urlencoded",
-        "-d", &body,
-        "https://oauth2.googleapis.com/token",
-    ])?;
+    let response = run_command(
+        "curl",
+        &[
+            "-sS",
+            "--max-time",
+            "10",
+            "-X",
+            "POST",
+            "-H",
+            "Content-Type: application/x-www-form-urlencoded",
+            "-d",
+            &body,
+            "https://oauth2.googleapis.com/token",
+        ],
+    )?;
 
     let resp: Value = serde_json::from_str(&response)
         .map_err(|e| format!("Failed to parse token refresh response: {e}"))?;
 
-    let new_token = resp.get("access_token")
+    let new_token = resp
+        .get("access_token")
         .and_then(Value::as_str)
         .ok_or_else(|| {
-            let error = resp.get("error_description")
+            let error = resp
+                .get("error_description")
                 .or_else(|| resp.get("error"))
                 .and_then(Value::as_str)
                 .unwrap_or("unknown error");
             format!("Token refresh failed: {error}")
         })?;
 
-    let expires_in = resp.get("expires_in").and_then(Value::as_u64).unwrap_or(3600);
+    let expires_in = resp
+        .get("expires_in")
+        .and_then(Value::as_u64)
+        .unwrap_or(3600);
 
     // Write updated creds back
     let mut updated = creds.clone();
     if let Some(obj) = updated.as_object_mut() {
-        obj.insert("access_token".to_string(), Value::String(new_token.to_string()));
-        obj.insert("expiry_date".to_string(), Value::Number((now_ms + expires_in * 1000).into()));
+        obj.insert(
+            "access_token".to_string(),
+            Value::String(new_token.to_string()),
+        );
+        obj.insert(
+            "expiry_date".to_string(),
+            Value::Number((now_ms + expires_in * 1000).into()),
+        );
         if let Some(new_id_token) = resp.get("id_token") {
             obj.insert("id_token".to_string(), new_id_token.clone());
         }
     }
-    let _ = fs::write(&creds_path, serde_json::to_string_pretty(&updated).unwrap_or_default());
+    let _ = fs::write(
+        &creds_path,
+        serde_json::to_string_pretty(&updated).unwrap_or_default(),
+    );
 
     Ok(new_token.to_string())
 }
@@ -1248,14 +1484,23 @@ fn gemini_get_access_token() -> Result<String, String> {
 fn gemini_load_project(token: &str) -> Result<String, String> {
     let body = r#"{"metadata":{"ideType":"GEMINI_CLI","pluginType":"GEMINI"}}"#;
 
-    let response = run_command("curl", &[
-        "-sS", "--max-time", "10",
-        "-X", "POST",
-        "-H", &format!("Authorization: Bearer {token}"),
-        "-H", "Content-Type: application/json",
-        "-d", body,
-        "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist",
-    ])?;
+    let response = run_command(
+        "curl",
+        &[
+            "-sS",
+            "--max-time",
+            "10",
+            "-X",
+            "POST",
+            "-H",
+            &format!("Authorization: Bearer {token}"),
+            "-H",
+            "Content-Type: application/json",
+            "-d",
+            body,
+            "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist",
+        ],
+    )?;
 
     let resp: Value = serde_json::from_str(&response)
         .map_err(|e| format!("Failed to parse loadCodeAssist response: {e}"))?;
@@ -1279,28 +1524,49 @@ fn gemini_retrieve_quota(token: &str, project_id: &str) -> Result<Vec<GeminiQuot
         format!(r#"{{"project":"{}"}}"#, project_id)
     };
 
-    let response = run_command("curl", &[
-        "-sS", "--max-time", "10",
-        "-X", "POST",
-        "-H", &format!("Authorization: Bearer {token}"),
-        "-H", "Content-Type: application/json",
-        "-d", &body,
-        "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota",
-    ])?;
+    let response = run_command(
+        "curl",
+        &[
+            "-sS",
+            "--max-time",
+            "10",
+            "-X",
+            "POST",
+            "-H",
+            &format!("Authorization: Bearer {token}"),
+            "-H",
+            "Content-Type: application/json",
+            "-d",
+            &body,
+            "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota",
+        ],
+    )?;
 
     let resp: Value = serde_json::from_str(&response)
         .map_err(|e| format!("Failed to parse retrieveUserQuota response: {e}"))?;
 
-    let buckets = resp.get("buckets")
+    let buckets = resp
+        .get("buckets")
         .and_then(Value::as_array)
         .ok_or_else(|| "retrieveUserQuota response missing buckets".to_string())?;
 
     let mut result = Vec::new();
     for bucket in buckets {
         let remaining = bucket.get("remainingFraction").and_then(Value::as_f64);
-        let reset = bucket.get("resetTime").and_then(Value::as_str).map(ToString::to_string);
-        let model = bucket.get("modelId").and_then(Value::as_str).unwrap_or("unknown").to_string();
-        let token_type = bucket.get("tokenType").and_then(Value::as_str).unwrap_or("").to_string();
+        let reset = bucket
+            .get("resetTime")
+            .and_then(Value::as_str)
+            .map(ToString::to_string);
+        let model = bucket
+            .get("modelId")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown")
+            .to_string();
+        let token_type = bucket
+            .get("tokenType")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
 
         if let Some(frac) = remaining {
             result.push(GeminiQuotaBucket {
@@ -1343,7 +1609,9 @@ fn gemini_model_tier(model: &str) -> &'static str {
 /// Convert quota buckets to UsageWindowSnapshot entries.
 /// Groups by tier (pro/flash/lite), takes the lowest remaining fraction per
 /// tier (worst case across all models and token types in that tier).
-fn gemini_buckets_to_windows(buckets: &[GeminiQuotaBucket]) -> Result<Vec<UsageWindowSnapshot>, String> {
+fn gemini_buckets_to_windows(
+    buckets: &[GeminiQuotaBucket],
+) -> Result<Vec<UsageWindowSnapshot>, String> {
     // Group by tier — keep lowest remaining fraction and earliest reset
     let mut by_tier: HashMap<&str, (f64, Option<String>)> = HashMap::new();
     for bucket in buckets {
@@ -1357,33 +1625,41 @@ fn gemini_buckets_to_windows(buckets: &[GeminiQuotaBucket]) -> Result<Vec<UsageW
         }
     }
 
-    let mut windows: Vec<UsageWindowSnapshot> = by_tier.iter().map(|(tier, (remaining, reset))| {
-        let used_pct = ((1.0 - remaining) * 100.0).max(0.0);
-        UsageWindowSnapshot {
-            provider: "gemini".to_string(),
-            window_id: format!("gemini-24h-{tier}"),
-            window: format!("24h_{tier}"),
-            label: format!("24h {tier}"),
-            scope: "plan".to_string(),
-            limit: Some(100.0),
-            used: Some(used_pct),
-            source_type: "provider".to_string(),
-            confidence: "official".to_string(),
-            cost_kind: "included".to_string(),
-            used_percent: Some(used_pct),
-            remaining_percent: Some((remaining * 100.0).max(0.0)),
-            reset_at: reset.clone(),
-            token_total: None,
-            pace_status: None,
-        }
-    }).collect();
+    let mut windows: Vec<UsageWindowSnapshot> = by_tier
+        .iter()
+        .map(|(tier, (remaining, reset))| {
+            let used_pct = ((1.0 - remaining) * 100.0).max(0.0);
+            UsageWindowSnapshot {
+                provider: "gemini".to_string(),
+                window_id: format!("gemini-24h-{tier}"),
+                window: format!("24h_{tier}"),
+                label: format!("24h {tier}"),
+                scope: "plan".to_string(),
+                limit: Some(100.0),
+                used: Some(used_pct),
+                source_type: "provider".to_string(),
+                confidence: "official".to_string(),
+                cost_kind: "included".to_string(),
+                used_percent: Some(used_pct),
+                remaining_percent: Some((remaining * 100.0).max(0.0)),
+                reset_at: reset.clone(),
+                token_total: None,
+                pace_status: None,
+            }
+        })
+        .collect();
 
     // Sort so pro comes first, then flash, then lite
     windows.sort_by_key(|w| {
-        if w.window.contains("pro") { 0 }
-        else if w.window.contains("flash") && !w.window.contains("lite") { 1 }
-        else if w.window.contains("lite") { 2 }
-        else { 3 }
+        if w.window.contains("pro") {
+            0
+        } else if w.window.contains("flash") && !w.window.contains("lite") {
+            1
+        } else if w.window.contains("lite") {
+            2
+        } else {
+            3
+        }
     });
 
     if windows.is_empty() {
@@ -1510,7 +1786,9 @@ fn parse_grok_billing(body: &[u8]) -> Result<(f64, Option<String>), String> {
     let used_percent = percents
         .into_iter()
         .find(|value| value.is_finite() && (0.0..=100.0).contains(value))
-        .ok_or_else(|| "SuperGrok billing response did not include a weekly usage percent".to_string())?;
+        .ok_or_else(|| {
+            "SuperGrok billing response did not include a weekly usage percent".to_string()
+        })?;
     let reset_at = resets.into_iter().next().map(unix_seconds_to_iso);
     Ok((used_percent, reset_at))
 }
@@ -1565,7 +1843,8 @@ fn scan_protobuf(
                     break;
                 };
                 index = next;
-                if (1_700_000_000..=2_100_000_000).contains(&value) && field_path.ends_with(&[5, 1]) {
+                if (1_700_000_000..=2_100_000_000).contains(&value) && field_path.ends_with(&[5, 1])
+                {
                     resets.push(value);
                 }
             }

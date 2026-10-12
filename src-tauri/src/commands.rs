@@ -12,7 +12,9 @@ use crate::acp::{AcpManager, AcpOutput};
 use crate::agent_status::{self, AgentRuntimeStatus};
 use crate::fonts::{self, FontFaceData, FontFamily};
 use crate::git;
-use crate::git::{ChangedFile, CreatedWorktree, DiffFileStat, GitChanges, GitStatus, WorktreeEntry};
+use crate::git::{
+    ChangedFile, CreatedWorktree, DiffFileStat, GitChanges, GitStatus, WorktreeEntry,
+};
 use crate::pty::manager::PtyManager;
 use crate::pty::session::{PtyColorTheme, PtyOutput};
 use crate::session_history::{self, SessionHistoryEntry, SessionHistoryUpsert};
@@ -155,7 +157,10 @@ pub async fn load_font_family(family: String) -> Vec<FontFaceData> {
 
 /// An image an agent referenced in chat, as raw bytes (an ArrayBuffer in JS).
 #[tauri::command]
-pub async fn read_chat_image(path: String, base_dir: String) -> Result<tauri::ipc::Response, String> {
+pub async fn read_chat_image(
+    path: String,
+    base_dir: String,
+) -> Result<tauri::ipc::Response, String> {
     tauri::async_runtime::spawn_blocking(move || crate::chat_images::read(&path, &base_dir))
         .await
         .map_err(|e| e.to_string())?
@@ -186,12 +191,19 @@ pub fn open_in_editor(
 const MAX_MARKDOWN_PREVIEW_BYTES: u64 = 512 * 1024;
 
 fn project_file(repo_path: &str, file_path: &str) -> Result<std::path::PathBuf, String> {
-    let repo = Path::new(repo_path).canonicalize().map_err(|error| format!("Project not found: {error}"))?;
-    let file = repo.join(file_path).canonicalize().map_err(|_| format!("File does not exist: {file_path}"))?;
+    let repo = Path::new(repo_path)
+        .canonicalize()
+        .map_err(|error| format!("Project not found: {error}"))?;
+    let file = repo
+        .join(file_path)
+        .canonicalize()
+        .map_err(|_| format!("File does not exist: {file_path}"))?;
     if !repo.is_dir() || !file.starts_with(&repo) {
         return Err("File is outside the project.".into());
     }
-    if !file.is_file() { return Err(format!("File does not exist: {file_path}")); }
+    if !file.is_file() {
+        return Err(format!("File does not exist: {file_path}"));
+    }
     Ok(file)
 }
 
@@ -212,7 +224,8 @@ mod editor_path_tests {
         assert!(project_file(root, "../outside.md").is_err());
         assert!(project_file(root, dir.join("outside.md").to_str().unwrap()).is_err());
         assert!(project_file(root, ".").is_err());
-        #[cfg(unix)] {
+        #[cfg(unix)]
+        {
             std::os::unix::fs::symlink(dir.join("outside.md"), repo.join("escape.md")).unwrap();
             assert!(project_file(root, "escape.md").is_err());
         }
@@ -277,7 +290,11 @@ pub fn open_url(url: &str, workspace: State<'_, WorkspaceManager>) -> Result<(),
     let mut settings = workspace.load_terminal_settings()?;
     normalize_terminal_settings(&mut settings);
 
-    if !settings.url_allowlist.iter().any(|allowed| allowed == &scheme) {
+    if !settings
+        .url_allowlist
+        .iter()
+        .any(|allowed| allowed == &scheme)
+    {
         return Err(format!("URL scheme '{scheme}' is not allowed"));
     }
 
@@ -297,7 +314,11 @@ pub fn open_url(url: &str, workspace: State<'_, WorkspaceManager>) -> Result<(),
 
 #[tauri::command]
 pub fn list_groups(workspace: State<'_, WorkspaceManager>) -> Result<Vec<GroupInfo>, String> {
-    Ok(workspace.list_groups()?.into_iter().map(GroupInfo::from).collect())
+    Ok(workspace
+        .list_groups()?
+        .into_iter()
+        .map(GroupInfo::from)
+        .collect())
 }
 
 #[tauri::command]
@@ -318,10 +339,7 @@ pub fn rename_group(
 }
 
 #[tauri::command]
-pub fn delete_group(
-    group_id: &str,
-    workspace: State<'_, WorkspaceManager>,
-) -> Result<(), String> {
+pub fn delete_group(group_id: &str, workspace: State<'_, WorkspaceManager>) -> Result<(), String> {
     workspace.delete_group(group_id)
 }
 
@@ -335,11 +353,15 @@ pub fn move_repo_to_group(
 }
 
 #[tauri::command]
-pub async fn suggest_project_folders(limit: Option<usize>) -> Result<Vec<crate::workspace::suggestions::FolderSuggestion>, String> {
+pub async fn suggest_project_folders(
+    limit: Option<usize>,
+) -> Result<Vec<crate::workspace::suggestions::FolderSuggestion>, String> {
     let limit = limit.unwrap_or(6).clamp(1, 20);
-    tauri::async_runtime::spawn_blocking(move || crate::workspace::suggestions::suggest_project_folders(limit))
-        .await
-        .map_err(|error| format!("Folder suggestions failed: {error}"))?
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::workspace::suggestions::suggest_project_folders(limit)
+    })
+    .await
+    .map_err(|error| format!("Folder suggestions failed: {error}"))?
 }
 
 #[tauri::command]
@@ -516,12 +538,7 @@ pub async fn get_agent_runtime_status(
 ) -> Result<Option<AgentRuntimeStatus>, String> {
     let process_id = pty_manager.child_pid(pty_id);
     tauri::async_runtime::spawn_blocking(move || {
-        agent_status::resolve(
-            &assistant_id,
-            &repo_path,
-            session_id.as_deref(),
-            process_id,
-        )
+        agent_status::resolve(&assistant_id, &repo_path, session_id.as_deref(), process_id)
     })
     .await
     .map_err(|error| format!("Agent status resolver failed: {error}"))
@@ -585,10 +602,7 @@ pub fn get_pty_session_count(
 }
 
 #[tauri::command]
-pub async fn shutdown_and_quit(
-    app: tauri::AppHandle,
-    restart: Option<bool>,
-) -> Result<(), String> {
+pub async fn shutdown_and_quit(app: tauri::AppHandle, restart: Option<bool>) -> Result<(), String> {
     if !app.state::<PtyManager>().begin_shutdown() {
         return Ok(());
     }
@@ -597,7 +611,9 @@ pub async fn shutdown_and_quit(
     tauri::async_runtime::spawn_blocking(move || {
         cleanup_app.state::<PtyManager>().kill_all();
         cleanup_app.state::<AcpManager>().shutdown();
-    }).await.map_err(|error| format!("Session cleanup failed: {error}"))?;
+    })
+    .await
+    .map_err(|error| format!("Session cleanup failed: {error}"))?;
     app.state::<PtyManager>().finish_shutdown();
     if restart.unwrap_or(false) {
         app.request_restart();
@@ -652,23 +668,36 @@ pub async fn git_list_worktrees(path: String) -> Result<Vec<WorktreeEntry>, Stri
 }
 
 #[tauri::command]
-pub async fn git_create_worktree(path: String, branch_name: String) -> Result<CreatedWorktree, String> {
+pub async fn git_create_worktree(
+    path: String,
+    branch_name: String,
+) -> Result<CreatedWorktree, String> {
     git::create_worktree(&path, &branch_name)
 }
 
 #[tauri::command]
 pub async fn git_status(path: String) -> GitStatus {
-    tauri::async_runtime::spawn_blocking(move || git::status(&path)).await.unwrap_or_default()
+    tauri::async_runtime::spawn_blocking(move || git::status(&path))
+        .await
+        .unwrap_or_default()
 }
 
 #[tauri::command]
 pub async fn git_changed_files(path: String) -> Result<Vec<ChangedFile>, String> {
-    tauri::async_runtime::spawn_blocking(move || git::changed_files(&path)).await.map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || git::changed_files(&path))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-pub async fn git_file_diff(path: String, file_path: String, staged: bool) -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(move || git::file_diff(&path, &file_path, staged)).await.map_err(|e| e.to_string())?
+pub async fn git_file_diff(
+    path: String,
+    file_path: String,
+    staged: bool,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || git::file_diff(&path, &file_path, staged))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -708,12 +737,16 @@ pub async fn git_create_branch(path: String, branch_name: String) -> Result<(), 
 
 #[tauri::command]
 pub async fn git_diff_stats(path: String) -> Result<Vec<DiffFileStat>, String> {
-    tauri::async_runtime::spawn_blocking(move || git::diff_stats(&path)).await.map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || git::diff_stats(&path))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
 pub async fn git_changes(path: String) -> Result<GitChanges, String> {
-    tauri::async_runtime::spawn_blocking(move || git::changes(&path)).await.map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || git::changes(&path))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 // ── System commands ────────────────────────────────────────────────
@@ -784,7 +817,13 @@ pub fn move_todo(
     target_section_line: usize,
     set_checked: Option<bool>,
 ) -> Result<(), String> {
-    todos::move_todo(file_path, line, expected_text, target_section_line, set_checked)
+    todos::move_todo(
+        file_path,
+        line,
+        expected_text,
+        target_section_line,
+        set_checked,
+    )
 }
 
 #[tauri::command]
@@ -803,11 +842,10 @@ pub fn remove_skill(repo_path: &str, name: &str) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn check_command_exists(command: &str) -> bool {
-    Command::new("which")
-        .arg(command)
-        .output()
-        .map(|o| o.status.success())
+pub async fn check_command_exists(command: String) -> bool {
+    // A miss rereads the shell PATH, which can take a moment.
+    tauri::async_runtime::spawn_blocking(move || crate::shell_path::find(&command).is_some())
+        .await
         .unwrap_or(false)
 }
 
@@ -818,7 +856,11 @@ pub async fn get_all_usage_snapshots(
     app: tauri::AppHandle,
 ) -> Result<Vec<ProviderUsageSnapshot>, String> {
     let enabled = enabled_providers(&workspace);
-    Ok(crate::usage::get_all_usage_snapshots(&db, &enabled, Some(app)))
+    Ok(crate::usage::get_all_usage_snapshots(
+        &db,
+        &enabled,
+        Some(app),
+    ))
 }
 
 #[tauri::command]
@@ -845,9 +887,7 @@ fn enabled_providers(workspace: &State<'_, WorkspaceManager>) -> crate::usage::E
 }
 
 #[tauri::command]
-pub fn get_usage_settings(
-    workspace: State<'_, WorkspaceManager>,
-) -> Result<UsageSettings, String> {
+pub fn get_usage_settings(workspace: State<'_, WorkspaceManager>) -> Result<UsageSettings, String> {
     workspace.load_usage_settings()
 }
 
@@ -860,12 +900,19 @@ pub fn save_usage_settings(
 }
 
 #[tauri::command]
-pub async fn get_usage_details(db: State<'_, UsageDb>, provider: String, window: String) -> Result<LocalUsageDetails, String> {
+pub async fn get_usage_details(
+    db: State<'_, UsageDb>,
+    provider: String,
+    window: String,
+) -> Result<LocalUsageDetails, String> {
     crate::usage::get_windowed_details(&db, &provider, &window)
 }
 
 #[tauri::command]
-pub async fn get_usage_overview(db: State<'_, UsageDb>, window: String) -> Result<UsageOverview, String> {
+pub async fn get_usage_overview(
+    db: State<'_, UsageDb>,
+    window: String,
+) -> Result<UsageOverview, String> {
     crate::usage::get_usage_overview(&db, &window)
 }
 
@@ -882,18 +929,23 @@ pub async fn get_models_for_provider(
     provider: String,
 ) -> Result<Vec<String>, String> {
     match provider.as_str() {
-        "pi" => Ok(sort_cli_models(&db, query_cli_models("pi", &["--list-models"], parse_pi_models))),
-        "opencode" => Ok(sort_cli_models(&db, query_cli_models("opencode", &["models"], parse_opencode_models))),
-        "cursor" => Ok(sort_cli_models(&db, query_cli_models("cursor-agent", &["--list-models"], parse_cursor_models))),
+        "pi" => Ok(sort_cli_models(
+            &db,
+            query_cli_models("pi", &["--list-models"], parse_pi_models),
+        )),
+        "opencode" => Ok(sort_cli_models(
+            &db,
+            query_cli_models("opencode", &["models"], parse_opencode_models),
+        )),
+        "cursor" => Ok(sort_cli_models(
+            &db,
+            query_cli_models("cursor-agent", &["--list-models"], parse_cursor_models),
+        )),
         _ => Ok(crate::usage::get_models_for_provider(&db, &provider)),
     }
 }
 
-fn query_cli_models(
-    cmd: &str,
-    args: &[&str],
-    parser: fn(&str) -> Vec<String>,
-) -> Vec<String> {
+fn query_cli_models(cmd: &str, args: &[&str], parser: fn(&str) -> Vec<String>) -> Vec<String> {
     let mut child = match Command::new(cmd)
         .args(args)
         .stdout(Stdio::piped())
@@ -989,7 +1041,9 @@ fn parse_cursor_models(text: &str) -> Vec<String> {
     text.lines()
         .map(strip_ansi)
         .map(|line| line.trim().to_string())
-        .filter(|line| !line.is_empty() && !line.starts_with("Available models") && !line.starts_with("Tip:"))
+        .filter(|line| {
+            !line.is_empty() && !line.starts_with("Available models") && !line.starts_with("Tip:")
+        })
         .filter_map(|line| line.split_once(" - ").map(|(id, _)| id.trim().to_string()))
         .filter(|id| !id.is_empty())
         .collect()
@@ -1046,14 +1100,28 @@ pub struct MemoryStats {
 }
 
 #[tauri::command]
-pub async fn get_memory_stats(pty_manager: State<'_, PtyManager>, acp_manager: State<'_, AcpManager>) -> Result<MemoryStats, String> {
+pub async fn get_memory_stats(
+    pty_manager: State<'_, PtyManager>,
+    acp_manager: State<'_, AcpManager>,
+) -> Result<MemoryStats, String> {
     let mut roots = pty_manager.child_pids();
     roots.extend(acp_manager.child_pids());
     tauri::async_runtime::spawn_blocking(move || {
-        let output = Command::new("ps").args(["-axo", "pid=,ppid=,rss="]).output().map_err(|error| error.to_string())?;
-        if !output.status.success() { return Err("Could not read process memory".into()); }
-        Ok(memory_from_snapshot(std::process::id(), &roots, &String::from_utf8_lossy(&output.stdout)))
-    }).await.map_err(|error| error.to_string())?
+        let output = Command::new("ps")
+            .args(["-axo", "pid=,ppid=,rss="])
+            .output()
+            .map_err(|error| error.to_string())?;
+        if !output.status.success() {
+            return Err("Could not read process memory".into());
+        }
+        Ok(memory_from_snapshot(
+            std::process::id(),
+            &roots,
+            &String::from_utf8_lossy(&output.stdout),
+        ))
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 fn memory_from_snapshot(app_pid: u32, roots: &[u32], snapshot: &str) -> MemoryStats {
@@ -1061,9 +1129,11 @@ fn memory_from_snapshot(app_pid: u32, roots: &[u32], snapshot: &str) -> MemorySt
     let mut children = std::collections::HashMap::<u32, Vec<u32>>::new();
     for line in snapshot.lines() {
         let mut parts = line.split_whitespace();
-        let parsed = (parts.next().and_then(|value| value.parse::<u32>().ok()),
+        let parsed = (
             parts.next().and_then(|value| value.parse::<u32>().ok()),
-            parts.next().and_then(|value| value.parse::<u64>().ok()));
+            parts.next().and_then(|value| value.parse::<u32>().ok()),
+            parts.next().and_then(|value| value.parse::<u64>().ok()),
+        );
         if let (Some(pid), Some(parent), Some(kb)) = parsed {
             rss.insert(pid, kb * 1024);
             children.entry(parent).or_default().push(pid);
@@ -1073,18 +1143,29 @@ fn memory_from_snapshot(app_pid: u32, roots: &[u32], snapshot: &str) -> MemorySt
     let mut seen = std::collections::HashSet::new();
     let mut children_rss = 0;
     while let Some(pid) = pending.pop() {
-        if !seen.insert(pid) || pid == app_pid { continue; }
+        if !seen.insert(pid) || pid == app_pid {
+            continue;
+        }
         children_rss += rss.get(&pid).copied().unwrap_or(0);
-        if let Some(descendants) = children.get(&pid) { pending.extend(descendants); }
+        if let Some(descendants) = children.get(&pid) {
+            pending.extend(descendants);
+        }
     }
-    MemoryStats { app_rss: rss.get(&app_pid).copied().unwrap_or(0), children_rss }
+    MemoryStats {
+        app_rss: rss.get(&app_pid).copied().unwrap_or(0),
+        children_rss,
+    }
 }
 
 #[cfg(test)]
 mod memory_tests {
     #[test]
     fn sums_full_agent_trees_once_and_excludes_unrelated_processes() {
-        let stats = super::memory_from_snapshot(1, &[2, 3, 5], "1 0 10\n2 1 20\n3 2 30\n4 3 40\n5 1 50\n6 5 60\n7 0 9000\n");
+        let stats = super::memory_from_snapshot(
+            1,
+            &[2, 3, 5],
+            "1 0 10\n2 1 20\n3 2 30\n4 3 40\n5 1 50\n6 5 60\n7 0 9000\n",
+        );
         assert_eq!(stats.app_rss, 10 * 1024);
         assert_eq!(stats.children_rss, 200 * 1024);
     }
@@ -1097,8 +1178,8 @@ fn open_path_in_editor(repo_path: &str, editor_id: &str) -> Result<(), String> {
 fn open_paths_in_editor(paths: &[&str], editor_id: &str) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
-        let app_name = editor_app_name(editor_id)
-            .ok_or_else(|| format!("Unsupported editor: {editor_id}"))?;
+        let app_name =
+            editor_app_name(editor_id).ok_or_else(|| format!("Unsupported editor: {editor_id}"))?;
 
         let status = Command::new("open")
             .args(["-a", app_name])
@@ -1152,10 +1233,12 @@ pub struct PortInfo {
 /// failure or timeout. Prevents hangs from stalling the app (e.g. NFS mounts,
 /// broken pipes). Matches port-whisperer's 5-10s timeout pattern.
 fn run_with_timeout(cmd: &str, args: &[&str], timeout: std::time::Duration) -> String {
-    let mut child = match Command::new(cmd).args(args)
+    let mut child = match Command::new(cmd)
+        .args(args)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
-        .spawn() {
+        .spawn()
+    {
         Ok(c) => c,
         Err(_) => return String::new(),
     };
@@ -1175,7 +1258,9 @@ fn run_with_timeout(cmd: &str, args: &[&str], timeout: std::time::Duration) -> S
         }
     }
 
-    child.stdout.take()
+    child
+        .stdout
+        .take()
         .and_then(|mut out| {
             let mut buf = String::new();
             std::io::Read::read_to_string(&mut out, &mut buf).ok()?;
@@ -1198,15 +1283,24 @@ pub async fn list_listening_ports(
     let stdout = run_with_timeout("lsof", &["-iTCP", "-sTCP:LISTEN", "-P", "-n"], timeout);
 
     let mut port_map: std::collections::HashSet<u16> = std::collections::HashSet::new();
-    struct Entry { port: u16, pid: u32, process_name: String }
+    struct Entry {
+        port: u16,
+        pid: u32,
+        process_name: String,
+    }
     let mut entries: Vec<Entry> = Vec::new();
 
     for line in stdout.lines().skip(1) {
         let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.len() < 9 { continue; }
+        if parts.len() < 9 {
+            continue;
+        }
 
         let process_name = parts[0].to_string();
-        let pid: u32 = match parts[1].parse() { Ok(p) => p, Err(_) => continue };
+        let pid: u32 = match parts[1].parse() {
+            Ok(p) => p,
+            Err(_) => continue,
+        };
 
         // NAME is at index 8 (fixed position), e.g. "*:3000" or "127.0.0.1:8080"
         let port: u16 = match extract_port(parts[8]) {
@@ -1215,12 +1309,20 @@ pub async fn list_listening_ports(
         };
 
         // Deduplicate by port (first entry wins, like port-whisperer)
-        if !port_map.insert(port) { continue; }
+        if !port_map.insert(port) {
+            continue;
+        }
 
         // Filter out system/desktop apps
-        if !is_dev_process(&process_name) { continue; }
+        if !is_dev_process(&process_name) {
+            continue;
+        }
 
-        entries.push(Entry { port, pid, process_name });
+        entries.push(Entry {
+            port,
+            pid,
+            process_name,
+        });
     }
 
     if entries.is_empty() {
@@ -1228,15 +1330,29 @@ pub async fn list_listening_ports(
     }
 
     // ── Step 2: Batch ps call for all PIDs ────────────────────────────
-    let pid_list: String = entries.iter().map(|e| e.pid.to_string()).collect::<Vec<_>>().join(",");
-    let ps_stdout = run_with_timeout("ps", &["-p", &pid_list, "-o", "pid=,rss=,etime=,command="], timeout);
+    let pid_list: String = entries
+        .iter()
+        .map(|e| e.pid.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    let ps_stdout = run_with_timeout(
+        "ps",
+        &["-p", &pid_list, "-o", "pid=,rss=,etime=,command="],
+        timeout,
+    );
 
-    let mut ps_map: std::collections::HashMap<u32, (u64, String, String)> = std::collections::HashMap::new();
+    let mut ps_map: std::collections::HashMap<u32, (u64, String, String)> =
+        std::collections::HashMap::new();
     for line in ps_stdout.lines() {
         let trimmed = line.trim();
-        if trimmed.is_empty() { continue; }
+        if trimmed.is_empty() {
+            continue;
+        }
         let mut parts = trimmed.splitn(4, char::is_whitespace);
-        let pid: u32 = match parts.next().and_then(|s| s.parse().ok()) { Some(p) => p, None => continue };
+        let pid: u32 = match parts.next().and_then(|s| s.parse().ok()) {
+            Some(p) => p,
+            None => continue,
+        };
         let rss: u64 = parts.next().and_then(|s| s.parse().ok()).unwrap_or(0);
         let etime = parts.next().unwrap_or("").to_string();
         let command = parts.next().unwrap_or("").to_string();
@@ -1249,7 +1365,9 @@ pub async fn list_listening_ports(
     let mut cwd_map: std::collections::HashMap<u32, String> = std::collections::HashMap::new();
     for line in cwd_stdout.lines().skip(1) {
         let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.len() < 9 { continue; }
+        if parts.len() < 9 {
+            continue;
+        }
         if let Ok(pid) = parts[1].parse::<u32>() {
             let path = parts[8..].join(" ");
             if path.starts_with('/') {
@@ -1262,7 +1380,8 @@ pub async fn list_listening_ports(
     let mut results: Vec<PortInfo> = Vec::with_capacity(entries.len());
 
     for entry in entries {
-        let (memory_kb, uptime, cmdline) = ps_map.get(&entry.pid)
+        let (memory_kb, uptime, cmdline) = ps_map
+            .get(&entry.pid)
             .map(|(rss, etime, cmd)| (*rss, etime.as_str(), cmd.as_str()))
             .unwrap_or((0, "", ""));
         let raw_cwd = cwd_map.get(&entry.pid).cloned().unwrap_or_default();
@@ -1297,16 +1416,49 @@ fn extract_port(name_field: &str) -> Option<u16> {
 fn is_dev_process(process_name: &str) -> bool {
     let name = process_name.to_lowercase();
     let system_apps = [
-        "spotify", "raycast", "tableplus", "postman", "linear", "controlce",
-        "rapportd", "superhuma", "setappage", "slack", "discord", "firefox",
-        "chrome", "google", "safari", "figma", "notion", "zoom", "teams",
-        "iterm2", "warp", "arc", "loginwindow", "windowserver", "systemuise",
-        "kernel_tas", "launchd", "mdworker", "mds_store", "cfprefsd",
-        "coreaudio", "corebrigh", "airportd", "bluetoothd", "sharingd",
-        "usernoted", "notificat", "cloudd",
+        "spotify",
+        "raycast",
+        "tableplus",
+        "postman",
+        "linear",
+        "controlce",
+        "rapportd",
+        "superhuma",
+        "setappage",
+        "slack",
+        "discord",
+        "firefox",
+        "chrome",
+        "google",
+        "safari",
+        "figma",
+        "notion",
+        "zoom",
+        "teams",
+        "iterm2",
+        "warp",
+        "arc",
+        "loginwindow",
+        "windowserver",
+        "systemuise",
+        "kernel_tas",
+        "launchd",
+        "mdworker",
+        "mds_store",
+        "cfprefsd",
+        "coreaudio",
+        "corebrigh",
+        "airportd",
+        "bluetoothd",
+        "sharingd",
+        "usernoted",
+        "notificat",
+        "cloudd",
     ];
     for app in &system_apps {
-        if name.starts_with(app) { return false; }
+        if name.starts_with(app) {
+            return false;
+        }
     }
     true
 }
@@ -1314,8 +1466,18 @@ fn is_dev_process(process_name: &str) -> bool {
 /// Walk up from cwd to find project root via marker files (package.json, Cargo.toml, etc.)
 /// Matches port-whisperer's findProjectRoot.
 fn find_project_root(cwd: &str) -> String {
-    if cwd.is_empty() { return String::new(); }
-    let markers = ["package.json", "Cargo.toml", "go.mod", "pyproject.toml", "Gemfile", "pom.xml", "build.gradle"];
+    if cwd.is_empty() {
+        return String::new();
+    }
+    let markers = [
+        "package.json",
+        "Cargo.toml",
+        "go.mod",
+        "pyproject.toml",
+        "Gemfile",
+        "pom.xml",
+        "build.gradle",
+    ];
     let mut current = std::path::PathBuf::from(cwd);
     for _ in 0..15 {
         for marker in &markers {
@@ -1323,7 +1485,9 @@ fn find_project_root(cwd: &str) -> String {
                 return current.to_string_lossy().to_string();
             }
         }
-        if !current.pop() { break; }
+        if !current.pop() {
+            break;
+        }
     }
     cwd.to_string()
 }
@@ -1333,52 +1497,118 @@ fn find_project_root(cwd: &str) -> String {
 fn detect_framework(process: &str, cmdline: &str, project_root: &str) -> String {
     // 1. Command line detection
     let cmd = cmdline.to_lowercase();
-    if cmd.contains("next") { return "Next.js".to_string(); }
-    if cmd.contains("vite") { return "Vite".to_string(); }
-    if cmd.contains("nuxt") { return "Nuxt".to_string(); }
-    if cmd.contains("angular") || cmd.contains("ng serve") { return "Angular".to_string(); }
-    if cmd.contains("webpack") { return "Webpack".to_string(); }
-    if cmd.contains("remix") { return "Remix".to_string(); }
-    if cmd.contains("astro") { return "Astro".to_string(); }
-    if cmd.contains("gatsby") { return "Gatsby".to_string(); }
-    if cmd.contains("flask") { return "Flask".to_string(); }
-    if cmd.contains("django") || cmd.contains("manage.py") { return "Django".to_string(); }
-    if cmd.contains("uvicorn") { return "FastAPI".to_string(); }
-    if cmd.contains("rails") { return "Rails".to_string(); }
-    if cmd.contains("cargo") || cmd.contains("rustc") { return "Rust".to_string(); }
-    if cmd.contains("storybook") { return "Storybook".to_string(); }
+    if cmd.contains("next") {
+        return "Next.js".to_string();
+    }
+    if cmd.contains("vite") {
+        return "Vite".to_string();
+    }
+    if cmd.contains("nuxt") {
+        return "Nuxt".to_string();
+    }
+    if cmd.contains("angular") || cmd.contains("ng serve") {
+        return "Angular".to_string();
+    }
+    if cmd.contains("webpack") {
+        return "Webpack".to_string();
+    }
+    if cmd.contains("remix") {
+        return "Remix".to_string();
+    }
+    if cmd.contains("astro") {
+        return "Astro".to_string();
+    }
+    if cmd.contains("gatsby") {
+        return "Gatsby".to_string();
+    }
+    if cmd.contains("flask") {
+        return "Flask".to_string();
+    }
+    if cmd.contains("django") || cmd.contains("manage.py") {
+        return "Django".to_string();
+    }
+    if cmd.contains("uvicorn") {
+        return "FastAPI".to_string();
+    }
+    if cmd.contains("rails") {
+        return "Rails".to_string();
+    }
+    if cmd.contains("cargo") || cmd.contains("rustc") {
+        return "Rust".to_string();
+    }
+    if cmd.contains("storybook") {
+        return "Storybook".to_string();
+    }
 
     // 2. Process name fallback
     let name = process.to_lowercase();
-    if name == "node" { return "Node.js".to_string(); }
-    if name.starts_with("python") { return "Python".to_string(); }
-    if name.starts_with("ruby") { return "Ruby".to_string(); }
-    if name.starts_with("java") { return "Java".to_string(); }
-    if name == "go" { return "Go".to_string(); }
-    if name.contains("postgres") || name == "postmaster" { return "PostgreSQL".to_string(); }
-    if name.contains("redis") { return "Redis".to_string(); }
-    if name.contains("mongod") { return "MongoDB".to_string(); }
-    if name.contains("mysqld") { return "MySQL".to_string(); }
-    if name.contains("docker") || name.starts_with("com.docke") { return "Docker".to_string(); }
-    if name.contains("nginx") { return "nginx".to_string(); }
+    if name == "node" {
+        return "Node.js".to_string();
+    }
+    if name.starts_with("python") {
+        return "Python".to_string();
+    }
+    if name.starts_with("ruby") {
+        return "Ruby".to_string();
+    }
+    if name.starts_with("java") {
+        return "Java".to_string();
+    }
+    if name == "go" {
+        return "Go".to_string();
+    }
+    if name.contains("postgres") || name == "postmaster" {
+        return "PostgreSQL".to_string();
+    }
+    if name.contains("redis") {
+        return "Redis".to_string();
+    }
+    if name.contains("mongod") {
+        return "MongoDB".to_string();
+    }
+    if name.contains("mysqld") {
+        return "MySQL".to_string();
+    }
+    if name.contains("docker") || name.starts_with("com.docke") {
+        return "Docker".to_string();
+    }
+    if name.contains("nginx") {
+        return "nginx".to_string();
+    }
 
     // 3. Project file detection (like port-whisperer's detectFramework)
     if !project_root.is_empty() {
         let root = Path::new(project_root);
-        if root.join("vite.config.ts").exists() || root.join("vite.config.js").exists() { return "Vite".to_string(); }
-        if root.join("next.config.js").exists() || root.join("next.config.mjs").exists() { return "Next.js".to_string(); }
-        if root.join("angular.json").exists() { return "Angular".to_string(); }
-        if root.join("Cargo.toml").exists() { return "Rust".to_string(); }
-        if root.join("go.mod").exists() { return "Go".to_string(); }
-        if root.join("manage.py").exists() { return "Django".to_string(); }
-        if root.join("Gemfile").exists() { return "Ruby".to_string(); }
+        if root.join("vite.config.ts").exists() || root.join("vite.config.js").exists() {
+            return "Vite".to_string();
+        }
+        if root.join("next.config.js").exists() || root.join("next.config.mjs").exists() {
+            return "Next.js".to_string();
+        }
+        if root.join("angular.json").exists() {
+            return "Angular".to_string();
+        }
+        if root.join("Cargo.toml").exists() {
+            return "Rust".to_string();
+        }
+        if root.join("go.mod").exists() {
+            return "Go".to_string();
+        }
+        if root.join("manage.py").exists() {
+            return "Django".to_string();
+        }
+        if root.join("Gemfile").exists() {
+            return "Ruby".to_string();
+        }
     }
 
     String::new()
 }
 
 fn match_project(cwd: &str, repo_paths: &[String]) -> String {
-    if cwd.is_empty() { return String::new(); }
+    if cwd.is_empty() {
+        return String::new();
+    }
     repo_paths
         .iter()
         .filter(|repo| cwd.starts_with(repo.as_str()))

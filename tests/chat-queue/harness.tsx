@@ -40,6 +40,7 @@ export function close() { return closeChat(chatId); }
 mockWindows("main");
 mockIPC((cmd, payload) => {
   const args = payload as Record<string, unknown>;
+  if (cmd === "get_managed_acp_adapter") return { command: `/test/${String(args.adapter)}-acp`, args: [] };
   if (cmd === "spawn_acp_agent") { channel = args.onOutput as Channel<AcpOutput>; return chatId; }
   if (cmd !== "write_acp_agent") return null;
   const message = JSON.parse(String(args.line));

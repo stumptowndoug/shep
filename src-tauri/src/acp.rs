@@ -93,7 +93,13 @@ impl AcpManager {
         if state.shutting_down {
             return Err("Shep is shutting down".into());
         }
-        let mut cmd = Command::new(command);
+        // Resolve and run with the user's current shell PATH, so adapters and
+        // the CLIs they start can be installed while Shep is open.
+        let mut cmd =
+            Command::new(crate::shell_path::find(command).unwrap_or_else(|| command.into()));
+        if let Some(path) = crate::shell_path::current() {
+            cmd.env("PATH", path);
+        }
         cmd.args(&args)
             .current_dir(cwd)
             .stdin(Stdio::piped())
