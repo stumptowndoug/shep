@@ -9,6 +9,8 @@ export interface ContextMenuItem {
   danger?: boolean;
   keepOpen?: boolean;
   separator?: boolean;
+  /** Keyboard shortcut shown at the trailing edge, e.g. ⌘T. */
+  shortcut?: string;
   onClick?: () => void;
   children?: ContextMenuItem[];
 }
@@ -18,9 +20,13 @@ interface ContextMenuProps {
   y: number;
   items: ContextMenuItem[];
   onClose: () => void;
+  /** Accessible name for the menu. */
+  label?: string;
+  /** The button that toggles this menu; clicks on it are left to the button. */
+  anchor?: HTMLElement | null;
 }
 
-export default function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
+export default function ContextMenu({ x, y, items, onClose, label = "Context menu", anchor }: ContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
   const [previousFocus] = useState(() => document.activeElement instanceof HTMLElement ? document.activeElement : null);
   const focusMenu = useCallback((element: HTMLDivElement | null) => {
@@ -50,6 +56,7 @@ export default function ContextMenu({ x, y, items, onClose }: ContextMenuProps) 
         // Don't close if clicking inside a portaled submenu
         const target = e.target as HTMLElement;
         if (target.closest?.(".context-menu--submenu")) return;
+        if (anchor?.contains(target)) return;
         onClose();
       }
     };
@@ -62,7 +69,7 @@ export default function ContextMenu({ x, y, items, onClose }: ContextMenuProps) 
       document.removeEventListener("mousedown", handleClick, true);
       document.removeEventListener("keydown", handleKey);
     };
-  }, [onClose]);
+  }, [onClose, anchor]);
 
   return (
     <div
@@ -70,7 +77,7 @@ export default function ContextMenu({ x, y, items, onClose }: ContextMenuProps) 
       className="context-menu"
       style={{ left: x, top: y }}
       role="menu"
-      aria-label="Context menu"
+      aria-label={label}
       onKeyDown={(event) => {
         if (event.key === "Escape") {
           event.preventDefault();
@@ -113,6 +120,7 @@ export default function ContextMenu({ x, y, items, onClose }: ContextMenuProps) 
           >
             {item.icon && <span className="context-menu__icon">{item.icon}</span>}
             <span>{item.label}</span>
+            {item.shortcut && <kbd className="context-menu__shortcut">{item.shortcut}</kbd>}
           </button>
         );
       })}

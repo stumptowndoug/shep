@@ -12,7 +12,7 @@ Every supported agent can run two ways:
 - **Terminal** runs the agent's own CLI in a terminal tab, exactly as you would in
   any shell.
 
-Choose per session in the New tab launcher, and set the default in Settings. New
+Choose per session on the New agent page, and set the default in Settings. New
 installations default to Chat. History records which interface each session used
 and resumes it the same way.
 

@@ -2,7 +2,7 @@ import { useCallback, useRef, useState } from "react";
 import { useTerminalStore } from "../../stores/useTerminalStore";
 import { useUIStore } from "../../stores/useUIStore";
 import { useShallow } from "zustand/shallow";
-import { Plus, X } from "lucide-react";
+import { ChevronDown, Plus, X } from "lucide-react";
 import { assistantLogoSrc, getAssistantLogoClass } from "../../lib/assistantLogos";
 import { handleActionKey } from "../../lib/a11y";
 import tabKindMeta from "../../lib/tabKindMeta";
@@ -10,6 +10,7 @@ import { isSessionTab, type UnifiedTab } from "../../lib/types";
 import { useProjectSettingsStore } from "../../stores/useProjectSettingsStore";
 import { agentDisplayLabel } from "../../lib/agentLabels";
 import GitSummary from "../git/GitSummary";
+import ProjectOpenMenu, { type ProjectOpenActions } from "../shared/ProjectOpenMenu";
 
 /** Render the icon for a tab based on its kind */
 function TabIcon({ tab }: { tab: UnifiedTab }) {
@@ -26,11 +27,13 @@ function TabIcon({ tab }: { tab: UnifiedTab }) {
 interface TabBarProps {
   onClose: (tabId: string) => void;
   changesActive: boolean;
+  openActions: ProjectOpenActions;
 }
 
 export default function TabBar({
   onClose,
   changesActive,
+  openActions,
 }: TabBarProps) {
   const { activeProjectPath, projectState } = useTerminalStore(
     useShallow((s) => ({ activeProjectPath: s.activeProjectPath, projectState: s.activeProjectPath ? s.projectState[s.activeProjectPath] : null })),
@@ -43,6 +46,9 @@ export default function TabBar({
   const { setActiveTab, reorderTab, updateTab } = useTerminalStore.getState();
 
   const [editingTabId, setEditingTabId] = useState<string | null>(null);
+  const [openMenu, setOpenMenu] = useState<{ x: number; y: number; anchor: HTMLElement } | null>(null);
+  // The sidebar's More button already offers this menu; the tab bar only needs it when the sidebar is hidden.
+  const sidebarVisible = useUIStore((s) => s.sidebarVisible);
   const [dragTabId, setDragTabId] = useState<string | null>(null);
   const [dropIndex, setDropIndex] = useState<number | null>(null);
   const dragRef = useRef({ startX: 0, didDrag: false, dropIndex: null as number | null });
@@ -207,20 +213,46 @@ export default function TabBar({
           );
         })}
 
-        <button
-          type="button"
-          className="icon-btn"
-          onClick={() => {
-            useUIStore.getState().deactivateAllOverlays();
-            useTerminalStore.getState().addPanelTab("launcher");
-          }}
-          onPointerDown={(event) => event.stopPropagation()}
-          disabled={!activeProjectPath}
-          title={`New tab (${tabKindMeta.launcher.shortcut})`}
-          aria-label="New tab"
-        >
-          <Plus size={16} />
-        </button>
+        <div className="tab-new" onPointerDown={(event) => event.stopPropagation()}>
+          <button
+            type="button"
+            className="icon-btn"
+            onClick={() => {
+              useUIStore.getState().deactivateAllOverlays();
+              useTerminalStore.getState().addPanelTab("launcher");
+            }}
+            disabled={!activeProjectPath}
+            title={`New agent (${tabKindMeta.launcher.shortcut})`}
+            aria-label="New agent"
+          >
+            <Plus size={16} />
+          </button>
+          {!sidebarVisible && <button
+            type="button"
+            className="icon-btn tab-new__more"
+            onClick={(event) => {
+              const anchor = event.currentTarget;
+              const rect = anchor.getBoundingClientRect();
+              setOpenMenu(openMenu ? null : { x: rect.left, y: rect.bottom + 4, anchor });
+            }}
+            disabled={!activeProjectPath}
+            title="Open terminal, changes, and more"
+            aria-label="Open something else"
+            aria-haspopup="menu"
+            aria-expanded={openMenu !== null}
+          >
+            <ChevronDown size={13} />
+          </button>}
+        </div>
+        {openMenu && !sidebarVisible && (
+          <ProjectOpenMenu
+            x={openMenu.x}
+            y={openMenu.y}
+            anchor={openMenu.anchor}
+            actions={openActions}
+            onClose={() => setOpenMenu(null)}
+          />
+        )}
       </div>
       {projectName && (
         <div className="tab-bar__context">
