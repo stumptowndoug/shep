@@ -92,6 +92,10 @@ mockIPC((cmd, payload) => {
   }
   const args = payload as Record<string, unknown> | undefined;
   if (cmd === 'get_managed_acp_adapter' || cmd === 'check_command_exists') return mockAvailability(cmd, args ?? {});
+  if (cmd === 'install_managed_acp_adapter' && args?.adapter !== 'antigravity') {
+    if (params.get('install') === 'no-node') throw new Error('Chat needs Node.js. Install it from nodejs.org or with `brew install node`, then try again.');
+    return { command: '/test/node', args: [`/test/${String(args?.adapter)}-acp`] };
+  }
   if (cmd === 'install_managed_acp_adapter') return mockAntigravityCommand(cmd, args ?? {});
   if (cmd === 'open_url' && params.get('chat') === 'antigravity') {
     document.body.dataset.previewGoogleSignIn = 'opened';

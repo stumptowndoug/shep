@@ -374,7 +374,8 @@ fn ingest_antigravity(conn: &mut Connection, budget: usize) -> Result<bool, Stri
         return Ok(true);
     }
 
-    let mut by_session: std::collections::BTreeMap<String, PathBuf> = std::collections::BTreeMap::new();
+    let mut by_session: std::collections::BTreeMap<String, PathBuf> =
+        std::collections::BTreeMap::new();
     for path in walk_files(&brain_dir) {
         let file_name = path.file_name().and_then(|n| n.to_str());
         if file_name != Some("transcript_full.jsonl") && file_name != Some("transcript.jsonl") {
@@ -387,7 +388,8 @@ fn ingest_antigravity(conn: &mut Connection, budget: usize) -> Result<bool, Stri
         let replace = by_session
             .get(&session_id)
             .map(|existing| {
-                existing.file_name().and_then(|n| n.to_str()) != Some("transcript_full.jsonl") && is_full
+                existing.file_name().and_then(|n| n.to_str()) != Some("transcript_full.jsonl")
+                    && is_full
             })
             .unwrap_or(true);
         if replace {
@@ -491,9 +493,15 @@ fn ingest_antigravity_file(
             timestamp = ts;
         }
 
-        let source = row.get("source").and_then(Value::as_str).unwrap_or_default();
+        let source = row
+            .get("source")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
         let step_type = row.get("type").and_then(Value::as_str).unwrap_or_default();
-        let content = row.get("content").and_then(Value::as_str).unwrap_or_default();
+        let content = row
+            .get("content")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
 
         if step_type == "USER_INPUT" || source == "USER_EXPLICIT" {
             input = input.saturating_add(estimate_text_tokens(content));
@@ -1203,7 +1211,9 @@ fn prune_old_messages(conn: &Connection) -> Result<(), String> {
 fn archive_messages_before(conn: &Connection, cutoff: i64) -> Result<(), String> {
     // The insert and delete must commit together. Otherwise retrying after a
     // failed delete would add the same tokens twice.
-    let tx = conn.unchecked_transaction().map_err(|error| error.to_string())?;
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|error| error.to_string())?;
     tx.execute(
         "INSERT INTO usage_archive (provider, session_id, date, pricing_provider, model, project, tokens_input, tokens_output, tokens_cache_write, tokens_cache_read, tokens_thoughts, tokens_total, message_count, recorded_cost)
          SELECT provider, session_id, date(timestamp, 'unixepoch', 'localtime') as d, COALESCE(pricing_provider, provider), COALESCE(model, 'unknown'), COALESCE(project, 'unknown'),
@@ -1376,7 +1386,12 @@ mod tests {
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         ).unwrap();
         assert_eq!(result, (1, 250, 2, 1.0));
-        assert_eq!(conn.query_row("SELECT COUNT(*) FROM usage_messages", [], |row| row.get::<_, i64>(0)).unwrap(), 0);
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM usage_messages", [], |row| row
+                .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
     }
 
     #[test]
@@ -1386,10 +1401,20 @@ mod tests {
         conn.execute_batch("INSERT INTO usage_messages (provider, session_id, timestamp, tokens_total) VALUES ('claude', 'one', 1, 100);
             CREATE TRIGGER fail_prune BEFORE DELETE ON usage_messages BEGIN SELECT RAISE(ABORT, 'simulated failure'); END;").unwrap();
         assert!(archive_messages_before(&conn, 100).is_err());
-        assert_eq!(conn.query_row("SELECT COUNT(*) FROM usage_archive", [], |row| row.get::<_, i64>(0)).unwrap(), 0);
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM usage_archive", [], |row| row
+                .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
         conn.execute_batch("DROP TRIGGER fail_prune").unwrap();
         archive_messages_before(&conn, 100).unwrap();
-        assert_eq!(conn.query_row("SELECT SUM(tokens_total) FROM usage_archive", [], |row| row.get::<_, i64>(0)).unwrap(), 100);
+        assert_eq!(
+            conn.query_row("SELECT SUM(tokens_total) FROM usage_archive", [], |row| row
+                .get::<_, i64>(0))
+                .unwrap(),
+            100
+        );
     }
 
     #[test]
@@ -1403,7 +1428,12 @@ mod tests {
             fs::write(&path, format!("{{\"timestamp\":\"2020-01-01T12:00:00Z\",\"type\":\"session_meta\",\"payload\":{{\"id\":\"same-session\",\"cwd\":\"/repo\"}}}}\n{{\"timestamp\":\"2020-01-01T12:01:00Z\",\"type\":\"event_msg\",\"payload\":{{\"type\":\"token_count\",\"info\":{{\"total_token_usage\":{{\"input_tokens\":{total},\"total_tokens\":{total}}}}}}}}}\n")).unwrap();
             ingest_codex_file(&mut conn, &path).unwrap();
             archive_messages_before(&conn, 2_000_000_000).unwrap();
-            assert_eq!(conn.query_row("SELECT SUM(tokens_total) FROM usage_archive", [], |row| row.get::<_, i64>(0)).unwrap(), total);
+            assert_eq!(
+                conn.query_row("SELECT SUM(tokens_total) FROM usage_archive", [], |row| row
+                    .get::<_, i64>(0))
+                    .unwrap(),
+                total
+            );
         }
         fs::remove_dir_all(dir).unwrap();
     }
@@ -1415,7 +1445,8 @@ mod tests {
                 let db = crate::usage::db::UsageDb::open_in_memory();
                 let mut conn = db.conn.lock().unwrap();
                 let dir = std::env::temp_dir().join(format!(
-                    "shep-snapshot-{}-{provider}-{failing_table}", std::process::id()
+                    "shep-snapshot-{}-{provider}-{failing_table}",
+                    std::process::id()
                 ));
                 let log_dir = dir.join("same-session/artifacts/logs");
                 fs::create_dir_all(&log_dir).unwrap();
@@ -1445,21 +1476,44 @@ mod tests {
                 write_log(100);
                 ingest(&mut conn).unwrap();
                 archive_messages_before(&conn, 2_000_000_000).unwrap();
-                let original: i64 = conn.query_row("SELECT SUM(tokens_total) FROM usage_archive", [], |row| row.get(0)).unwrap();
+                let original: i64 = conn
+                    .query_row("SELECT SUM(tokens_total) FROM usage_archive", [], |row| {
+                        row.get(0)
+                    })
+                    .unwrap();
                 let cursor = get_cursor(&conn, &path.to_string_lossy()).unwrap();
                 write_log(2500);
                 // Reproduce the production batch: a file error is caught, then
                 // the surrounding transaction still commits other file work.
-                conn.execute_batch(&format!("CREATE TRIGGER fail_snapshot BEFORE INSERT ON {failing_table}
-                    BEGIN SELECT RAISE(ABORT, 'simulated failure'); END; BEGIN;")).unwrap();
+                conn.execute_batch(&format!(
+                    "CREATE TRIGGER fail_snapshot BEFORE INSERT ON {failing_table}
+                    BEGIN SELECT RAISE(ABORT, 'simulated failure'); END; BEGIN;"
+                ))
+                .unwrap();
                 assert!(ingest(&mut conn).is_err(), "{provider}/{failing_table}");
-                conn.execute_batch("COMMIT; DROP TRIGGER fail_snapshot;").unwrap();
-                assert_eq!(conn.query_row("SELECT SUM(tokens_total) FROM usage_archive", [], |row| row.get::<_, i64>(0)).unwrap(), original);
-                assert_eq!(conn.query_row("SELECT COUNT(*) FROM usage_messages", [], |row| row.get::<_, i64>(0)).unwrap(), 0);
+                conn.execute_batch("COMMIT; DROP TRIGGER fail_snapshot;")
+                    .unwrap();
+                assert_eq!(
+                    conn.query_row("SELECT SUM(tokens_total) FROM usage_archive", [], |row| row
+                        .get::<_, i64>(0))
+                        .unwrap(),
+                    original
+                );
+                assert_eq!(
+                    conn.query_row("SELECT COUNT(*) FROM usage_messages", [], |row| row
+                        .get::<_, i64>(0))
+                        .unwrap(),
+                    0
+                );
                 assert_eq!(get_cursor(&conn, &path.to_string_lossy()).unwrap(), cursor);
                 ingest(&mut conn).unwrap();
                 archive_messages_before(&conn, 2_000_000_000).unwrap();
-                assert!(conn.query_row("SELECT SUM(tokens_total) FROM usage_archive", [], |row| row.get::<_, i64>(0)).unwrap() > original);
+                assert!(
+                    conn.query_row("SELECT SUM(tokens_total) FROM usage_archive", [], |row| row
+                        .get::<_, i64>(0))
+                        .unwrap()
+                        > original
+                );
                 fs::remove_dir_all(dir).unwrap();
             }
         }
@@ -1526,8 +1580,14 @@ mod tests {
 
     #[test]
     fn antigravity_pricing_provider_uses_underlying_model_vendor() {
-        assert_eq!(antigravity_pricing_provider("Gemini 3.5 Flash (Medium)"), "google");
-        assert_eq!(antigravity_pricing_provider("Claude Sonnet 4.6 (Thinking)"), "anthropic");
+        assert_eq!(
+            antigravity_pricing_provider("Gemini 3.5 Flash (Medium)"),
+            "google"
+        );
+        assert_eq!(
+            antigravity_pricing_provider("Claude Sonnet 4.6 (Thinking)"),
+            "anthropic"
+        );
         assert_eq!(antigravity_pricing_provider("GPT-OSS 120B"), "antigravity");
     }
 }

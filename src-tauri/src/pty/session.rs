@@ -742,9 +742,9 @@ impl PtySession {
 #[cfg(test)]
 mod tests {
     use super::{
-        decode_utf8_chunks, hold_trailing_escape, respond_to_terminal_queries,
-        OutputFlowControl, PtyColorTheme, FLOW_CONTROL_HIGH_WATERMARK_BYTES,
-        FLOW_CONTROL_LOW_WATERMARK_BYTES, MAX_PENDING_CONTROL_BYTES,
+        decode_utf8_chunks, hold_trailing_escape, respond_to_terminal_queries, OutputFlowControl,
+        PtyColorTheme, FLOW_CONTROL_HIGH_WATERMARK_BYTES, FLOW_CONTROL_LOW_WATERMARK_BYTES,
+        MAX_PENDING_CONTROL_BYTES,
     };
     use std::io::{Result as IoResult, Write};
     use std::sync::atomic::AtomicBool;
@@ -797,13 +797,8 @@ mod tests {
         let theme_mode_updates = Arc::new(AtomicBool::new(false));
         let mut pending = String::new();
 
-        let forwarded = respond_to_terminal_queries(
-            &mut pending,
-            input,
-            &theme,
-            &theme_mode_updates,
-            &writer,
-        );
+        let forwarded =
+            respond_to_terminal_queries(&mut pending, input, &theme, &theme_mode_updates, &writer);
         let response = String::from_utf8(captured.lock().unwrap().clone()).unwrap();
 
         (forwarded, response)
@@ -866,10 +861,11 @@ mod tests {
         flow.record_dispatched(FLOW_CONTROL_HIGH_WATERMARK_BYTES);
         assert_eq!(flow.snapshot(), (FLOW_CONTROL_HIGH_WATERMARK_BYTES, true));
 
-        flow.acknowledge(
-            FLOW_CONTROL_HIGH_WATERMARK_BYTES - FLOW_CONTROL_LOW_WATERMARK_BYTES - 1,
+        flow.acknowledge(FLOW_CONTROL_HIGH_WATERMARK_BYTES - FLOW_CONTROL_LOW_WATERMARK_BYTES - 1);
+        assert_eq!(
+            flow.snapshot(),
+            (FLOW_CONTROL_LOW_WATERMARK_BYTES + 1, true)
         );
-        assert_eq!(flow.snapshot(), (FLOW_CONTROL_LOW_WATERMARK_BYTES + 1, true));
 
         flow.acknowledge(1);
         assert_eq!(flow.snapshot(), (FLOW_CONTROL_LOW_WATERMARK_BYTES, false));
@@ -896,13 +892,8 @@ mod tests {
         assert!(first.is_empty());
         assert_eq!(pending.len(), MAX_PENDING_CONTROL_BYTES);
 
-        let second = respond_to_terminal_queries(
-            &mut pending,
-            "x",
-            &theme,
-            &theme_mode_updates,
-            &writer,
-        );
+        let second =
+            respond_to_terminal_queries(&mut pending, "x", &theme, &theme_mode_updates, &writer);
         assert_eq!(second, format!("{at_limit}x"));
         assert!(pending.is_empty());
     }

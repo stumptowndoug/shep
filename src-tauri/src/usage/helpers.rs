@@ -18,7 +18,8 @@ pub fn run_command(program: &str, args: &[&str]) -> Result<String, String> {
     loop {
         match child.try_wait() {
             Ok(Some(status)) => {
-                let output = child.wait_with_output()
+                let output = child
+                    .wait_with_output()
                     .map_err(|e| format!("Failed to read output from {program}: {e}"))?;
                 if !status.success() {
                     return Err(format!(
@@ -34,7 +35,10 @@ pub fn run_command(program: &str, args: &[&str]) -> Result<String, String> {
             Ok(None) => {
                 if start.elapsed() > COMMAND_TIMEOUT {
                     let _ = child.kill();
-                    return Err(format!("{program} timed out after {}s", COMMAND_TIMEOUT.as_secs()));
+                    return Err(format!(
+                        "{program} timed out after {}s",
+                        COMMAND_TIMEOUT.as_secs()
+                    ));
                 }
                 std::thread::sleep(Duration::from_millis(100));
             }
@@ -109,4 +113,3 @@ pub fn as_u64(value: Option<&Value>) -> u64 {
         _ => 0,
     }
 }
-

@@ -3,11 +3,17 @@ import type { CodingAssistant } from "../../lib/types";
 export const CODING_ASSISTANTS: CodingAssistant[] = [
   {
     id: "claude", name: "Claude Code", command: "claude", yoloFlag: "--dangerously-skip-permissions", modelFlag: "--model",
-    acp: { command: "claude-agent-acp", args: [], install: "npm i -g @agentclientprotocol/claude-agent-acp" },
+    acp: {
+      command: "claude-agent-acp", args: [], install: "npm i -g @agentclientprotocol/claude-agent-acp", managed: "claude",
+      setupNote: "Installs Claude’s chat adapter inside Shep with npm. Needs Node.js.", setupAction: "Install chat adapter",
+    },
   },
   {
     id: "codex", name: "Codex", command: "codex", yoloFlag: "--yolo", modelFlag: "--model",
-    acp: { command: "codex-acp", args: [], install: "npm i -g @agentclientprotocol/codex-acp" },
+    acp: {
+      command: "codex-acp", args: [], install: "npm i -g @agentclientprotocol/codex-acp", managed: "codex",
+      setupNote: "Installs Codex’s chat adapter inside Shep with npm. Needs Node.js.", setupAction: "Install chat adapter",
+    },
   },
   {
     id: "cursor", name: "Cursor", command: "cursor-agent", yoloFlag: "--yolo", modelFlag: "--model",
@@ -15,7 +21,9 @@ export const CODING_ASSISTANTS: CodingAssistant[] = [
   },
   {
     id: "antigravity", name: "Antigravity", command: "agy", yoloFlag: "--dangerously-skip-permissions", modelFlag: "--model",
-    acp: { command: "agy_acp_server.par", args: [], install: "Google’s Antigravity chat runtime", managed: "antigravity", authMethodId: "oauth-personal" },
+    acp: { command: "agy_acp_server.par", args: [], install: "Google’s Antigravity chat runtime", managed: "antigravity", authMethodId: "oauth-personal",
+      standalone: true, setupNote: "Downloads Google’s chat runtime. Sign in with your Google account when you start a chat.", setupAction: "Install chat runtime",
+    },
   },
   {
     id: "opencode", name: "Open Code", command: "opencode", yoloFlag: "--auto", modelFlag: "--model",
@@ -23,7 +31,10 @@ export const CODING_ASSISTANTS: CodingAssistant[] = [
   },
   {
     id: "pi", name: "pi", command: "pi", yoloFlag: null, modelFlag: "--model",
-    acp: { command: "pi-acp", args: [], install: "npm i -g pi-acp" },
+    acp: {
+      command: "pi-acp", args: [], install: "npm i -g pi-acp", managed: "pi",
+      setupNote: "Installs pi’s chat adapter inside Shep with npm. Needs Node.js.", setupAction: "Install chat adapter",
+    },
   },
 ];
 

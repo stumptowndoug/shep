@@ -1,5 +1,5 @@
-pub mod config;
 mod atomic_file;
+pub mod config;
 pub mod loader;
 pub mod manager;
 pub mod suggestions;

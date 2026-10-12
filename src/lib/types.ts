@@ -226,8 +226,13 @@ export interface AcpAdapter {
   install: string;
   /** Advertised authentication method to use before opening a session. */
   authMethodId?: string;
-  /** Binary runtime installed into Shep's application data directory. */
-  managed?: "antigravity";
+  /** Installed into Shep's application data directory by the setup button. */
+  managed?: "antigravity" | "claude" | "codex" | "pi";
+  /** Chat works without the agent's own CLI installed. */
+  standalone?: boolean;
+  /** Explains a managed install, and labels its button. */
+  setupNote?: string;
+  setupAction?: string;
 }
 
 export interface CodingAssistant {

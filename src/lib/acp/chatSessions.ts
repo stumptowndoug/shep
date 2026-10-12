@@ -5,6 +5,7 @@ import {
   addPermission,
   applySessionUpdate,
   endTurn,
+  markQueuedPromptsUnsent,
   optionsFromSession,
   pendingRequest,
   removeStartupMessage,
@@ -190,12 +191,18 @@ export function cancelChatStartup(chatId: number) {
 export function sendPrompt(chatId: number, text: string): boolean {
   const prompt = text.trim();
   const chat = useChatStore.getState().chats[chatId];
-  if (!prompt || !chat || chat.status === "exited" || !live.has(chatId)) return false;
+  const session = live.get(chatId);
+  if (!prompt || !chat || chat.status === "exited" || !session) return false;
   if (chat.status !== "ready") {
-    useChatStore.getState().update(chatId, (state) => ({ ...state, queued: [...state.queued, prompt] }));
+    useChatStore.getState().update(chatId, (state) => {
+      const next = { ...state, queued: [...state.queued, prompt] };
+      // Stop may take time to complete. Keep new follow-ups visible without
+      // allowing them to restart the agent when cancellation is acknowledged.
+      return session.cancelling ? markQueuedPromptsUnsent(next) : next;
+    });
     return true;
   }
-  void runTurn(chatId, prompt);
+  void runTurn(chatId, [prompt]);
   return true;
 }
 
@@ -204,7 +211,7 @@ export function cancelTurn(chatId: number) {
   if (!session?.sessionId) return;
   session.stream?.flush();
   cancelPendingRequests(session);
-  useChatStore.getState().update(chatId, (state) => ({ ...state, queued: [] }));
+  useChatStore.getState().update(chatId, markQueuedPromptsUnsent);
   setAgentState(chatId, "idle", "Stopped");
   session.connection.notify("session/cancel", { sessionId: session.sessionId });
   if (session.cancelTimer === undefined && useChatStore.getState().chats[chatId]?.status === "working") {
@@ -425,17 +432,17 @@ async function enableFullAccess(chatId: number) {
   if (mode && full && mode.value !== full.value) await setChatOption(chatId, mode.id, full.value);
 }
 
-async function runTurn(chatId: number, prompt: string) {
+async function runTurn(chatId: number, prompts: string[]) {
   const session = live.get(chatId);
   if (!session?.sessionId) return;
   session.stream?.flush();
   session.cancelling = false;
   const store = useChatStore.getState();
-  store.update(chatId, (chat) => ({ ...startTurn(chat, prompt), status: "working" }));
+  store.update(chatId, (chat) => ({ ...startTurn(chat, prompts[0], prompts.slice(1)), status: "working" }));
   setAgentState(chatId, "working", "Agent is responding");
   if (!session.titled) {
     session.titled = true;
-    const title = summarizeTitle(prompt);
+    const title = summarizeTitle(prompts[0]);
     useTerminalStore.getState().setTabSessionInfo(chatId, session.sessionId, title);
     void persistHistory(session, title);
   }
@@ -445,9 +452,9 @@ async function runTurn(chatId: number, prompt: string) {
   try {
     const result = await session.connection.request<{ stopReason?: string }>("session/prompt", {
       sessionId: session.sessionId,
-      prompt: [{ type: "text", text: prompt }],
+      prompt: prompts.map(text => ({ type: "text", text })),
     });
-    stopReason = result?.stopReason ?? "end_turn";
+    stopReason = session.cancelling ? "cancelled" : result?.stopReason ?? "end_turn";
   } catch (error) {
     if (!live.has(chatId)) return;
     stopReason = session.cancelling ? "cancelled" : "error";
@@ -460,6 +467,7 @@ async function runTurn(chatId: number, prompt: string) {
 
   session.stream?.flush();
   cancelPendingRequests(session);
+  if (stopReason === "cancelled") store.update(chatId, markQueuedPromptsUnsent);
   store.update(chatId, (chat) => endTurn(chat, stopReason, turnError));
   void recordHistoryActivity(session, false);
   if (!isChatVisible(chatId) && stopReason !== "cancelled") {
@@ -468,14 +476,14 @@ async function runTurn(chatId: number, prompt: string) {
   setReady(chatId, stopReason === "error" ? turnError ?? "Request failed" : undefined);
 }
 
-/** Mark the chat idle and send the next queued prompt, if any. */
+/** Send all waiting follow-ups together, in order, as the next agent turn. */
 function setReady(chatId: number, error?: string) {
   const chat = useChatStore.getState().chats[chatId];
   if (!chat || chat.status === "exited") return;
-  const [next, ...rest] = chat.queued;
-  useChatStore.getState().update(chatId, (state) => ({ ...state, status: "ready", queued: rest }));
+  const prompts = chat.queued;
+  useChatStore.getState().update(chatId, (state) => ({ ...state, status: "ready", queued: [] }));
   setAgentState(chatId, error ? "blocked" : "idle", error ?? "Waiting for a prompt");
-  if (next) void runTurn(chatId, next);
+  if (prompts.length > 0) void runTurn(chatId, prompts);
 }
 
 async function handleRequest(chatId: number, method: string, params: unknown) {
@@ -559,9 +567,8 @@ function handleExit(chatId: number, code: number, stderr: string) {
 function failChat(chatId: number, error: string | null, exitCode = 1) {
   live.get(chatId)?.stream?.flush();
   useChatStore.getState().update(chatId, (chat) => ({
-    ...endTurn(chat, "error"),
+    ...markQueuedPromptsUnsent(endTurn(chat, "error")),
     status: "exited",
-    queued: [],
     startup: undefined,
     error: error ?? chat.error,
   }));

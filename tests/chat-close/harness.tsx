@@ -44,6 +44,7 @@ let upsertGate: ReturnType<typeof deferred> | null = null;
 // All native operations stay inside this fixture. No real agents or files.
 mockIPC((cmd, payload) => {
   const args = payload as Record<string, unknown>;
+  if (cmd === "get_managed_acp_adapter") return { command: "claude-agent-acp", args: [] };
   if (cmd === "spawn_acp_agent") {
     const id = ++nextId;
     channels.set(id, args.onOutput as Channel<AcpOutput>);

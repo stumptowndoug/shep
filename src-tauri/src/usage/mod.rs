@@ -1,5 +1,5 @@
-pub mod db;
 mod antigravity_cli;
+pub mod db;
 mod helpers;
 pub mod ingest;
 mod providers;
@@ -7,15 +7,15 @@ mod queries;
 pub mod types;
 
 pub use db::UsageDb;
-pub use types::{LocalUsageDetails, ProviderUsageSnapshot, UsageOverview, UsageProjectAliasReviewItem};
-
-use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
-use tauri::Emitter;
-use types::{
-    UsageBreakdownItem, UsageCost, UsageOverviewProvider, UsageWindowSnapshot,
+pub use types::{
+    LocalUsageDetails, ProviderUsageSnapshot, UsageOverview, UsageProjectAliasReviewItem,
 };
+
 use helpers::now_epoch_seconds;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
+use tauri::Emitter;
+use types::{UsageBreakdownItem, UsageCost, UsageOverviewProvider, UsageWindowSnapshot};
 
 /// Cooldown after a successful provider API call.
 const COOLDOWN_SUCCESS_SECS: u64 = 300; // 5 minutes
@@ -171,7 +171,11 @@ pub fn get_usage_snapshot(
 }
 
 /// Fetch local details for a provider scoped to a time window (5h, 7d, 30d).
-pub fn get_windowed_details(db: &UsageDb, provider: &str, window: &str) -> Result<LocalUsageDetails, String> {
+pub fn get_windowed_details(
+    db: &UsageDb,
+    provider: &str,
+    window: &str,
+) -> Result<LocalUsageDetails, String> {
     let conn = db.conn.lock().unwrap();
     queries::windowed_details(&conn, provider, window)
         .ok_or_else(|| format!("No data for {provider}/{window}"))
@@ -395,7 +399,8 @@ fn refresh_provider_cache_sync(
             }
             Err(e) => {
                 let mut cache = PROVIDER_CACHE.lock().unwrap();
-                let should_log = cache.antigravity.should_log_error() || cache.antigravity.last_error != e;
+                let should_log =
+                    cache.antigravity.should_log_error() || cache.antigravity.last_error != e;
                 cache.antigravity.record_error(now, &e);
                 if should_log {
                     eprintln!("Antigravity provider API error (using cache): {e}");
@@ -445,7 +450,11 @@ fn codex_snapshot(conn: &rusqlite::Connection) -> ProviderUsageSnapshot {
 
     ProviderUsageSnapshot {
         provider: "codex".to_string(),
-        status: if has_provider { "ready".to_string() } else { "partial".to_string() },
+        status: if has_provider {
+            "ready".to_string()
+        } else {
+            "partial".to_string()
+        },
         fetched_at,
         summary_windows,
         extra_windows: Vec::new(),
@@ -469,13 +478,19 @@ fn cursor_snapshot(conn: &rusqlite::Connection) -> ProviderUsageSnapshot {
     drop(cache);
     let _ = conn;
 
-    let local_details = cached_data.as_deref().and_then(providers::cursor_local_details);
+    let local_details = cached_data
+        .as_deref()
+        .and_then(providers::cursor_local_details);
     let (summary_windows, extra_windows) = cached_data
         .map(|data| (data.summary, data.extra))
         .unwrap_or_default();
     ProviderUsageSnapshot {
         provider: "cursor".to_string(),
-        status: if summary_windows.is_empty() { "unavailable".to_string() } else { "ready".to_string() },
+        status: if summary_windows.is_empty() {
+            "unavailable".to_string()
+        } else {
+            "ready".to_string()
+        },
         fetched_at,
         summary_windows,
         extra_windows,
@@ -504,7 +519,9 @@ fn merge_cursor_overview(overview: &mut UsageOverview) {
     let aggregate = aggregate.clone();
     drop(cache);
 
-    overview.providers.retain(|provider| provider.provider != "cursor");
+    overview
+        .providers
+        .retain(|provider| provider.provider != "cursor");
     overview.top_models.retain(|item| item.provider != "cursor");
 
     let tokens = aggregate.tokens_total();
@@ -537,12 +554,28 @@ fn merge_cursor_overview(overview: &mut UsageOverview) {
         });
     }
 
-    overview.providers.sort_by_key(|provider| std::cmp::Reverse(provider.tokens));
-    overview.top_models.sort_by_key(|model| std::cmp::Reverse(model.tokens));
+    overview
+        .providers
+        .sort_by_key(|provider| std::cmp::Reverse(provider.tokens));
+    overview
+        .top_models
+        .sort_by_key(|model| std::cmp::Reverse(model.tokens));
 
-    overview.total_tokens = overview.providers.iter().map(|provider| provider.tokens).sum();
-    let total_cost_value: f64 = overview.providers.iter().filter_map(|provider| provider.cost).sum();
-    overview.total_cost = overview.providers.iter().any(|provider| provider.cost.is_some()).then_some(total_cost_value);
+    overview.total_tokens = overview
+        .providers
+        .iter()
+        .map(|provider| provider.tokens)
+        .sum();
+    let total_cost_value: f64 = overview
+        .providers
+        .iter()
+        .filter_map(|provider| provider.cost)
+        .sum();
+    overview.total_cost = overview
+        .providers
+        .iter()
+        .any(|provider| provider.cost.is_some())
+        .then_some(total_cost_value);
     for provider in &mut overview.providers {
         provider.share_percent = if overview.total_tokens > 0 {
             provider.tokens as f64 / overview.total_tokens as f64 * 100.0
@@ -562,10 +595,11 @@ fn claude_snapshot(conn: &rusqlite::Connection) -> ProviderUsageSnapshot {
     let fetched_at = helpers::now_iso_string();
     let local = queries::local_details(conn, "claude");
     let cache = PROVIDER_CACHE.lock().unwrap();
-    let cached_data: Option<(Vec<UsageWindowSnapshot>, Vec<UsageWindowSnapshot>)> = match &cache.claude.cache {
-        Some(ProviderCacheData::Claude(p, e)) => Some((p.clone(), e.clone())),
-        _ => None,
-    };
+    let cached_data: Option<(Vec<UsageWindowSnapshot>, Vec<UsageWindowSnapshot>)> =
+        match &cache.claude.cache {
+            Some(ProviderCacheData::Claude(p, e)) => Some((p.clone(), e.clone())),
+            _ => None,
+        };
     let error = if cached_data.is_none() && !cache.claude.last_error.is_empty() {
         Some(cache.claude.last_error.clone())
     } else {
@@ -604,7 +638,11 @@ fn claude_snapshot(conn: &rusqlite::Connection) -> ProviderUsageSnapshot {
 
     ProviderUsageSnapshot {
         provider: "claude".to_string(),
-        status: if has_provider { "ready".to_string() } else { "partial".to_string() },
+        status: if has_provider {
+            "ready".to_string()
+        } else {
+            "partial".to_string()
+        },
         fetched_at,
         summary_windows,
         extra_windows,
@@ -631,7 +669,11 @@ fn gemini_snapshot(conn: &rusqlite::Connection) -> ProviderUsageSnapshot {
     }
 
     if let Some(ref details) = local {
-        for (window, tokens) in [("5h", details.tokens_5h), ("7d", details.tokens_7d), ("30d", details.tokens_30d)] {
+        for (window, tokens) in [
+            ("5h", details.tokens_5h),
+            ("7d", details.tokens_7d),
+            ("30d", details.tokens_30d),
+        ] {
             summary_windows.push(UsageWindowSnapshot {
                 provider: "gemini".to_string(),
                 window_id: format!("gemini-local-{window}"),
@@ -654,7 +696,13 @@ fn gemini_snapshot(conn: &rusqlite::Connection) -> ProviderUsageSnapshot {
 
     ProviderUsageSnapshot {
         provider: "gemini".to_string(),
-        status: if has_provider { "ready".to_string() } else if local.is_some() { "partial".to_string() } else { "unavailable".to_string() },
+        status: if has_provider {
+            "ready".to_string()
+        } else if local.is_some() {
+            "partial".to_string()
+        } else {
+            "unavailable".to_string()
+        },
         fetched_at,
         summary_windows,
         extra_windows: Vec::new(),
@@ -667,10 +715,13 @@ fn antigravity_snapshot(conn: &rusqlite::Connection) -> ProviderUsageSnapshot {
     let fetched_at = helpers::now_iso_string();
     let local = queries::local_details(conn, "antigravity");
     let cache = PROVIDER_CACHE.lock().unwrap();
-    let cached_data: Option<(Vec<UsageWindowSnapshot>, Vec<UsageWindowSnapshot>)> = match &cache.antigravity.cache {
-        Some(ProviderCacheData::Antigravity(summary, extra)) => Some((summary.clone(), extra.clone())),
-        _ => None,
-    };
+    let cached_data: Option<(Vec<UsageWindowSnapshot>, Vec<UsageWindowSnapshot>)> =
+        match &cache.antigravity.cache {
+            Some(ProviderCacheData::Antigravity(summary, extra)) => {
+                Some((summary.clone(), extra.clone()))
+            }
+            _ => None,
+        };
     let error = if cached_data.is_none() && !cache.antigravity.last_error.is_empty() {
         Some(cache.antigravity.last_error.clone())
     } else {
@@ -685,7 +736,11 @@ fn antigravity_snapshot(conn: &rusqlite::Connection) -> ProviderUsageSnapshot {
     };
 
     if let Some(ref details) = local {
-        for (window, tokens) in [("5h", details.tokens_5h), ("7d", details.tokens_7d), ("30d", details.tokens_30d)] {
+        for (window, tokens) in [
+            ("5h", details.tokens_5h),
+            ("7d", details.tokens_7d),
+            ("30d", details.tokens_30d),
+        ] {
             summary_windows.push(UsageWindowSnapshot {
                 provider: "antigravity".to_string(),
                 window_id: format!("antigravity-local-{window}"),
@@ -734,7 +789,11 @@ fn grok_snapshot(conn: &rusqlite::Connection) -> ProviderUsageSnapshot {
 
     ProviderUsageSnapshot {
         provider: "grok".to_string(),
-        status: if cached_windows.is_some() { "ready".to_string() } else { "unavailable".to_string() },
+        status: if cached_windows.is_some() {
+            "ready".to_string()
+        } else {
+            "unavailable".to_string()
+        },
         fetched_at,
         summary_windows: cached_windows.unwrap_or_default(),
         extra_windows: Vec::new(),
@@ -749,7 +808,11 @@ fn opencode_snapshot(conn: &rusqlite::Connection) -> ProviderUsageSnapshot {
     let mut summary_windows = Vec::new();
 
     if let Some(ref details) = local {
-        for (window, tokens) in [("5h", details.tokens_5h), ("7d", details.tokens_7d), ("30d", details.tokens_30d)] {
+        for (window, tokens) in [
+            ("5h", details.tokens_5h),
+            ("7d", details.tokens_7d),
+            ("30d", details.tokens_30d),
+        ] {
             summary_windows.push(UsageWindowSnapshot {
                 provider: "opencode".to_string(),
                 window_id: format!("opencode-local-{window}"),
@@ -772,7 +835,11 @@ fn opencode_snapshot(conn: &rusqlite::Connection) -> ProviderUsageSnapshot {
 
     ProviderUsageSnapshot {
         provider: "opencode".to_string(),
-        status: if local.is_some() { "ready".to_string() } else { "unavailable".to_string() },
+        status: if local.is_some() {
+            "ready".to_string()
+        } else {
+            "unavailable".to_string()
+        },
         fetched_at,
         summary_windows,
         extra_windows: Vec::new(),
@@ -787,7 +854,11 @@ fn pi_snapshot(conn: &rusqlite::Connection) -> ProviderUsageSnapshot {
     let mut summary_windows = Vec::new();
 
     if let Some(ref details) = local {
-        for (window, tokens) in [("5h", details.tokens_5h), ("7d", details.tokens_7d), ("30d", details.tokens_30d)] {
+        for (window, tokens) in [
+            ("5h", details.tokens_5h),
+            ("7d", details.tokens_7d),
+            ("30d", details.tokens_30d),
+        ] {
             summary_windows.push(UsageWindowSnapshot {
                 provider: "pi".to_string(),
                 window_id: format!("pi-local-{window}"),
@@ -810,7 +881,11 @@ fn pi_snapshot(conn: &rusqlite::Connection) -> ProviderUsageSnapshot {
 
     ProviderUsageSnapshot {
         provider: "pi".to_string(),
-        status: if local.is_some() { "ready".to_string() } else { "unavailable".to_string() },
+        status: if local.is_some() {
+            "ready".to_string()
+        } else {
+            "unavailable".to_string()
+        },
         fetched_at,
         summary_windows,
         extra_windows: Vec::new(),
@@ -828,27 +903,29 @@ mod cursor_overview_tests {
         let previous = {
             let mut cache = PROVIDER_CACHE.lock().unwrap();
             let previous = cache.cursor.cache.take();
-            cache.cursor.cache = Some(ProviderCacheData::Cursor(Box::new(providers::CursorProviderData {
-                summary: Vec::new(),
-                extra: Vec::new(),
-                window_24h: providers::CursorWindowAggregate::default(),
-                window_7d: providers::CursorWindowAggregate {
-                    tokens_input: 10,
-                    tokens_output: 5,
-                    tokens_cache_read: 20,
-                    tokens_cache_write: 0,
-                    cost: Some(1.5),
-                    models: vec![providers::CursorModelAggregate {
-                        name: "grok".to_string(),
+            cache.cursor.cache = Some(ProviderCacheData::Cursor(Box::new(
+                providers::CursorProviderData {
+                    summary: Vec::new(),
+                    extra: Vec::new(),
+                    window_24h: providers::CursorWindowAggregate::default(),
+                    window_7d: providers::CursorWindowAggregate {
                         tokens_input: 10,
                         tokens_output: 5,
                         tokens_cache_read: 20,
                         tokens_cache_write: 0,
                         cost: Some(1.5),
-                    }],
+                        models: vec![providers::CursorModelAggregate {
+                            name: "grok".to_string(),
+                            tokens_input: 10,
+                            tokens_output: 5,
+                            tokens_cache_read: 20,
+                            tokens_cache_write: 0,
+                            cost: Some(1.5),
+                        }],
+                    },
+                    window_30d: providers::CursorWindowAggregate::default(),
                 },
-                window_30d: providers::CursorWindowAggregate::default(),
-            })));
+            )));
             previous
         };
 
@@ -888,7 +965,11 @@ mod cursor_overview_tests {
         };
         merge_cursor_overview(&mut overview);
 
-        let cursor = overview.providers.iter().find(|provider| provider.provider == "cursor").unwrap();
+        let cursor = overview
+            .providers
+            .iter()
+            .find(|provider| provider.provider == "cursor")
+            .unwrap();
         assert_eq!(cursor.tokens, 35);
         assert_eq!(overview.total_tokens, 135);
         assert_eq!(overview.top_models[0].label, "grok");

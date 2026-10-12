@@ -834,14 +834,15 @@ fn read_cursor_session(
     {
         return None;
     }
-    let created_at_ms = meta.get("createdAtMs")
+    let created_at_ms = meta
+        .get("createdAtMs")
         .and_then(|value| value.as_i64().or_else(|| value.as_str()?.parse().ok()))?;
-    if expected_id.is_none()
-        && created_at_ms < started_after_ms.saturating_sub(LAUNCH_TOLERANCE_MS)
+    if expected_id.is_none() && created_at_ms < started_after_ms.saturating_sub(LAUNCH_TOLERANCE_MS)
     {
         return None;
     }
-    let title = meta.get("title")
+    let title = meta
+        .get("title")
         .and_then(Value::as_str)
         .and_then(compact_generated_title);
     Some((
@@ -1140,18 +1141,29 @@ mod tests {
         let second = home.join(".cursor/chats/workspace-b/chat-2");
         fs::create_dir_all(&first).unwrap();
         fs::create_dir_all(&second).unwrap();
-        fs::write(first.join("meta.json"), r#"{
+        fs::write(
+            first.join("meta.json"),
+            r#"{
             "schemaVersion":1,"createdAtMs":10000,"cwd":"/repo","title":"Implement Cursor support"
-        }"#).unwrap();
-        fs::write(second.join("meta.json"), r#"{
+        }"#,
+        )
+        .unwrap();
+        fs::write(
+            second.join("meta.json"),
+            r#"{
             "schemaVersion":1,"createdAtMs":11000,"cwd":"/repo","title":"Second chat"
-        }"#).unwrap();
+        }"#,
+        )
+        .unwrap();
 
-        let nearest = resolve_session_title_from_home(&home, "cursor", "/repo", 10_100, None, None).unwrap();
+        let nearest =
+            resolve_session_title_from_home(&home, "cursor", "/repo", 10_100, None, None).unwrap();
         assert_eq!(nearest.session_id, "chat-1");
         assert_eq!(nearest.title.as_deref(), Some("Implement Cursor support"));
 
-        let anchored = resolve_session_title_from_home(&home, "cursor", "/repo", 10_100, Some("chat-2"), None).unwrap();
+        let anchored =
+            resolve_session_title_from_home(&home, "cursor", "/repo", 10_100, Some("chat-2"), None)
+                .unwrap();
         assert_eq!(anchored.session_id, "chat-2");
 
         fs::write(
@@ -1161,15 +1173,9 @@ mod tests {
         }"#,
         )
         .unwrap();
-        let cached = resolve_session_title_from_home(
-            &home,
-            "cursor",
-            "/repo",
-            10_100,
-            Some("chat-1"),
-            None,
-        )
-        .unwrap();
+        let cached =
+            resolve_session_title_from_home(&home, "cursor", "/repo", 10_100, Some("chat-1"), None)
+                .unwrap();
         assert_eq!(cached.title.as_deref(), Some("Updated title"));
 
         fs::remove_dir_all(home).unwrap();

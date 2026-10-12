@@ -128,7 +128,7 @@ export default function SessionLauncher({ onStartSession, onRunInTerminal, onOpe
   const canChat = chatCheck?.available === true;
   const canTerminal = terminalCheck?.available === true;
   const chatUnknown = Boolean(selectedAssistant?.acp && chatCheck?.available === undefined);
-  const agentInterface: AgentInterface = terminalCheck?.available === false && (canChat || selectedAssistant?.acp?.managed) ? "chat"
+  const agentInterface: AgentInterface = terminalCheck?.available === false && (canChat || selectedAssistant?.acp?.standalone) ? "chat"
     : canChat || chatUnknown ? interfaceOverride ?? defaultAgentInterface : "terminal";
   const chatUnavailableReason = selectedAssistant?.acp
     ? chatUnknown ? chatCheck?.error ? "Couldn’t check chat availability" : "Checking chat availability…" : "Chat adapter not installed"
@@ -279,7 +279,7 @@ export default function SessionLauncher({ onStartSession, onRunInTerminal, onOpe
             const logoUrl = assistantLogoSrc[assistant.id];
             const cli = availability[commandAvailabilityKey(assistant.command)];
             const chat = assistant.acp ? availability[chatAvailabilityKey(assistant.acp)] : undefined;
-            const isAvailable = cli?.available !== false || Boolean(assistant.acp && chat?.available !== false) || Boolean(assistant.acp?.managed);
+            const isAvailable = cli?.available !== false || Boolean(assistant.acp && chat?.available !== false) || Boolean(assistant.acp?.standalone);
             const checking = cli?.available === undefined || Boolean(assistant.acp && chat?.available === undefined);
             const availabilityLabel = checking ? cli?.error || chat?.error ? "Couldn’t check availability" : "Checking…"
               : !isAvailable ? "Set up agent" : chat?.available ? cli?.available ? "Chat & terminal" : "Chat"
@@ -491,7 +491,7 @@ export default function SessionLauncher({ onStartSession, onRunInTerminal, onOpe
               <div className="callout__body">
                 <div>Set up {selectedAssistant.name} to use chat.</div>
                 {selectedAssistant.acp.managed
-                  ? <p className="field-note">Downloads Google’s chat runtime. Sign in with your Google account when you start a chat.</p>
+                  ? <p className="field-note">{selectedAssistant.acp.setupNote}</p>
                   : <code className="inline-code select-all">{selectedAssistant.acp.install}</code>}
               </div>
               <div className="callout__actions">
@@ -505,7 +505,7 @@ export default function SessionLauncher({ onStartSession, onRunInTerminal, onOpe
                 </button>}
                 <button className="btn-secondary" disabled={Boolean(installingAdapter)} onClick={() => setUpChat(selectedAssistant)}>
                   {selectedAssistant.acp.managed ? <Download size={14} /> : <SquareTerminal size={14} />}
-                  {installingAdapter === selectedAssistant.id ? "Installing…" : selectedAssistant.acp.managed ? "Install chat runtime" : "Set up in terminal"}
+                  {installingAdapter === selectedAssistant.id ? "Installing…" : selectedAssistant.acp.managed ? selectedAssistant.acp.setupAction : "Set up in terminal"}
                 </button>
               </div>
             </div>

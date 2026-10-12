@@ -10,6 +10,7 @@ done
 pnpm install --frozen-lockfile
 pnpm build
 pnpm test:unit
+cargo fmt --manifest-path src-tauri/Cargo.toml --check
 cargo test --manifest-path src-tauri/Cargo.toml --locked
 cargo clippy --manifest-path src-tauri/Cargo.toml --locked --all-targets -- -D warnings
 pnpm exec playwright test --workers=4

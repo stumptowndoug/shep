@@ -1,4 +1,5 @@
 mod acp;
+mod acp_npm;
 mod acp_runtime;
 mod agent_status;
 mod chat_images;
@@ -10,6 +11,7 @@ mod pi_config;
 mod pty;
 mod session_history;
 mod session_titles;
+mod shell_path;
 mod skills;
 mod todos;
 mod usage;

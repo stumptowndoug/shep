@@ -88,11 +88,8 @@ pub fn setup_skill(repo_path: &str, name: &str) -> Result<(), String> {
     fs::create_dir_all(&claude_skills)
         .map_err(|e| format!("Failed to create {}: {e}", claude_skills.display()))?;
     #[cfg(unix)]
-    std::os::unix::fs::symlink(
-        Path::new("../../.agents/skills").join(skill.name),
-        &pointer,
-    )
-    .map_err(|e| format!("Failed to link Claude skill: {e}"))?;
+    std::os::unix::fs::symlink(Path::new("../../.agents/skills").join(skill.name), &pointer)
+        .map_err(|e| format!("Failed to link Claude skill: {e}"))?;
     #[cfg(not(unix))]
     {
         fs::create_dir_all(&pointer).map_err(|e| format!("Failed to create skill dir: {e}"))?;
@@ -171,11 +168,15 @@ mod tests {
 
         let real = dir.join(".agents/skills/shep-todos/SKILL.md");
         assert!(real.is_file());
-        assert!(fs::read_to_string(&real).unwrap().contains("name: shep-todos"));
+        assert!(fs::read_to_string(&real)
+            .unwrap()
+            .contains("name: shep-todos"));
 
         // The Claude pointer resolves to the same skill.
         let pointer = dir.join(".claude/skills/shep-todos/SKILL.md");
-        assert!(fs::read_to_string(&pointer).unwrap().contains("name: shep-todos"));
+        assert!(fs::read_to_string(&pointer)
+            .unwrap()
+            .contains("name: shep-todos"));
 
         // Idempotent — a second run doesn't fail on the existing pointer.
         setup_skill(&repo, "shep-todos").unwrap();
@@ -193,8 +194,20 @@ mod tests {
 
         setup_skill(&repo, "orchestrate").unwrap();
         let after = list_skills(&repo);
-        assert!(after.iter().find(|s| s.name == "orchestrate").unwrap().installed);
-        assert!(!after.iter().find(|s| s.name == "shep-todos").unwrap().installed);
+        assert!(
+            after
+                .iter()
+                .find(|s| s.name == "orchestrate")
+                .unwrap()
+                .installed
+        );
+        assert!(
+            !after
+                .iter()
+                .find(|s| s.name == "shep-todos")
+                .unwrap()
+                .installed
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -206,7 +219,10 @@ mod tests {
         setup_skill(&repo, "orchestrate").unwrap();
         remove_skill(&repo, "orchestrate").unwrap();
         assert!(!has_skill(&repo, "orchestrate"));
-        assert!(dir.join(".claude/skills/orchestrate").symlink_metadata().is_err());
+        assert!(dir
+            .join(".claude/skills/orchestrate")
+            .symlink_metadata()
+            .is_err());
 
         // Removing an absent skill is a no-op, not an error.
         remove_skill(&repo, "orchestrate").unwrap();

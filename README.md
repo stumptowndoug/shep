@@ -50,15 +50,16 @@ an eye on your usage limits, all from one window instead of a pile of terminal t
 
 | Agent | Terminal (CLI) | Chat (ACP adapter) | YOLO |
 | --- | --- | --- | --- |
-| Claude Code | `claude` | `npm i -g @agentclientprotocol/claude-agent-acp` | ✓ |
-| Codex | `codex` | `npm i -g @agentclientprotocol/codex-acp` | ✓ |
+| Claude Code | `claude` | Installed by Shep from the launcher (needs Node.js) | ✓ |
+| Codex | `codex` | Installed by Shep from the launcher (needs Node.js) | ✓ |
 | Cursor | `cursor-agent` | Included with the Cursor CLI | ✓ |
 | Antigravity | `agy` | Installed by Shep from the launcher | ✓ |
 | OpenCode | `opencode` | Included with OpenCode | ✓ |
-| Pi | `pi` | `npm i -g pi-acp` | — |
+| Pi | `pi` | Installed by Shep from the launcher (needs Node.js) | — |
 
 Install the CLI for any agent you want to run in a terminal. Chat needs the adapter
-in the third column; the launcher tells you when one is missing. See
+in the third column; when one is missing, the launcher offers to install it. An
+adapter you already installed yourself (for example with `npm i -g`) is used instead. See
 [docs/agents.md](docs/agents.md) for how the two interfaces and modes differ.
 
 ## Download

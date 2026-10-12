@@ -1,4 +1,4 @@
-//! Shep-managed binary adapters. Keep each release and its helper together;
+//! Shep-managed binary adapters (npm adapters live in acp_npm). Keep each release and its helper together;
 //! never change the user's CLI installation or PATH.
 use std::fs::{self, File};
 use std::io::Read;
@@ -67,8 +67,8 @@ fn verify_sha256(path: &Path, expected: &str) -> Result<(), String> {
 
 #[derive(Serialize)]
 pub struct RuntimeCommand {
-    command: String,
-    args: Vec<String>,
+    pub(crate) command: String,
+    pub(crate) args: Vec<String>,
 }
 
 fn platform_arch() -> Result<&'static str, String> {
@@ -159,6 +159,9 @@ fn installed(dir: &Path, hashes: &RuntimeHashes) -> bool {
 }
 
 pub fn get(adapter: &str) -> Result<Option<RuntimeCommand>, String> {
+    if let Some(npm) = crate::acp_npm::find(adapter) {
+        return crate::acp_npm::get(npm);
+    }
     let dir = runtime_dir(adapter)?;
     let hashes = runtime_hashes(platform_arch()?)?;
     Ok(installed(&dir, &hashes).then(|| RuntimeCommand {
@@ -176,6 +179,9 @@ fn validate_archive_listing(listing: &str) -> Result<(), String> {
 }
 
 pub fn install(adapter: &str) -> Result<RuntimeCommand, String> {
+    if let Some(npm) = crate::acp_npm::find(adapter) {
+        return crate::acp_npm::install(npm);
+    }
     let _lock = INSTALL_LOCK
         .lock()
         .map_err(|_| "Adapter installer is unavailable")?;

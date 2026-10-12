@@ -111,14 +111,15 @@ pub fn toggle_todo(
     // Verify against the same parse the UI rendered from, so expected_text
     // matches even when the item spans wrapped continuation lines.
     let (_, items) = parse_content(&content);
-    let valid = items.iter().any(|i| i.line == line && i.text == expected_text);
+    let valid = items
+        .iter()
+        .any(|i| i.line == line && i.text == expected_text);
     if !valid {
         return Err("To-do list changed on disk — try again".to_string());
     }
 
     lines[line] = set_checkbox(&lines[line], checked)?;
-    fs::write(file_path, lines.join("\n"))
-        .map_err(|e| format!("Failed to write {file_path}: {e}"))
+    fs::write(file_path, lines.join("\n")).map_err(|e| format!("Failed to write {file_path}: {e}"))
 }
 
 /// Move a card — the checkbox line plus its continuation lines and nested
@@ -152,7 +153,12 @@ pub fn move_todo(
         .iter()
         .filter(|i| i.line > item.line && i.indent <= item.indent)
         .map(|i| i.line)
-        .chain(sections.iter().filter(|s| s.line > item.line).map(|s| s.line))
+        .chain(
+            sections
+                .iter()
+                .filter(|s| s.line > item.line)
+                .map(|s| s.line),
+        )
         .chain(
             lines
                 .iter()
@@ -201,8 +207,7 @@ pub fn move_todo(
         lines.splice(insert_at..insert_at, block.iter().cloned());
     }
 
-    fs::write(file_path, lines.join("\n"))
-        .map_err(|e| format!("Failed to write {file_path}: {e}"))
+    fs::write(file_path, lines.join("\n")).map_err(|e| format!("Failed to write {file_path}: {e}"))
 }
 
 pub fn add_todo(
@@ -237,8 +242,8 @@ pub fn add_todo(
         }
     };
 
-    let content = fs::read_to_string(&path)
-        .map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
+    let content =
+        fs::read_to_string(&path).map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
     let mut lines: Vec<String> = content.split('\n').map(String::from).collect();
 
     let insert_at = match section_line {
@@ -288,13 +293,15 @@ fn scan_dir(dir: &Path, depth: usize, found: &mut Vec<PathBuf>) {
         let Some(name) = name.to_str() else { continue };
 
         if path.is_dir() {
-            if depth + 1 > MAX_SCAN_DEPTH || name.starts_with('.') || IGNORED_DIRS.contains(&name)
-            {
+            if depth + 1 > MAX_SCAN_DEPTH || name.starts_with('.') || IGNORED_DIRS.contains(&name) {
                 continue;
             }
             scan_dir(&path, depth + 1, found);
         } else if TODO_FILENAMES.contains(&name.to_lowercase().as_str()) {
-            let small = entry.metadata().map(|m| m.len() <= MAX_FILE_BYTES).unwrap_or(false);
+            let small = entry
+                .metadata()
+                .map(|m| m.len() <= MAX_FILE_BYTES)
+                .unwrap_or(false);
             if small {
                 found.push(path);
             }
@@ -501,7 +508,10 @@ mod tests {
         let content = "- [ ] a long item that wraps\n      onto the next line\n      and one more\n- [ ] second\n  - [ ] child stays separate\n";
         let items = parse_items(content);
         assert_eq!(items.len(), 3);
-        assert_eq!(items[0].text, "a long item that wraps onto the next line and one more");
+        assert_eq!(
+            items[0].text,
+            "a long item that wraps onto the next line and one more"
+        );
         assert_eq!(items[1].text, "second");
         assert_eq!(items[2].text, "child stays separate");
     }
@@ -510,8 +520,10 @@ mod tests {
     fn collects_sections_with_levels() {
         let content = "# Title\n\n## Backlog\n- [ ] a\n\n## Done\n- [x] b\n";
         let (sections, _) = parse_content(content);
-        let titles: Vec<(usize, &str)> =
-            sections.iter().map(|s| (s.level, s.title.as_str())).collect();
+        let titles: Vec<(usize, &str)> = sections
+            .iter()
+            .map(|s| (s.level, s.title.as_str()))
+            .collect();
         assert_eq!(titles, vec![(1, "Title"), (2, "Backlog"), (2, "Done")]);
     }
 
@@ -522,7 +534,8 @@ mod tests {
     }
 
     fn temp_repo(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("shep-todos-test-{name}-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("shep-todos-test-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir
@@ -532,7 +545,11 @@ mod tests {
     fn toggle_flips_only_the_marker() {
         let dir = temp_repo("toggle");
         let path = dir.join("TODO.md");
-        fs::write(&path, "# TODO\n\n- [ ] keep [brackets] intact\n- [x] other\n").unwrap();
+        fs::write(
+            &path,
+            "# TODO\n\n- [ ] keep [brackets] intact\n- [x] other\n",
+        )
+        .unwrap();
         let p = path.to_string_lossy().to_string();
 
         toggle_todo(&p, 2, "keep [brackets] intact", true).unwrap();
@@ -585,7 +602,11 @@ mod tests {
     fn move_into_empty_section_keeps_blank_separation() {
         let dir = temp_repo("move-empty");
         let path = dir.join("TODO.md");
-        fs::write(&path, "## Backlog\n\n- [x] task\n\n## In Progress\n\n## Done\n").unwrap();
+        fs::write(
+            &path,
+            "## Backlog\n\n- [x] task\n\n## In Progress\n\n## Done\n",
+        )
+        .unwrap();
         let p = path.to_string_lossy().to_string();
 
         move_todo(&p, 2, "task", 4, Some(false)).unwrap();
@@ -630,7 +651,14 @@ mod tests {
         );
 
         // "## 🚧 In Progress" is line 6: add into the empty column.
-        add_todo(&repo, Some(&path.to_string_lossy()), "started", Some(6), false).unwrap();
+        add_todo(
+            &repo,
+            Some(&path.to_string_lossy()),
+            "started",
+            Some(6),
+            false,
+        )
+        .unwrap();
         assert_eq!(
             fs::read_to_string(&path).unwrap(),
             "# To-dos\n\n## 📋 Backlog\n\n- [ ] first task\n\n## 🚧 In Progress\n\n- [ ] started\n\n## ✅ Done\n"

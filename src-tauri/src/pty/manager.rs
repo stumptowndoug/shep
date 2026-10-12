@@ -68,7 +68,12 @@ impl PtyManager {
         if self.is_shutting_down() {
             return Err("Shep is shutting down".into());
         }
-        let size = PtySize { cols, rows, pixel_width: 0, pixel_height: 0 };
+        let size = PtySize {
+            cols,
+            rows,
+            pixel_width: 0,
+            pixel_height: 0,
+        };
         let session = PtySession::spawn(command, args, cwd, env, size, color_theme, channel)?;
         let id = self.allocate_id();
         sessions.insert(id, session);
@@ -118,7 +123,12 @@ impl PtyManager {
     }
 
     pub fn child_pids(&self) -> Vec<u32> {
-        self.sessions.lock().unwrap().values().filter_map(|s| s.pid()).collect()
+        self.sessions
+            .lock()
+            .unwrap()
+            .values()
+            .filter_map(|s| s.pid())
+            .collect()
     }
 
     pub fn child_pid(&self, pty_id: u32) -> Option<u32> {

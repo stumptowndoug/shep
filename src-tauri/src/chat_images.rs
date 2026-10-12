@@ -34,7 +34,9 @@ fn is_image(bytes: &[u8]) -> bool {
         || bytes.starts_with(b"GIF87a")
         || bytes.starts_with(b"GIF89a")
         || (bytes.len() >= 12 && &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WEBP")
-        || (bytes.len() >= 12 && &bytes[4..8] == b"ftyp" && matches!(&bytes[8..12], b"avif" | b"avis"))
+        || (bytes.len() >= 12
+            && &bytes[4..8] == b"ftyp"
+            && matches!(&bytes[8..12], b"avif" | b"avis"))
         || bytes.starts_with(b"BM")
 }
 
@@ -77,7 +79,8 @@ mod tests {
     const PNG: &[u8] = b"\x89PNG\r\n\x1a\nrest";
 
     fn temp_dir(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("shep-chat-images-{name}-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("shep-chat-images-{name}-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
         dir
     }
@@ -91,7 +94,10 @@ mod tests {
         let base = dir.to_str().unwrap();
         assert_eq!(read(absolute.to_str().unwrap(), "/elsewhere").unwrap(), PNG);
         assert_eq!(read("shots/preview.PNG", base).unwrap(), PNG);
-        assert_eq!(read(&format!("file://{}", absolute.display()), "/elsewhere").unwrap(), PNG);
+        assert_eq!(
+            read(&format!("file://{}", absolute.display()), "/elsewhere").unwrap(),
+            PNG
+        );
         fs::remove_dir_all(dir).ok();
     }
 

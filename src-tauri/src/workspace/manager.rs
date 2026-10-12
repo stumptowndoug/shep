@@ -35,11 +35,7 @@ impl WorkspaceManager {
         loader::load_repo_workspace(repo_path)
     }
 
-    pub fn save_workspace(
-        &self,
-        repo_path: &str,
-        config: &WorkspaceConfig,
-    ) -> Result<(), String> {
+    pub fn save_workspace(&self, repo_path: &str, config: &WorkspaceConfig) -> Result<(), String> {
         loader::save_repo_workspace(repo_path, config)
     }
 

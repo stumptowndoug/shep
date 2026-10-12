@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowUp, LoaderCircle, Shield, ShieldCheck, Square, Terminal, X } from "lucide-react";
+import { ArrowUp, LoaderCircle, Square, Terminal, X } from "lucide-react";
 import Select from "../shared/Select";
 import ChatSettings from "./ChatSettings";
 import { useChatDraftStore } from "../../stores/useChatDraftStore";
@@ -58,9 +58,17 @@ export default function ChatComposer({ chatId, chat, assistantId, agentName, ful
   useEffect(() => { if (inputRef.current) fitHeight(inputRef.current); }, [text, draftKey]);
   const working = chat.status === "working";
   const closed = chat.status === "exited";
+  // Like Springroll: the model in one button, every other setting behind the gear.
+  const model = chat.options.find(isModelOption);
+  const reasoning = chat.options.find(isReasoningOption);
   const access = chat.options.find(isAccessOption);
-  const options = [chat.options.find(isModelOption), chat.options.find(isReasoningOption), access].filter((option) => option !== undefined);
-  const extraOptions = chat.options.filter((option) => !options.some((primary) => primary.id === option.id));
+  const settings = [reasoning, ...chat.options.filter((option) => option !== model && option !== reasoning && option !== access), access]
+    .filter((option) => option !== undefined);
+  const askFirst = access ? !isFullAccessMode(access.value) : !fullAccess;
+  const agentLogo = logo && (
+    <img src={logo} alt="" width={16} height={16}
+      className={["chat-composer__agent", getAssistantLogoClass(assistantId!)].filter(Boolean).join(" ")} />
+  );
   const settingsDisabled = closed || chat.status === "starting" || changingOption !== null;
 
   const changeOption = async (id: string, value: string) => {
@@ -208,36 +216,34 @@ export default function ChatComposer({ chatId, chat, assistantId, agentName, ful
 
       <div className="chat-composer__footer">
         <div className="chat-composer__controls">
-          {logo && (
-            <img
-              src={logo}
-              alt={agentName}
-              title={agentName}
-              width={14}
-              height={14}
-              className={["chat-composer__agent", getAssistantLogoClass(assistantId!)].filter(Boolean).join(" ")}
-            />
-          )}
-          {options.map((option) => (
+          {model ? (
             <Select
-              key={option.id}
-              value={option.value}
-              title={chatOptionName(option)}
-              label={isReasoningOption(option) ? "Reasoning" : undefined}
-              ariaLabel={`${chatOptionName(option)}: ${chatOptionChoices(option).find((choice) => choice.value === option.value)?.label ?? option.value}`}
-              icon={changingOption === option.id ? <LoaderCircle size={14} className="animate-spin" aria-hidden="true" /> : isAccessOption(option) ?
-                (isFullAccessMode(option.value) ? <ShieldCheck size={14} aria-hidden="true" /> : <Shield size={14} aria-hidden="true" />) : undefined}
-              className={isModelOption(option) ? "chat-composer__model" : isAccessOption(option) ? "chat-composer__access" : undefined}
+              value={model.value}
+              title={chatOptionName(model)}
+              ariaLabel={`${chatOptionName(model)}: ${chatOptionChoices(model).find((choice) => choice.value === model.value)?.label ?? model.value}`}
+              icon={changingOption === model.id ? <LoaderCircle size={16} className="animate-spin" aria-hidden="true" /> : agentLogo}
+              className="chat-composer__model"
               placement="above"
-              choices={chatOptionChoices(option)}
-              onChange={(value) => void changeOption(option.id, value)}
+              choices={chatOptionChoices(model)}
+              onChange={(value) => void changeOption(model.id, value)}
               disabled={settingsDisabled}
             />
-          ))}
-          {!access && <span className="chat-composer__access-status" title={`${fullAccess ? "Shep approves this agent’s permission requests automatically." : "Shep asks you to review this agent’s permission requests."} Start a new chat to change this setting.`}>
-            {fullAccess ? <ShieldCheck size={14} aria-hidden="true" /> : <Shield size={14} aria-hidden="true" />}
-            {fullAccess ? "Full access" : "Ask first"}
-          </span>}
+          ) : (
+            <span className="chat-composer__agent-name">{agentLogo}{agentName}</span>
+          )}
+          <ChatSettings
+            options={settings}
+            fixedAccess={access ? undefined : fullAccess ? "full" : "ask"}
+            askFirst={askFirst}
+            busy={changingOption !== null && changingOption !== model?.id}
+            disabled={settingsDisabled}
+            onChange={changeOption}
+          />
+        </div>
+        <div className="chat-composer__actions">
+          {chat.queued.length > 0 && (
+            <span className="chat-composer__queued" role="status">{chat.queued.length} queued</span>
+          )}
           {chat.usage && (
             <span
               className="chat-composer__usage"
@@ -246,12 +252,6 @@ export default function ChatComposer({ chatId, chat, assistantId, agentName, ful
               {Math.round((chat.usage.used / chat.usage.size) * 100)}% context
             </span>
           )}
-          {chat.queued.length > 0 && (
-            <span className="chat-composer__queued">{chat.queued.length} queued</span>
-          )}
-        </div>
-        <div className="chat-composer__actions">
-          {extraOptions.length > 0 && <ChatSettings options={extraOptions} disabled={settingsDisabled} onChange={changeOption} />}
           {working && (
             <button type="button" className="chat-composer__send chat-composer__send--stop" onClick={() => cancelTurn(chatId)} title="Stop (Esc or ⌃C)" aria-label="Stop response">
               <Square size={12} fill="currentColor" aria-hidden="true" />
@@ -267,7 +267,7 @@ export default function ChatComposer({ chatId, chat, assistantId, agentName, ful
               aria-label={working ? "Queue follow-up" : "Send message"}
               onClick={() => submit()}
             >
-              <ArrowUp size={15} aria-hidden="true" />
+              <ArrowUp size={16} aria-hidden="true" />
             </button>
           )}
         </div>

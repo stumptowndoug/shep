@@ -18,6 +18,7 @@ let canResume = true;
 const channels = new Map<number, Channel<AcpOutput>>();
 mockIPC((cmd, payload) => {
   const args = payload as Record<string, unknown>;
+  if (cmd === "get_managed_acp_adapter") return { command: `/test/${String(args.adapter)}-acp`, args: [] };
   if (cmd === "spawn_acp_agent") { channels.set(++nextId, args.onOutput as Channel<AcpOutput>); return nextId; }
   if (cmd !== "write_acp_agent") return null;
   const id = Number(args.agentId);

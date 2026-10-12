@@ -36,7 +36,7 @@ function Harness() {
     try {
       mock.installed = false;
       let missing = false;
-      try { await open(); } catch (error) { missing = String(error).includes("Install the Antigravity chat runtime"); }
+      try { await open(); } catch (error) { missing = String(error).includes("Set up chat for this agent"); }
       assert(missing && mock.spawns.length === 0, "Missing runtime spawned a process");
       pass("Missing managed runtime provides setup instructions before spawning");
       mock.installed = true; mock.cachedAuth = false; mock.stallInitialize = false;
