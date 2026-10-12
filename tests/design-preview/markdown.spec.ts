@@ -34,3 +34,40 @@ test("large agent responses remain available without rich rendering", async ({ p
   await expect(page.locator(".chat-markdown pre")).toBeVisible();
   expect(await page.locator(".chat-markdown pre").textContent()).toHaveLength(280_000);
 });
+
+test("a finished reply with SQL, an unknown language, and a table renders instead of blanking the window", async ({ page }) => {
+  await page.goto("/tests/design-preview/?view=chat");
+  // Shaped like the PR-review reply that blanked the window: headings, SQL blocks, a table.
+  const reply = [
+    "## Proposed comment", "", "The join double-counts refunds:", "",
+    "```sql", "SELECT o.id, SUM(r.amount) AS refunded", "FROM orders o", "JOIN refunds r ON r.order_id = o.id", "GROUP BY o.id;", "```", "",
+    "| Check | Before | After |", "|---|---|---|", "| Rows | 1,204 | 1,198 |", "| Refunds | $9,410 | $8,772 |", "",
+    "```kotlin", "val total = refunds.sumOf { it.amount }", "```", "",
+    "```SQL", "select 1;", "```",
+  ].join("\n");
+  await page.evaluate(async (text) => {
+    const { useChatStore } = await import("/src/stores/useChatStore.ts");
+    useChatStore.getState().update(900, chat => ({ ...chat, status: "ready", turns: [{
+      id: 0, prompt: "give me your proposed comment", startedAt: 1, endedAt: 2, stopReason: "end_turn",
+      items: [{ kind: "message", id: "review", messageId: null, text }],
+    }] }));
+  }, reply);
+  const view = page.locator(".chat-view:visible");
+  await expect(view.getByRole("heading", { name: "Proposed comment" })).toBeVisible();
+  await expect(view.locator("table")).toContainText("Refunds");
+  await expect(view.locator(".shiki")).toHaveCount(3);
+  await expect(view.locator("pre.shiki code").first()).toContainText("SUM(r.amount)");
+  await expect(view.locator("code")).toContainText(["val total = refunds.sumOf"]);
+  await expect(page.getByRole("button", { name: "New", exact: true })).toBeVisible();
+});
+
+test("a rendering error shows a way back instead of a blank window", async ({ page }) => {
+  await page.goto("/tests/design-preview/?view=chat");
+  await page.evaluate(async () => {
+    const { useChatStore } = await import("/src/stores/useChatStore.ts");
+    // Not a valid turn: items must be an array. The window must survive it.
+    useChatStore.getState().update(900, chat => ({ ...chat, turns: [{ id: 0, prompt: "x", startedAt: 1, endedAt: 2, stopReason: "end_turn", items: null as never }] }));
+  });
+  await expect(page.getByRole("alert").filter({ hasText: "Something went wrong." })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Reload Shep" })).toBeVisible();
+});

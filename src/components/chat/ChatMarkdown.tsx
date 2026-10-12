@@ -4,6 +4,7 @@ import { getMarkdownRenderer, getPlainMarkdownRenderer } from "../../lib/markdow
 import { shikiThemeFor } from "../../lib/shikiHighlighter";
 import { handleChatMarkdownClick, hydrateChatImages } from "./chatMarkdownDom";
 import { ChatProjectPath } from "./chatProjectPath";
+import ErrorBoundary from "../shared/ErrorBoundary";
 
 /** Rendered markdown. Local images load once the text stops streaming. */
 function MarkdownHtml({ html, loadImages }: { html: string; loadImages: boolean }) {
@@ -42,9 +43,12 @@ export default memo(function ChatMarkdown({ text, streaming = false }: { text: s
     </div>;
   }
   if (streaming) return <PlainMarkdown text={renderedText} loadImages={false} />;
+  // A highlighting failure shows the reply as plain markdown, never takes down the window.
   return (
-    <Suspense fallback={<PlainMarkdown text={renderedText} loadImages />}>
-      <HighlightedMarkdown text={renderedText} themeName={themeName} />
-    </Suspense>
+    <ErrorBoundary resetKey={renderedText} fallback={() => <PlainMarkdown text={renderedText} loadImages />}>
+      <Suspense fallback={<PlainMarkdown text={renderedText} loadImages />}>
+        <HighlightedMarkdown text={renderedText} themeName={themeName} />
+      </Suspense>
+    </ErrorBoundary>
   );
 });

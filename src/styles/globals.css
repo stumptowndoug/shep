@@ -3564,3 +3564,21 @@ body.theme-clear .app-shell__frame {
   .project-card { grid-template-columns: 20px minmax(0, 1fr) 66px; column-gap: 12px; }
   .project-card__status { display: none; }
 }
+
+/* Shown instead of a blank window when rendering fails. */
+.app-crashed {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 16px;
+  max-width: 560px;
+  height: 100vh;
+  justify-content: center;
+  margin: 0 auto;
+  padding: 0 32px;
+  color: var(--fg);
+}
+.app-crashed .inline-code {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
