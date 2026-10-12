@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { getIdentifier, getName, getTauriVersion, getVersion } from "@tauri-apps/api/app";
-import { Upload, ChevronDown, Check } from "lucide-react";
+import { Upload, Check } from "lucide-react";
 import { EDITOR_OPTIONS } from "../../lib/editors";
 import { DARK_THEMES, LIGHT_THEMES, TRANSPARENT_THEMES } from "../../lib/themes";
 import { KEYBINDING_PRESETS } from "../../lib/keybindingPresets";
@@ -12,9 +12,12 @@ import { useChatModelStore } from "../../stores/useChatModelStore";
 import { useTerminalStore } from "../../stores/useTerminalStore";
 import { useTodoStore } from "../../stores/useTodoStore";
 import { useTerminalSettingsStore } from "../../stores/useTerminalSettingsStore";
+import { useChatAppearanceStore } from "../../stores/useChatAppearanceStore";
 import { useUsageSettingsStore } from "../../stores/useUsageSettingsStore";
 import { UsageLimitSettings } from "./UsageLimitSettings";
 import OptionGroup from "../shared/OptionGroup";
+import FontPicker, { type FontPickerOption } from "./FontPicker";
+import { useNoticeStore } from "../../stores/useNoticeStore";
 import { useUpdateStore } from "../../stores/useUpdateStore";
 import { assistantLogoSrc, getAssistantLogoClass } from "../../lib/assistantLogos";
 import { CODING_ASSISTANTS } from "../sidebar/constants";
@@ -22,10 +25,11 @@ import {
   FONT_SIZE_OPTIONS,
   TERMINAL_FONT_FAMILY,
 } from "../../lib/terminalConfig";
+import { CHAT_FONT_SIZE, CHAT_FONT_SIZE_OPTIONS } from "../../lib/chatAppearance";
 import { ALL_USAGE_PROVIDERS, getProviderLabel } from "../usage/usageHelpers";
 import type { AgentInterface, SessionMode, CursorStyle, BudgetMode, FontFamily } from "../../lib/types";
 import { getErrorMessage } from "../../lib/errors";
-import { listMonospaceFamilies } from "../../lib/tauri";
+import { listFontFamilies, listMonospaceFamilies, type ChatFontFamily } from "../../lib/tauri";
 
 interface AppMeta {
   name: string;
@@ -54,10 +58,8 @@ export default function SettingsPanel() {
   const [appMetaError, setAppMetaError] = useState<string | null>(null);
   const [fontFamilies, setFontFamilies] = useState<FontFamily[]>([]);
   const [fontError, setFontError] = useState<string | null>(null);
-  const [fontPickerOpen, setFontPickerOpen] = useState(false);
-  const [fontSearch, setFontSearch] = useState("");
-  const fontPickerRef = useRef<HTMLDivElement>(null);
-  const fontSearchRef = useRef<HTMLInputElement>(null);
+  const [chatFonts, setChatFonts] = useState<ChatFontFamily[] | null>(null);
+  const [chatFontsLoading, setChatFontsLoading] = useState(false);
   const [themeError, setThemeError] = useState<string | null>(null);
   const themeId = useThemeStore((s) => s.themeId);
   const setTheme = useThemeStore((s) => s.setTheme);
@@ -93,6 +95,9 @@ export default function SettingsPanel() {
   const termError = useTerminalSettingsStore((s) => s.error);
   const loadTermSettings = useTerminalSettingsStore((s) => s.loadSettings);
   const updateTermSettings = useTerminalSettingsStore((s) => s.updateSettings);
+  const chatAppearance = useChatAppearanceStore((s) => s.appearance);
+  const setChatFont = useChatAppearanceStore((s) => s.setFont);
+  const setChatFontSize = useChatAppearanceStore((s) => s.setFontSize);
 
   const usageSettings = useUsageSettingsStore((s) => s.settings);
   const usageHasLoaded = useUsageSettingsStore((s) => s.hasLoaded);
@@ -170,29 +175,6 @@ export default function SettingsPanel() {
     };
   }, []);
 
-  // Close the font picker on outside click / Escape.
-  useEffect(() => {
-    if (!fontPickerOpen) return;
-
-    const onMouseDown = (event: MouseEvent) => {
-      if (!fontPickerRef.current) return;
-      if (!fontPickerRef.current.contains(event.target as Node)) {
-        setFontPickerOpen(false);
-      }
-    };
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setFontPickerOpen(false);
-    };
-
-    document.addEventListener("mousedown", onMouseDown);
-    document.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.removeEventListener("mousedown", onMouseDown);
-      document.removeEventListener("keydown", onKeyDown);
-    };
-  }, [fontPickerOpen]);
-
-
   // Assemble the searchable list: always surface the bundled MesloLGS NF
   // (the default) even if CoreText didn't return it as a system-installed
   // family, then append everything from Rust. Dedupe by family name.
@@ -214,18 +196,30 @@ export default function SettingsPanel() {
     return list;
   }, [fontFamilies]);
 
-  const filteredFontFamilies = useMemo(() => {
-    const query = fontSearch.trim().toLowerCase();
-    if (!query) return pickerFamilies;
-    return pickerFamilies.filter((family) =>
-      family.family.toLowerCase().includes(query),
-    );
-  }, [pickerFamilies, fontSearch]);
+  const terminalFontOptions = useMemo<FontPickerOption[]>(() => pickerFamilies.map((family) => ({
+    value: family.family,
+    label: family.family,
+    badge: family.isNerdFont ? "Nerd Font" : undefined,
+    detail: `${family.faceCount} ${family.faceCount === 1 ? "face" : "faces"}`,
+  })), [pickerFamilies]);
 
-  const selectFont = (family: string) => {
-    setFontPickerOpen(false);
-    setFontSearch("");
-    void updateTermSettings({ fontFamily: family });
+  // The selected font stays listed before the full list has loaded.
+  const chatFontOptions = useMemo<FontPickerOption[]>(() => {
+    const options: FontPickerOption[] = [{ value: null, label: "System", detail: "Default" }];
+    const families = chatFonts ?? (chatAppearance.fontFamily ? [{ family: chatAppearance.fontFamily, isSystem: !chatAppearance.loadFont }] : []);
+    for (const font of families) {
+      options.push({ value: font.family, label: font.family, previewFont: font.isSystem ? `"${font.family}"` : undefined });
+    }
+    return options;
+  }, [chatFonts, chatAppearance.fontFamily, chatAppearance.loadFont]);
+
+  const loadChatFonts = () => {
+    if (chatFonts || chatFontsLoading) return;
+    setChatFontsLoading(true);
+    listFontFamilies()
+      .then(setChatFonts)
+      .catch((error) => useNoticeStore.getState().pushNotice({ tone: "error", title: "Couldn’t list fonts", message: getErrorMessage(error) }))
+      .finally(() => setChatFontsLoading(false));
   };
 
   const importThemeFile = async (file: File | null) => {
@@ -247,7 +241,7 @@ export default function SettingsPanel() {
         <p className="page__lede">Appearance, session defaults, and tools.</p>
       </header>
       <nav className="page-tabs" aria-label="Settings categories">
-        {["Appearance", "Workspace", "Terminal", "Usage", "About"].map((name) => (
+        {["Appearance", "Workspace", "Chat & Terminal", "Usage", "About"].map((name) => (
           <button key={name} className={section === name ? "on" : ""}
             aria-pressed={section === name} onClick={() => setSection(name)}>{name}</button>
         ))}
@@ -359,34 +353,6 @@ export default function SettingsPanel() {
 
         {isSaving && <div className="mt-2 text-xs text-[var(--text-muted)]">Saving...</div>}
         {error && <div className="mt-2 text-sm text-red-300">{error}</div>}
-      </section>
-
-      {/* ── Keybindings ────────────────────────────────────── */}
-      <section className="settings-section" hidden={section !== "Terminal"}>
-        <h2 className="page__label settings-section__header">Keybindings</h2>
-
-        <div className="flex flex-wrap gap-3">
-          {KEYBINDING_PRESETS.map((preset) => {
-            const active = kbSettings[preset.id];
-            return (
-              <button
-                key={preset.id}
-                onClick={() => void setKbEnabled(preset.id, !active)}
-                className={`keybinding-card ${active ? "selected" : ""}`}
-              >
-                <span className="keybinding-card__keys">
-                  {preset.keys.map((k, i) => (
-                    <kbd key={i} className="keybinding-kbd">{k}</kbd>
-                  ))}
-                </span>
-                <span className="keybinding-card__action">{preset.action}</span>
-              </button>
-            );
-          })}
-        </div>
-
-        {kbIsSaving && <div className="mt-2 text-xs text-[var(--text-muted)]">Saving keybindings...</div>}
-        {kbError && <div className="mt-2 text-sm text-red-300">{kbError}</div>}
       </section>
 
       {/* ── Projects ───────────────────────────────────────── */}
@@ -525,8 +491,42 @@ export default function SettingsPanel() {
         </div>
       </section>
 
+      {/* ── Chat ───────────────────────────────────────────── */}
+      <section className="settings-section" hidden={section !== "Chat & Terminal"}>
+        <h2 className="page__label settings-section__header">Chat</h2>
+
+        <div className="settings-row">
+          <span className="settings-row__label flex items-center gap-2">
+            <span>Font</span>
+            <InfoTip text="The font for chat text. Code in chat uses your terminal font." />
+          </span>
+          <FontPicker
+            options={chatFontOptions}
+            selected={chatAppearance.fontFamily}
+            onOpen={loadChatFonts}
+            loading={chatFontsLoading}
+            onSelect={(option) => setChatFont(option.value, Boolean(chatFonts?.find((font) => font.family === option.value)?.isSystem))}
+          />
+        </div>
+
+        <div className="settings-row !mb-0">
+          <span className="settings-row__label">Font Size</span>
+          <div className="flex flex-wrap gap-2">
+            {CHAT_FONT_SIZE_OPTIONS.map((size) => (
+              <button
+                key={size}
+                onClick={() => setChatFontSize(size)}
+                className={`option-card option-card--compact ${chatAppearance.fontSize === size ? "selected" : ""}`}
+              >
+                {size}px{size === CHAT_FONT_SIZE ? " (default)" : ""}
+              </button>
+            ))}
+          </div>
+        </div>
+      </section>
+
       {/* ── Terminal ───────────────────────────────────────── */}
-      <section className="settings-section" hidden={section !== "Terminal"}>
+      <section className="settings-section" hidden={section !== "Chat & Terminal"}>
         <h2 className="page__label settings-section__header">Terminal</h2>
 
         <div className="settings-row">
@@ -559,68 +559,11 @@ export default function SettingsPanel() {
             <span>Font</span>
             <InfoTip text="Lists every installed monospace font on your Mac. Nerd Font variants are surfaced first — they're the best choice for powerline prompts and devicons." />
           </span>
-          <div className="relative" ref={fontPickerRef}>
-            <button
-              type="button"
-              onClick={() => {
-                setFontPickerOpen((open) => {
-                  const next = !open;
-                  if (next) {
-                    setFontSearch("");
-                    // Autofocus the search input once the dropdown mounts.
-                    window.setTimeout(() => fontSearchRef.current?.focus(), 0);
-                  }
-                  return next;
-                });
-              }}
-              className="option-card option-card--compact justify-between"
-              style={{ minWidth: 240 }}
-            >
-              <span className="truncate">{termSettings.fontFamily || "Select font"}</span>
-              <ChevronDown size={14} className="shrink-0 opacity-60" />
-            </button>
-
-            {fontPickerOpen && (
-              <div className="font-picker-dropdown">
-                <input
-                  ref={fontSearchRef}
-                  type="text"
-                  value={fontSearch}
-                  onChange={(event) => setFontSearch(event.target.value)}
-                  placeholder="Search installed fonts..."
-                  className="font-picker-search"
-                />
-                <div className="font-picker-list">
-                  {filteredFontFamilies.length === 0 && (
-                    <div className="font-picker-empty">No matching fonts</div>
-                  )}
-                  {filteredFontFamilies.map((family) => {
-                    const active = termSettings.fontFamily === family.family;
-                    return (
-                      <button
-                        key={family.family}
-                        type="button"
-                        onClick={() => selectFont(family.family)}
-                        className={`font-picker-item ${active ? "font-picker-item--active" : ""}`}
-                      >
-                        <Check
-                          size={14}
-                          className={`shrink-0 ${active ? "opacity-100" : "opacity-0"}`}
-                        />
-                        <span className="font-picker-item__name">{family.family}</span>
-                        {family.isNerdFont && (
-                          <span className="font-picker-item__badge">Nerd Font</span>
-                        )}
-                        <span className="font-picker-item__count">
-                          {family.faceCount} {family.faceCount === 1 ? "face" : "faces"}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-          </div>
+          <FontPicker
+            options={terminalFontOptions}
+            selected={termSettings.fontFamily}
+            onSelect={(option) => void updateTermSettings({ fontFamily: option.value ?? TERMINAL_FONT_FAMILY })}
+          />
           {fontError && <div className="mt-2 text-sm text-red-300">{fontError}</div>}
         </div>
 
@@ -659,6 +602,34 @@ export default function SettingsPanel() {
 
         {termIsSaving && <div className="mt-2 text-xs text-[var(--text-muted)]">Saving terminal settings...</div>}
         {termError && <div className="mt-2 text-sm text-red-300">{termError}</div>}
+      </section>
+
+      {/* ── Keybindings ────────────────────────────────────── */}
+      <section className="settings-section" hidden={section !== "Chat & Terminal"}>
+        <h2 className="page__label settings-section__header">Terminal Keys</h2>
+
+        <div className="flex flex-wrap gap-3">
+          {KEYBINDING_PRESETS.map((preset) => {
+            const active = kbSettings[preset.id];
+            return (
+              <button
+                key={preset.id}
+                onClick={() => void setKbEnabled(preset.id, !active)}
+                className={`keybinding-card ${active ? "selected" : ""}`}
+              >
+                <span className="keybinding-card__keys">
+                  {preset.keys.map((k, i) => (
+                    <kbd key={i} className="keybinding-kbd">{k}</kbd>
+                  ))}
+                </span>
+                <span className="keybinding-card__action">{preset.action}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        {kbIsSaving && <div className="mt-2 text-xs text-[var(--text-muted)]">Saving keybindings...</div>}
+        {kbError && <div className="mt-2 text-sm text-red-300">{kbError}</div>}
       </section>
 
       {/* ── Usage ──────────────────────────────────────────── */}

@@ -7,6 +7,9 @@
   shows "Esc to stop".
 - **Recall earlier prompts.** Press ↑ in an empty message box to bring back your last
   prompt, and keep pressing to go further back. ↓ moves forward again.
+- **Choose the chat font and size.** Settings → Chat & Terminal lets you pick any
+  installed font and a font size from 13 to 20px. Code in chat now uses your terminal
+  font.
 - **Discover Chat.** If you use agents in the terminal, the New tab launcher shows a
   short tip about Chat until you try it or dismiss it. Your default doesn't change.
 
