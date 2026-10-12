@@ -9,7 +9,7 @@ export const CODING_ASSISTANTS: CodingAssistant[] = [
     },
   },
   {
-    id: "codex", name: "Codex", command: "codex", yoloFlag: "--yolo", modelFlag: "--model",
+    id: "codex", name: "Codex", command: "codex", yoloFlag: "--dangerously-bypass-approvals-and-sandbox", modelFlag: "--model",
     acp: {
       command: "codex-acp", args: [], install: "npm i -g @agentclientprotocol/codex-acp", managed: "codex",
       setupNote: "Installs Codex’s chat adapter inside Shep with npm. Needs Node.js.", setupAction: "Install chat adapter",

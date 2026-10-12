@@ -251,3 +251,20 @@ test("Pi's legacy thinking modes do not duplicate its modern reasoning control",
   });
   assert.deepEqual(options.map((option) => [option.id, option.source]), [["thought_level", "config"]]);
 });
+
+test("file tool titles show the file however each agent phrases them", () => {
+  const titleOf = (update: Record<string, unknown>) => {
+    const chat = applySessionUpdate(startTurn(emptyChat(), "p"), { sessionUpdate: "tool_call", toolCallId: "t", kind: "edit", status: "completed", ...update });
+    const item = chat.turns[0].items[0];
+    return item.kind === "tool" ? item.title : null;
+  };
+  const diff = [{ type: "diff", path: "/repo/src/report.sql", oldText: "a", newText: "b" }];
+  assert.equal(titleOf({ title: "Edit `/private/tmp/repo/report.sql`" }), "report.sql");
+  assert.equal(titleOf({ title: "edit_file: report.sql" }), "report.sql");
+  assert.equal(titleOf({ title: "Editing files", content: diff }), "report.sql");
+  assert.equal(titleOf({ title: "Running edit_file", content: diff }), "report.sql");
+  assert.equal(titleOf({ title: "Read file '/repo/src/report.sql'", kind: "read" }), "report.sql");
+  // A title that names something else, or has no file to fall back on, is kept.
+  assert.equal(titleOf({ title: "Update the README intro" }), "Update the README intro");
+  assert.equal(titleOf({ title: "Editing files" }), "Editing files");
+});

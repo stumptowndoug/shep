@@ -52,7 +52,8 @@ are not restored from History after closing the tab or restarting Shep.
 | YOLO | Starts the agent with its auto-accept flag, so it edits and runs commands without asking. |
 
 YOLO uses each CLI's own flag (for example `--dangerously-skip-permissions` for
-Claude Code, `--yolo` for Codex, Cursor, and Muse Code). Pi has no auto-accept mode. In Chat,
+Claude Code, `--dangerously-bypass-approvals-and-sandbox` for Codex, and `--yolo` for
+Cursor and Muse Code). Pi has no auto-accept mode. In Chat,
 the access control in the composer plays the same role.
 
 ## Antigravity usage
