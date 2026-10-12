@@ -359,7 +359,27 @@ function toolTitle(update: SessionUpdate, previous: string | undefined, kind: st
   const title = text(update.title);
   const generic = !title || title.toLowerCase() === kind || TOOL_KINDS[title.toLowerCase()] === kind ||
     title.toLowerCase() === update._meta?.claudeCode?.toolName?.toLowerCase();
-  return !generic ? title : (path ? path.split("/").pop() : undefined) ?? previous ?? text(update._meta?.claudeCode?.toolName) ?? title;
+  const fileName = path ?? (update.content as ToolCallContent[] | undefined)?.find((entry) => entry.type === "diff" && entry.path)?.path;
+  const named = !generic ? fileToolTitle(title!, kind, fileName) : undefined;
+  return named ?? ((path ? path.split("/").pop() : undefined) ?? previous ?? text(update._meta?.claudeCode?.toolName) ?? title);
+}
+
+/**
+ * File tools name the file the way each agent phrases it; show just the file.
+ * "Edit `/abs/path/a.sql`" (Cursor), "Read file '/abs/a.sql'" (Codex), and
+ * "edit_file: a.sql" (Muse) become "a.sql",
+ * and "Editing files" or "Running edit_file" (Codex, Antigravity) take the file
+ * from the update when it has one.
+ */
+function fileToolTitle(title: string, kind: string, filePath: string | undefined): string | undefined {
+  if (!["edit", "read", "delete", "move"].includes(kind)) return title;
+  const base = (value: string) => value.split("/").filter(Boolean).pop() ?? value;
+  const quoted = title.match(/^(?:edit|write|create|read|view|delete)(?: file)?\s+[`'"]([^`'"]+)[`'"]$/i);
+  if (quoted) return base(quoted[1]);
+  const prefixed = title.match(/^[a-z][a-z0-9_]*:\s+(.+)$/);
+  if (prefixed) return prefixed[1];
+  if (/^(?:editing files?|running [a-z_]+|run [a-z_]+\?)$/i.test(title)) return filePath ? base(filePath) : undefined;
+  return title;
 }
 
 function upsertTool(state: ChatState, update: SessionUpdate): ChatState {
