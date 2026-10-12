@@ -55,6 +55,7 @@ fn resolve_session_title_from_home(
         "antigravity" => resolve_antigravity(home, repo_path, started_after_ms, session_id),
         "opencode" => resolve_opencode(home, repo_path, started_after_ms, session_id),
         "pi" => resolve_pi(home, repo_path, started_after_ms, session_id),
+        "muse" => resolve_muse(home, repo_path, started_after_ms, session_id),
         _ => None,
     }
 }
@@ -426,6 +427,97 @@ fn resolve_opencode(
         });
     Some(SessionTitleMatch {
         session_id: row.0,
+        title,
+    })
+}
+
+/// Muse keeps a SQLite index of its session logs. A row appears at launch
+/// titled "New session" and takes the first prompt once one is sent.
+fn resolve_muse(
+    home: &Path,
+    repo_path: &str,
+    started_after_ms: i64,
+    session_id: Option<&str>,
+) -> Option<SessionTitleMatch> {
+    let conn = open_read_only(&home.join(".local/share/muse/session-index.db"))?;
+    let columns = table_columns(&conn, "sessions");
+    if !["session_id", "title", "workspace_root", "created_at_us"]
+        .iter()
+        .all(|column| columns.contains(*column))
+    {
+        return None;
+    }
+    let optional = |column: &str| {
+        if columns.contains(column) {
+            column.to_string()
+        } else {
+            "NULL".to_string()
+        }
+    };
+    // Skip subagent children and sessions opened by Shep's own chat adapter.
+    let root_only = match (
+        columns.contains("msp_kind"),
+        columns.contains("msp_created_by_client_name"),
+    ) {
+        (true, true) => {
+            "AND COALESCE(msp_kind, 'root') = 'root'
+             AND COALESCE(msp_created_by_client_name, '') != 'muse_acp'"
+        }
+        (true, false) => "AND COALESCE(msp_kind, 'root') = 'root'",
+        (false, true) => "AND COALESCE(msp_created_by_client_name, '') != 'muse_acp'",
+        (false, false) => "",
+    };
+    let select = format!(
+        "SELECT session_id, title, {}, {} FROM sessions",
+        optional("effective_long_title"),
+        optional("first_user_prompt"),
+    );
+    let map_row = |row: &rusqlite::Row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, Option<String>>(2)?,
+            row.get::<_, Option<String>>(3)?,
+        ))
+    };
+
+    let (id, title, generated, first_prompt) = if let Some(id) = session_id {
+        conn.query_row(
+            &format!("{select} WHERE session_id = ?1 AND workspace_root = ?2 LIMIT 1"),
+            params![id, repo_path],
+            map_row,
+        )
+    } else {
+        let started_us = started_after_ms.saturating_mul(1_000);
+        conn.query_row(
+            &format!(
+                "{select} WHERE workspace_root = ?1 AND created_at_us >= ?2 {root_only}
+                 ORDER BY ABS(created_at_us - ?3), created_at_us ASC LIMIT 1"
+            ),
+            params![
+                repo_path,
+                started_after_ms
+                    .saturating_sub(LAUNCH_TOLERANCE_MS)
+                    .saturating_mul(1_000),
+                started_us
+            ],
+            map_row,
+        )
+    }
+    .optional()
+    .ok()
+    .flatten()?;
+
+    let title = generated
+        .as_deref()
+        .and_then(compact_generated_title)
+        .or_else(|| first_prompt.as_deref().and_then(compact_prompt_title))
+        .or_else(|| {
+            compact_generated_title(&title)
+                .filter(|title| !title.eq_ignore_ascii_case("new session"))
+        });
+    Some(SessionTitleMatch {
+        session_id: id,
         title,
     })
 }
@@ -1401,6 +1493,129 @@ mod tests {
         )
         .unwrap();
         assert_eq!(anchored, found);
+
+        fs::remove_dir_all(home).unwrap();
+    }
+
+    fn muse_index(home: &Path, rows: &str) {
+        let dir = home.join(".local/share/muse");
+        fs::create_dir_all(&dir).unwrap();
+        let conn = Connection::open(dir.join("session-index.db")).unwrap();
+        conn.execute_batch(&format!(
+            "CREATE TABLE sessions (
+                session_id TEXT PRIMARY KEY, workspace_root TEXT, title TEXT NOT NULL,
+                effective_long_title TEXT, first_user_prompt TEXT, created_at_us INTEGER,
+                session_name TEXT, msp_kind TEXT, msp_created_by_client_name TEXT
+             );
+             {rows}"
+        ))
+        .unwrap();
+    }
+
+    #[test]
+    fn muse_anchors_session_before_the_first_prompt() {
+        let home = temp_home();
+        muse_index(
+            &home,
+            "INSERT INTO sessions VALUES (
+                'muse-1', '/repo', 'New session', NULL, NULL, 10000100, NULL, 'root', NULL
+             );",
+        );
+
+        let found =
+            resolve_session_title_from_home(&home, "muse", "/repo", 10_000, None, None).unwrap();
+        assert_eq!(found.session_id, "muse-1");
+        assert_eq!(found.title, None);
+
+        fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn muse_prefers_generated_title_then_compacts_first_prompt() {
+        let home = temp_home();
+        muse_index(
+            &home,
+            "INSERT INTO sessions VALUES (
+                'muse-1', '/repo', 'Can you figure out why expired tokens are not being rejected?',
+                NULL, 'Can you figure out why expired tokens are not being rejected?',
+                10000100, 'canyon-perihelion', 'root', NULL
+             );
+             INSERT INTO sessions VALUES (
+                'muse-2', '/repo', 'fix it', 'Reject expired auth tokens', 'fix it',
+                20000100, 'amber-orbit', 'root', NULL
+             );",
+        );
+
+        let prompt =
+            resolve_session_title_from_home(&home, "muse", "/repo", 10_000, None, None).unwrap();
+        assert_eq!(prompt.session_id, "muse-1");
+        assert_eq!(
+            prompt.title.as_deref(),
+            Some("expired tokens are not being rejected")
+        );
+
+        let generated =
+            resolve_session_title_from_home(&home, "muse", "/repo", 0, Some("muse-2"), None)
+                .unwrap();
+        assert_eq!(
+            generated.title.as_deref(),
+            Some("Reject expired auth tokens")
+        );
+
+        fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn muse_skips_subagents_chat_sessions_and_other_workspaces() {
+        let home = temp_home();
+        muse_index(
+            &home,
+            "INSERT INTO sessions VALUES (
+                'child', '/repo', 'Worker task', NULL, 'Worker task', 10000050, NULL, 'child', NULL
+             );
+             INSERT INTO sessions VALUES (
+                'chat', '/repo', 'Chat prompt', NULL, 'Chat prompt', 10000060, NULL, 'root', 'muse_acp'
+             );
+             INSERT INTO sessions VALUES (
+                'elsewhere', '/other', 'Other repo', NULL, 'Other repo', 10000070, NULL, 'root', NULL
+             );
+             INSERT INTO sessions VALUES (
+                'stale', '/repo', 'Old session', NULL, 'Old session', 1000000, NULL, 'root', NULL
+             );
+             INSERT INTO sessions VALUES (
+                'terminal', '/repo', 'Fix the flaky login test', NULL, 'Fix the flaky login test',
+                10001000, NULL, 'root', NULL
+             );",
+        );
+
+        let found =
+            resolve_session_title_from_home(&home, "muse", "/repo", 10_000, None, None).unwrap();
+        assert_eq!(found.session_id, "terminal");
+        assert_eq!(found.title.as_deref(), Some("Fix the flaky login test"));
+
+        fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn muse_reads_an_index_without_optional_columns() {
+        let home = temp_home();
+        let dir = home.join(".local/share/muse");
+        fs::create_dir_all(&dir).unwrap();
+        let conn = Connection::open(dir.join("session-index.db")).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE sessions (
+                session_id TEXT PRIMARY KEY, workspace_root TEXT, title TEXT NOT NULL,
+                created_at_us INTEGER
+             );
+             INSERT INTO sessions VALUES ('muse-1', '/repo', 'Fix auth tokens', 10000100);",
+        )
+        .unwrap();
+        drop(conn);
+
+        let found =
+            resolve_session_title_from_home(&home, "muse", "/repo", 10_000, None, None).unwrap();
+        assert_eq!(found.session_id, "muse-1");
+        assert_eq!(found.title.as_deref(), Some("Fix auth tokens"));
 
         fs::remove_dir_all(home).unwrap();
     }

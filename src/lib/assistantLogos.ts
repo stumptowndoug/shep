@@ -3,6 +3,7 @@ import codexSrc from "../../assets/openai.svg";
 import geminiSrc from "../../assets/gemini.svg";
 import opencodeSrc from "../../assets/opencode-logo-dark.svg";
 import piSrc from "../../assets/pi.svg";
+import museSrc from "../../assets/muse.svg";
 import grokSrc from "../../assets/grok.svg";
 import cursorSrc from "../../assets/editor-cursor.svg";
 
@@ -14,6 +15,7 @@ export const assistantLogoSrc: Record<string, string> = {
   antigravity: geminiSrc,
   opencode: opencodeSrc,
   pi: piSrc,
+  muse: museSrc,
   grok: grokSrc,
   cursor: cursorSrc,
 };

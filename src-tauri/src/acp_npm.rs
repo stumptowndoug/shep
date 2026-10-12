@@ -23,7 +23,7 @@ pub struct NpmAdapter {
 
 // Pinned so every install runs the version Shep was tested with. None of these
 // need npm install scripts; the ignored install test checks each one.
-const ADAPTERS: [NpmAdapter; 3] = [
+const ADAPTERS: [NpmAdapter; 4] = [
     NpmAdapter {
         id: "claude",
         package: "@agentclientprotocol/claude-agent-acp",
@@ -41,6 +41,14 @@ const ADAPTERS: [NpmAdapter; 3] = [
         package: "pi-acp",
         version: "0.0.34",
         bin: "pi-acp",
+    },
+    // Community adapter; Meta does not publish one. Ships prebuilt binaries
+    // and a small node launcher.
+    NpmAdapter {
+        id: "muse",
+        package: "@brokkai/muse-acp",
+        version: "0.12.1",
+        bin: "muse-acp",
     },
 ];
 
@@ -274,7 +282,7 @@ mod tests {
 
     #[test]
     fn only_known_adapters_are_installable() {
-        for id in ["claude", "codex", "pi"] {
+        for id in ["claude", "codex", "pi", "muse"] {
             assert!(find(id).is_some(), "{id}");
         }
         assert!(find("../claude").is_none());

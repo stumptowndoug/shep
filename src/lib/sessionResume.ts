@@ -7,6 +7,7 @@ const SESSION_RESUME_ARGS: Record<string, (sessionId: string) => string[]> = {
   antigravity: (sessionId) => ["--conversation", sessionId],
   opencode: (sessionId) => ["--session", sessionId],
   pi: (sessionId) => ["--session", sessionId],
+  muse: (sessionId) => ["resume", sessionId],
 };
 
 export function sessionResumeArgs(provider: string, sessionId: string): string[] | null {

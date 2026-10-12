@@ -390,7 +390,8 @@ function startSessionTitleResolver(
           assistantId !== "codex" &&
           assistantId !== "cursor" &&
           assistantId !== "antigravity" &&
-          assistantId !== "opencode"
+          assistantId !== "opencode" &&
+          assistantId !== "muse"
         ) {
           stopSessionTitleResolver(ptyId);
           return;
