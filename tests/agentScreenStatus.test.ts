@@ -152,6 +152,79 @@ test("OpenCode live prompt is explicit idle", () => {
   assert.equal(result.ruleId, "opencode-live-prompt");
 });
 
+// Screens below were captured from muse 1.4.6 running in a pty.
+const MUSE_FOOTER = "  echo · ~/dev/shep · Auto-review";
+
+test("Muse thinking with interrupt hint is working", () => {
+  const result = detectAgentScreenStatus(
+    "muse",
+    [
+      "  Muse Code 1.4.6",
+      "❯ fix the flaky login test",
+      "◇ Thinking (1s · esc to interrupt)",
+      "── Voice input (⌥ + v to start) ────────────────────────────────────────",
+      "❯",
+      "────────────────────────────────────────",
+      MUSE_FOOTER,
+    ].join("\n"),
+  );
+  assert.equal(result.state, "working");
+  assert.equal(result.ruleId, "muse-interrupt-hint");
+});
+
+test("Muse live prompt after a reply is explicit idle", () => {
+  const result = detectAgentScreenStatus(
+    "muse",
+    [
+      "  Muse Code 1.4.6",
+      "❯ fix the flaky login test",
+      "◆ echo: fix the flaky login test",
+      "── Voice input (⌥ + v to start) ────────────────────────────────────────",
+      "❯ draft follow-up",
+      "────────────────────────────────────────",
+      MUSE_FOOTER,
+    ].join("\n"),
+  );
+  assert.equal(result.state, "idle");
+  assert.equal(result.ruleId, "muse-live-prompt");
+});
+
+test("Muse approval card is blocked", () => {
+  const result = detectAgentScreenStatus(
+    "muse",
+    [
+      "◆ Run shell command: rm -rf build",
+      "> Allow once",
+      "  Reject once",
+      "  Allow for this session",
+      "  Block for this session",
+      MUSE_FOOTER,
+    ].join("\n"),
+  );
+  assert.equal(result.state, "blocked");
+  assert.equal(result.ruleId, "muse-approval");
+});
+
+test("Muse workspace trust prompt is blocked", () => {
+  const result = detectAgentScreenStatus(
+    "muse",
+    [
+      "Do you trust this workspace?",
+      "Workspace: /Users/me/dev/shep",
+      "> 1  Trust and continue",
+      "  2  Quit",
+      "Use Up/Down or 1/2, then Enter. Esc quits.",
+    ].join("\n"),
+  );
+  assert.equal(result.state, "blocked");
+  assert.equal(result.ruleId, "muse-trust-prompt");
+});
+
+test("Muse transcript echo of the prompt alone is not explicit idle", () => {
+  const result = detectAgentScreenStatus("muse", "❯ fix the flaky login test\n◆ Reading files");
+  assert.equal(result.confidence, "fallback");
+});
+
 test("Pi working literal is working", () => {
   const result = detectAgentScreenStatus("pi", "⠋ Working...");
   assert.equal(result.state, "working");

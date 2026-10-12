@@ -16,13 +16,16 @@ Choose per session in the New tab launcher, and set the default in Settings. New
 installations default to Chat. History records which interface each session used
 and resumes it the same way.
 
-Chat for Claude Code, Codex, and Pi needs a separate ACP adapter (see the
+Chat for Claude Code, Codex, Pi, and Muse Code needs a separate ACP adapter (see the
 [README table](../README.md#supported-agents)). If it isn't installed, the launcher's
 **Install chat adapter** button installs a pinned version with your `npm` into
 Shep's application data folder, so it works wherever npm puts global packages and
 whatever is on your `PATH`. It needs Node.js. An adapter already on your `PATH`
 takes precedence. Shep rereads your shell's `PATH` when a command is missing, so
 CLIs and adapters installed while Shep is open are found without a restart.
+Meta doesn't publish an ACP adapter for Muse Code, so Shep uses the community
+[`@brokkai/muse-acp`](https://github.com/BrokkAi/muse-acp), which needs Node.js 22 or
+newer. Sign in with `muse` (or set `META_API_KEY`) before starting a Muse chat.
 Cursor and OpenCode include ACP support in their CLIs. For Antigravity, Shep downloads Google's chat runtime for
 you and verifies it against pinned checksums. It is kept separate from `agy` and
 never changes your CLI installation or `PATH`.
@@ -49,7 +52,7 @@ are not restored from History after closing the tab or restarting Shep.
 | YOLO | Starts the agent with its auto-accept flag, so it edits and runs commands without asking. |
 
 YOLO uses each CLI's own flag (for example `--dangerously-skip-permissions` for
-Claude Code, `--yolo` for Codex and Cursor). Pi has no auto-accept mode. In Chat,
+Claude Code, `--yolo` for Codex, Cursor, and Muse Code). Pi has no auto-accept mode. In Chat,
 the access control in the composer plays the same role.
 
 ## Antigravity usage
