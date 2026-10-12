@@ -1,7 +1,7 @@
 import { Suspense, memo, use, useCallback, useContext, useDeferredValue, useMemo } from "react";
 import { useThemeStore } from "../../stores/useThemeStore";
 import { getMarkdownRenderer, getPlainMarkdownRenderer } from "../../lib/markdownRenderer";
-import { shikiThemeFor } from "../../lib/shikiHighlighter";
+import { fenceLanguages, loadLanguages, shikiThemeFor } from "../../lib/shikiHighlighter";
 import { handleChatMarkdownClick, hydrateChatImages } from "./chatMarkdownDom";
 import { ChatProjectPath } from "./chatProjectPath";
 import ErrorBoundary from "../shared/ErrorBoundary";
@@ -18,6 +18,9 @@ function MarkdownHtml({ html, loadImages }: { html: string; loadImages: boolean 
 
 function HighlightedMarkdown({ text, themeName }: { text: string; themeName: string }) {
   const renderer = use(getMarkdownRenderer(themeName));
+  // Less common languages load on first use; plain markdown shows meanwhile.
+  const languages = loadLanguages(fenceLanguages(text));
+  if (languages) use(languages);
   const html = useMemo(() => renderer.render(text), [renderer, text]);
   return <MarkdownHtml html={html} loadImages />;
 }

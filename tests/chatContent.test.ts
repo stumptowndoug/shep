@@ -105,3 +105,15 @@ test("unidentified chunks preserve streamed code instead of guessing paragraph b
   chat = applySessionUpdate(chat, message("Next;"));
   assert.equal(chat.turns[0].items[0].kind === "message" && chat.turns[0].items[0].text, "const value = object.Next;");
 });
+
+test("text diffs in tool output are recognized and split into colored lines", async () => {
+  const { textDiffLines } = await import("../src/lib/acp/chatPresentation.ts");
+  const muse = [
+    "edit_file: src/consts.ts", "changed lines: line 1",
+    "--- original", "+++ updated", "@@", "-export const RELEASE_VERSION = '0.9.2';", "+export const RELEASE_VERSION = '0.10.1';",
+  ].join("\n");
+  assert.deepEqual(textDiffLines(muse)?.map((line) => line.kind), ["context", "context", "header", "header", "hunk", "remove", "add"]);
+  // Ordinary output that merely has dashes or pluses stays plain.
+  assert.equal(textDiffLines("- item one\n+ item two\nTotal: 2"), null);
+  assert.equal(textDiffLines("--- original\n+++ updated\nno changes"), null);
+});

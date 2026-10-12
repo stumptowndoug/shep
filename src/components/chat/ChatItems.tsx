@@ -21,6 +21,7 @@ import {
   X,
 } from "lucide-react";
 import ChatMarkdown from "./ChatMarkdown";
+import { textDiffLines } from "../../lib/acp/chatPresentation";
 import type { ChatItem, ToolDiff } from "../../lib/acp/chatModel";
 import { useThemeStore } from "../../stores/useThemeStore";
 import { getCodeViewCSSVariables, getDiffViewOptions } from "../git/codeViewTheme";
@@ -106,7 +107,13 @@ function ToolRow({ item }: { item: ItemOf<"tool"> }) {
   const output = (showEarlier ? lines : lines.slice(-TOOL_OUTPUT_LINES)).join("\n");
   const isCommand = item.toolKind === "execute";
   const hasBody = Boolean(output) || item.diffs.length > 0 || item.outputTrimmed;
-  const stats = item.diffs.some((diff) => !diff.truncated) ? diffStats(item.diffs) : null;
+  // Agents that report an edit as a text diff still get colored lines and counts.
+  const textDiff = isCommand ? null : textDiffLines(output);
+  const stats = item.diffs.some((diff) => !diff.truncated) ? diffStats(item.diffs)
+    : textDiff ? {
+      added: textDiff.filter((line) => line.kind === "add").length,
+      removed: textDiff.filter((line) => line.kind === "remove").length,
+    } : null;
   const className = `chat-tool ${live ? "chat-tool--live" : ""} ${failed ? "chat-tool--failed" : ""}`;
   const summary = (
     <>
@@ -134,7 +141,11 @@ function ToolRow({ item }: { item: ItemOf<"tool"> }) {
             {earlier > 0 && <button type="button" className="chat-terminal__earlier" onClick={() => setShowEarlier(!showEarlier)}>
               {showEarlier ? "Show fewer lines" : `Show ${earlier} earlier lines`}
             </button>}
-            <pre className="chat-terminal__out">{output}</pre>
+            {textDiff
+              ? <pre className="chat-terminal__out chat-terminal__out--diff">{textDiff.map((line, index) => (
+                <span key={index} className={`chat-diff-line chat-diff-line--${line.kind}`}>{line.text}{"\n"}</span>
+              ))}</pre>
+              : <pre className="chat-terminal__out">{output}</pre>}
           </div>
         )}
         {item.diffs.map((diff, index) => <DiffBlock key={`${diff.path}-${index}`} diff={diff} />)}

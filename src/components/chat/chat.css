@@ -365,6 +365,11 @@ summary.chat-tool__row:hover { background: var(--state-hover); }
   white-space: pre-wrap;
   word-break: break-word;
 }
+/* A diff reported as text (e.g. Muse's edit tool), colored like the diff viewer. */
+.chat-terminal__out--diff .chat-diff-line--add { color: var(--diff-add); }
+.chat-terminal__out--diff .chat-diff-line--remove { color: var(--diff-del); }
+.chat-terminal__out--diff .chat-diff-line--hunk { color: var(--diff-hunk); }
+.chat-terminal__out--diff .chat-diff-line--header { color: var(--faint); }
 .chat-terminal__cmd + .chat-terminal__out {
   border-top: 1px solid var(--line);
 }
