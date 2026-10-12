@@ -49,6 +49,8 @@ interface LiveChat {
   permissions: Map<string, (optionId: string | null) => void>;
   interactions?: Map<string, (outcome: CursorOutcome) => void>;
   cancelling?: boolean;
+  /** True while Shep's own `session/prompt` runs; its prompt is already shown. */
+  prompting?: boolean;
   cancelTimer?: number;
   startupMessage: string | null;
   /** Absent only on connections retained from an older dev build during HMR. */
@@ -89,6 +91,9 @@ export async function startChat(options: StartChatOptions): Promise<number> {
         if (update) {
           const session = live.get(chatId);
           if (!session) return;
+          // Some adapters (muse-acp) echo the prompt being answered. Shep already shows it,
+          // so only replayed history from session/load may open a turn this way.
+          if (session.prompting && update.sessionUpdate === "user_message_chunk") return;
           if (session?.startupMessage && update.sessionUpdate === "agent_message_chunk" &&
             update.content?.type === "text" && update.content.text === session.startupMessage) {
             session.startupMessage = null;
@@ -456,6 +461,7 @@ async function runTurn(chatId: number, prompts: string[]) {
 
   let stopReason = "end_turn";
   let turnError: string | undefined;
+  session.prompting = true;
   try {
     const result = await session.connection.request<{ stopReason?: string }>("session/prompt", {
       sessionId: session.sessionId,
@@ -467,6 +473,7 @@ async function runTurn(chatId: number, prompts: string[]) {
     stopReason = session.cancelling ? "cancelled" : "error";
     if (!session.cancelling) turnError = errorText(error);
   } finally {
+    session.prompting = false;
     window.clearTimeout(session.cancelTimer);
     session.cancelTimer = undefined;
   }
