@@ -1,25 +1,35 @@
-import { useEffect, useRef, useState } from "react";
-import { Check, ChevronLeft, ChevronRight, Settings, X } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Check, LoaderCircle, Settings, Shield, ShieldCheck } from "lucide-react";
 import type { ChatOption } from "../../lib/acp/chatModel";
 import { chatOptionChoices, chatOptionName } from "../../lib/acp/chatOptions";
 
 interface ChatSettingsProps {
+  /** Everything but the model: reasoning, the agent's other settings, access. */
   options: ChatOption[];
+  /** Access chosen when the chat started, for agents that can't change it mid-chat. */
+  fixedAccess?: "full" | "ask";
+  askFirst: boolean;
+  busy: boolean;
   disabled: boolean;
   onChange: (id: string, value: string) => Promise<void>;
 }
 
-export default function ChatSettings({ options, disabled, onChange }: ChatSettingsProps) {
+const isToggle = (option: ChatOption) => option.choices.length === 2
+  && option.choices.some((choice) => choice.value.toLowerCase() === "on")
+  && option.choices.some((choice) => choice.value.toLowerCase() === "off");
+
+/** The gear beside the model: one menu of every other setting, each a group of
+ *  names with the current choice ticked. */
+export default function ChatSettings({ options, fixedAccess, askFirst, busy, disabled, onChange }: ChatSettingsProps) {
   const [open, setOpen] = useState(false);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
   const root = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
-  const selected = options.find((option) => option.id === selectedId);
   const close = () => { setOpen(false); trigger.current?.focus(); };
-
-  useEffect(() => {
-    if (open) root.current?.querySelector<HTMLButtonElement>(".chat-settings__popover button")?.focus();
-  }, [open, selectedId]);
+  const names = [...options.map(chatOptionName), ...(fixedAccess ? ["Access"] : [])];
+  // Open on the current choice of the first setting.
+  const focusCurrent = useCallback((popover: HTMLDivElement | null) => {
+    (popover?.querySelector<HTMLButtonElement>("[aria-pressed='true']:not(:disabled), button:not(:disabled)"))?.focus();
+  }, []);
 
   useEffect(() => {
     if (!open) return;
@@ -30,49 +40,64 @@ export default function ChatSettings({ options, disabled, onChange }: ChatSettin
     return () => document.removeEventListener("mousedown", outside);
   }, [open]);
 
+  const handleKeyDown = (event: React.KeyboardEvent) => {
+    if (!open) return;
+    if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close(); return; }
+    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+    event.preventDefault();
+    const items = [...root.current?.querySelectorAll<HTMLButtonElement>(".chat-settings__popover button:not(:disabled)") ?? []];
+    const index = items.indexOf(document.activeElement as HTMLButtonElement);
+    items[(index + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length]?.focus();
+  };
+
   return (
-    <div ref={root} className="chat-settings" onKeyDown={(event) => {
-      if (event.key === "Escape" && open) { event.preventDefault(); event.stopPropagation(); close(); }
-    }}>
+    <div ref={root} className="chat-settings" onKeyDown={handleKeyDown}>
       <button ref={trigger} type="button" className="icon-btn chat-settings__trigger" aria-label="Chat settings"
-        title="More chat settings" aria-expanded={open} aria-haspopup="dialog" disabled={disabled}
-        onClick={() => { setSelectedId(null); setOpen(!open); }}>
-        <Settings size={16} aria-hidden="true" />
+        title={`Settings: ${names.join(", ")}${askFirst ? " (Ask first)" : ""}`} aria-expanded={open} aria-haspopup="dialog"
+        disabled={disabled} onClick={() => setOpen(!open)}>
+        {busy ? <LoaderCircle size={16} className="animate-spin" aria-hidden="true" /> : <Settings size={16} aria-hidden="true" />}
+        {askFirst && <Shield size={10} className="chat-settings__ask" aria-hidden="true" />}
       </button>
-      {open && <div className="popover chat-settings__popover" role="dialog" aria-label="Chat settings">
-        <div className="chat-settings__heading">
-          {selected && <button type="button" className="icon-btn" aria-label="Back to chat settings" onClick={() => setSelectedId(null)}><ChevronLeft size={14} aria-hidden="true" /></button>}
-          <span>{selected ? chatOptionName(selected) : "Chat settings"}</span>
-          <button type="button" className="icon-btn" aria-label="Close chat settings" onClick={close}><X size={14} aria-hidden="true" /></button>
-        </div>
-        <div className="popover__list">
-          {selected ? chatOptionChoices(selected).map((choice) => (
-            <button key={choice.value} type="button" className="popover__item" aria-pressed={choice.value === selected.value}
-              disabled={disabled} onClick={() => { if (choice.value !== selected.value) void onChange(selected.id, choice.value); close(); }}>
-              <Check size={13} className={choice.value === selected.value ? "" : "invisible"} aria-hidden="true" />
-              <span className="popover__item-label">{choice.label}</span>
-            </button>
-          )) : options.map((option) => {
-            const on = option.choices.find((choice) => choice.value.toLowerCase() === "on");
-            const off = option.choices.find((choice) => choice.value.toLowerCase() === "off");
-            if (option.choices.length === 2 && on && off) return (
+      {open && <div ref={focusCurrent} className="popover chat-settings__popover" role="dialog" aria-label="Chat settings">
+        {options.map((option) => {
+          const name = chatOptionName(option);
+          if (isToggle(option)) {
+            const on = option.choices.find((choice) => choice.value.toLowerCase() === "on")!;
+            const off = option.choices.find((choice) => choice.value.toLowerCase() === "off")!;
+            return (
               <button key={option.id} type="button" role="switch" aria-checked={option.value === on.value}
                 className="popover__item chat-settings__toggle" disabled={disabled}
                 onClick={() => void onChange(option.id, option.value === on.value ? off.value : on.value)}>
-                <span>{chatOptionName(option)}</span>
+                <span>{name}</span>
                 <span className="chat-settings__switch" aria-hidden="true" />
               </button>
             );
-            return (
-              <button key={option.id} type="button" className="popover__item chat-settings__row" disabled={disabled}
-                onClick={() => setSelectedId(option.id)}>
-                <span>{chatOptionName(option)}</span>
-                <span className="chat-settings__value">{chatOptionChoices(option).find((choice) => choice.value === option.value)?.label ?? option.value}</span>
-                <ChevronRight size={13} aria-hidden="true" />
-              </button>
-            );
-          })}
-        </div>
+          }
+          return (
+            <div key={option.id} className="chat-settings__group" role="group" aria-label={name}>
+              <div className="chat-settings__group-name">{name}</div>
+              {chatOptionChoices(option).map((choice) => (
+                <button key={choice.value} type="button" className="popover__item" aria-pressed={choice.value === option.value}
+                  disabled={disabled} onClick={() => { if (choice.value !== option.value) void onChange(option.id, choice.value); close(); }}>
+                  <Check size={13} className={choice.value === option.value ? "" : "invisible"} aria-hidden="true" />
+                  <span className="popover__item-label">{choice.label}</span>
+                </button>
+              ))}
+            </div>
+          );
+        })}
+        {fixedAccess && (
+          <div className="chat-settings__group" role="group" aria-label="Access">
+            <div className="chat-settings__group-name">Access</div>
+            <div className="chat-settings__fixed" title={fixedAccess === "full"
+              ? "Shep approves this agent’s permission requests automatically."
+              : "Shep asks you to review this agent’s permission requests."}>
+              {fixedAccess === "full" ? <ShieldCheck size={13} aria-hidden="true" /> : <Shield size={13} aria-hidden="true" />}
+              <span>{fixedAccess === "full" ? "Full access" : "Ask first"}</span>
+            </div>
+            <p className="chat-settings__note">Start a new chat to change this.</p>
+          </div>
+        )}
       </div>}
     </div>
   );
