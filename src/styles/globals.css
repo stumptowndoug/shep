@@ -364,7 +364,7 @@ body.theme-clear .app-shell__frame {
   color: var(--fg);
 }
 .git-summary[aria-pressed="true"] {
-  background: var(--surface-strong);
+  background: var(--state-active);
   color: var(--fg);
 }
 .git-summary--plain { cursor: default; }
@@ -486,7 +486,7 @@ body.theme-clear .app-shell__frame {
   color: var(--fg);
 }
 .nav-item.on {
-  background: var(--surface-strong);
+  background: var(--state-active);
   color: var(--fg);
 }
 .nav-item:disabled,
@@ -651,7 +651,7 @@ body.theme-clear .app-shell__frame {
 }
 .list-item.active,
 .section-toggle.on {
-  background: var(--surface-strong);
+  background: var(--state-active);
   color: var(--fg);
 }
 .list-item.project-active {
@@ -710,7 +710,7 @@ body.theme-clear .app-shell__frame {
   color: var(--fg);
 }
 .tab.active {
-  background: var(--surface-strong);
+  background: var(--state-active);
   color: var(--fg);
 }
 .tab > img,
@@ -1224,7 +1224,7 @@ body.theme-clear .app-shell__frame {
 .page-tabs { display: flex; flex-wrap: wrap; gap: 4px; margin: -4px 0 32px; }
 .page-tabs button { padding: 7px 14px; border: 0; border-radius: var(--radius-pill); color: var(--muted); background: transparent; font-size: var(--text-sm); font-weight: 550; cursor: pointer; }
 .page-tabs button:hover { background: var(--state-hover); color: var(--fg); }
-.page-tabs button.on { background: var(--surface-strong); color: var(--fg); }
+.page-tabs button.on { background: var(--state-active); color: var(--fg); }
 .option-group { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 
 /* Launcher: agents are folder tabs on one strip; the chosen tab opens onto its panel. */
