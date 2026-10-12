@@ -423,7 +423,7 @@ body.theme-clear .app-shell__frame {
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: 22px;
+  gap: 14px;
   flex-shrink: 0;
   margin-top: 18px;
 }
