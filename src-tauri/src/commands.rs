@@ -874,6 +874,14 @@ pub async fn get_usage_snapshot(
     crate::usage::get_usage_snapshot(&db, &provider, &enabled, Some(app))
 }
 
+#[tauri::command]
+pub async fn record_muse_subscription_usage(
+    db: State<'_, UsageDb>,
+    usage: serde_json::Value,
+) -> Result<(), String> {
+    crate::usage::record_muse_subscription_usage(&db, &usage)
+}
+
 fn enabled_providers(workspace: &State<'_, WorkspaceManager>) -> crate::usage::EnabledProviders {
     let settings = workspace.load_usage_settings().unwrap_or_default();
     crate::usage::EnabledProviders {

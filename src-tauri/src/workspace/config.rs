@@ -316,6 +316,8 @@ pub struct UsageSettings {
     pub pi: ProviderBudgetConfig,
     #[serde(default = "default_provider_subscription")]
     pub grok: ProviderBudgetConfig,
+    #[serde(default = "default_provider_subscription")]
+    pub muse: ProviderBudgetConfig,
 }
 
 impl Default for UsageSettings {
@@ -337,6 +339,7 @@ impl Default for UsageSettings {
             },
             pi: ProviderBudgetConfig::default_custom(),
             grok: ProviderBudgetConfig::default_subscription(),
+            muse: ProviderBudgetConfig::default_subscription(),
         }
     }
 }

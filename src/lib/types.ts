@@ -182,7 +182,7 @@ export function panelTabId(kind: PanelTabKind): string {
 export const panelTabDefaults: Record<PanelTabKind, { label: string }> = {
   git: { label: "Changes" },
   commands: { label: "Commands" },
-  launcher: { label: "New tab" },
+  launcher: { label: "New agent" },
   todos: { label: "To-dos" },
 };
 
@@ -378,7 +378,7 @@ export interface PtyColorTheme {
 
 // ── Usage ──────────────────────────────────────────────────────────
 
-export type UsageProvider = "codex" | "cursor" | "claude" | "antigravity" | "gemini" | "opencode" | "pi" | "grok";
+export type UsageProvider = "codex" | "cursor" | "claude" | "antigravity" | "gemini" | "opencode" | "pi" | "grok" | "muse";
 export type ConfigurableUsageProvider = Exclude<UsageProvider, "gemini">;
 
 export type BudgetMode = "subscription" | "custom";
@@ -403,6 +403,7 @@ export interface UsageSettings {
   opencode: ProviderBudgetConfig;
   pi: ProviderBudgetConfig;
   grok: ProviderBudgetConfig;
+  muse: ProviderBudgetConfig;
 }
 export type UsageSourceType = "provider" | "local";
 export type UsageConfidence = "official" | "observed" | "estimated";

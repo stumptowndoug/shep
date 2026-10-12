@@ -10,6 +10,7 @@ import { isSessionTab, type UnifiedTab } from "../../lib/types";
 import { useProjectSettingsStore } from "../../stores/useProjectSettingsStore";
 import { agentDisplayLabel } from "../../lib/agentLabels";
 import GitSummary from "../git/GitSummary";
+import ProjectOpenMenu, { type ProjectOpenActions } from "../shared/ProjectOpenMenu";
 
 /** Render the icon for a tab based on its kind */
 function TabIcon({ tab }: { tab: UnifiedTab }) {
@@ -26,11 +27,13 @@ function TabIcon({ tab }: { tab: UnifiedTab }) {
 interface TabBarProps {
   onClose: (tabId: string) => void;
   changesActive: boolean;
+  openActions: ProjectOpenActions;
 }
 
 export default function TabBar({
   onClose,
   changesActive,
+  openActions,
 }: TabBarProps) {
   const { activeProjectPath, projectState } = useTerminalStore(
     useShallow((s) => ({ activeProjectPath: s.activeProjectPath, projectState: s.activeProjectPath ? s.projectState[s.activeProjectPath] : null })),
@@ -43,6 +46,11 @@ export default function TabBar({
   const { setActiveTab, reorderTab, updateTab } = useTerminalStore.getState();
 
   const [editingTabId, setEditingTabId] = useState<string | null>(null);
+  const [openMenu, setOpenMenu] = useState<{ x: number; y: number; anchor: HTMLElement } | null>(null);
+  const startAgent = () => {
+    useUIStore.getState().deactivateAllOverlays();
+    useTerminalStore.getState().addPanelTab("launcher");
+  };
   const [dragTabId, setDragTabId] = useState<string | null>(null);
   const [dropIndex, setDropIndex] = useState<number | null>(null);
   const dragRef = useRef({ startX: 0, didDrag: false, dropIndex: null as number | null });
@@ -207,20 +215,34 @@ export default function TabBar({
           );
         })}
 
+        {/* New agent leads the menu; ⇧⌘T still opens one directly. */}
         <button
           type="button"
           className="icon-btn"
-          onClick={() => {
-            useUIStore.getState().deactivateAllOverlays();
-            useTerminalStore.getState().addPanelTab("launcher");
-          }}
           onPointerDown={(event) => event.stopPropagation()}
+          onClick={(event) => {
+            const anchor = event.currentTarget;
+            const rect = anchor.getBoundingClientRect();
+            setOpenMenu(openMenu ? null : { x: rect.left, y: rect.bottom + 4, anchor });
+          }}
           disabled={!activeProjectPath}
-          title={`New tab (${tabKindMeta.launcher.shortcut})`}
-          aria-label="New tab"
+          title="New agent, terminal, changes, and more"
+          aria-label="New"
+          aria-haspopup="menu"
+          aria-expanded={openMenu !== null}
         >
           <Plus size={16} />
         </button>
+        {openMenu && (
+          <ProjectOpenMenu
+            x={openMenu.x}
+            y={openMenu.y}
+            anchor={openMenu.anchor}
+            actions={openActions}
+            onNewAgent={startAgent}
+            onClose={() => setOpenMenu(null)}
+          />
+        )}
       </div>
       {projectName && (
         <div className="tab-bar__context">

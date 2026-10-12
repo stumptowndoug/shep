@@ -1,7 +1,7 @@
 import type { ConfigurableUsageProvider, UsageProvider, UsageWindowSnapshot } from "../../lib/types";
 import type { UsageLimitVisibility } from "../../lib/usageLimitSettings";
 
-export const ALL_USAGE_PROVIDERS: ConfigurableUsageProvider[] = ["claude", "codex", "cursor", "antigravity", "opencode", "pi", "grok"];
+export const ALL_USAGE_PROVIDERS: ConfigurableUsageProvider[] = ["claude", "codex", "cursor", "antigravity", "opencode", "pi", "grok", "muse"];
 export const TONE_COLORS: Record<string, string> = {
   low: "color-mix(in srgb, var(--status-added) var(--color-opacity-utilization), transparent)",
   medium: "color-mix(in srgb, var(--status-attention) var(--color-opacity-utilization), transparent)",
@@ -36,6 +36,8 @@ export function getProviderLabel(provider: UsageProvider): string {
       return "pi";
     case "grok":
       return "Grok";
+    case "muse":
+      return "Muse Code";
   }
 }
 

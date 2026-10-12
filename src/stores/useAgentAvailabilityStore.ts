@@ -4,7 +4,7 @@ import { getErrorMessage } from "../lib/errors";
 import { checkCommandExists, getManagedAcpAdapter } from "../lib/tauri";
 import type { AcpAdapter } from "../lib/types";
 
-interface AvailabilityCheck {
+export interface AvailabilityCheck {
   available?: boolean;
   checking: boolean;
   error: string | null;

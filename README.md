@@ -34,8 +34,9 @@ an eye on your usage limits, all from one window instead of a pile of terminal t
   YOLO (auto-accept) modes, model selection, and saved drafts.
 - **Projects.** Groups, pinning, a Projects page, and a ⌘P switcher. Git worktrees are
   picked up automatically and nest under their main checkout.
-- **New tab launcher.** Pick an agent, or open a terminal, Commands, Changes,
-  To-dos, your editor, or Finder.
+- **New agent.** Pick an agent, then how it runs and its permissions, all on one
+  card. **More** in the sidebar, or the arrow beside **+** in the tab
+  bar, opens a terminal, Commands, Changes, To-dos, your editor, or Finder.
 - **Changes.** Changed files with +/− counts, Working/Staged views, Markdown
   previews, merge-conflict markers, and open-in-editor.
 - **Commands and Ports.** Saved per-project commands (dev servers, watchers, tests)
@@ -76,8 +77,8 @@ Requires macOS.
 1. **Add a project.** On first launch, Shep shows which agent CLIs it found and
    suggests git repos you've recently used with Claude Code or Codex. Add one with a
    click, or choose any folder.
-2. **Open a New tab** with the **+** in the tab bar (⌘⇧T) and pick an agent. Choose
-   Chat or Terminal, and Standard or YOLO.
+2. **Start a New agent** from the sidebar or the **+** in the tab bar (⌘⇧T). It opens
+   on the agent you used last; choose Chat or Terminal, and Ask first or YOLO.
 3. **Work across projects.** Switch with the sidebar or ⌘P. Sessions keep running
    in the background, and the sidebar shows which need your attention.
 4. **Review changes** with the branch button in the header (⌘G).
@@ -88,7 +89,7 @@ Requires macOS.
 | --- | --- |
 | ⌘P | Switch project |
 | ⌘⇧P | All projects |
-| ⌘⇧T | New tab |
+| ⌘⇧T | New agent |
 | ⌘T | New terminal |
 | ⌘G | Show Changes |
 | ⌘⇧C | Commands |

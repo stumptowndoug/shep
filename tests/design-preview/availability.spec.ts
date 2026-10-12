@@ -35,7 +35,7 @@ test("returning from a working chat preserves installation results during a rech
     void (await import("/src/stores/useAgentAvailabilityStore.ts")).useAgentAvailabilityStore.getState().refresh(true);
   });
   await expect(claude).toHaveCount(0);
-  await page.getByRole("button", { name: "New tab", exact: true }).click();
+  await page.locator(".side-nav--primary").getByRole("button", { name: /New agent/ }).click();
   await expect(claude).toContainText("Chat & terminal");
   await claude.click();
   await expect(page.getByRole("button", { name: "Chat", exact: true })).toBeEnabled();
@@ -76,7 +76,7 @@ test("a failed initial check is not a missing adapter", async ({ page }) => {
 test("returning from an external install discovers the newly available chat adapter", async ({ page }) => {
   await page.goto("/tests/design-preview/");
   const codex = page.getByRole("button", { name: "Codex", exact: true });
-  await expect(codex.locator(".agent-choice__meta")).toHaveText("Terminal");
+  await expect(codex.locator(".agent-tab__status")).toHaveText("Terminal");
   await codex.click();
   await expect(page.getByText("Set up Codex to use chat.")).toBeVisible();
   await page.evaluate(async () => {
@@ -116,7 +116,7 @@ for (const [name, command, owner] of [["Claude Code", "claude-agent-acp", "Claud
       await (await import("/src/stores/useAgentAvailabilityStore.ts")).useAgentAvailabilityStore.getState().refresh(true);
     }, command);
     const agent = page.getByRole("button", { name, exact: true });
-    await expect(agent.locator(".agent-choice__meta")).toHaveText("Terminal");
+    await expect(agent.locator(".agent-tab__status")).toHaveText("Terminal");
     await agent.click();
     await expect(page.getByText(`Installs ${owner}’s chat adapter inside Shep with npm. Needs Node.js.`)).toBeVisible();
     await expect(page.getByRole("button", { name: "Set up in terminal", exact: true })).toHaveCount(0);

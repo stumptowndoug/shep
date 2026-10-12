@@ -1,14 +1,18 @@
-import { ChartNoAxesCombined, History, Radio, Settings } from "lucide-react";
+import { useState } from "react";
+import { ChartNoAxesCombined, ChevronRight, Ellipsis, History, Plus, Radio, Settings } from "lucide-react";
 import { useUIStore } from "../../stores/useUIStore";
 import { useTerminalStore } from "../../stores/useTerminalStore";
 import tabKindMeta from "../../lib/tabKindMeta";
+import ProjectOpenMenu, { type ProjectOpenActions } from "../shared/ProjectOpenMenu";
 
-/** Opens the project's launcher: agents first, plus terminal, commands, files, to-dos. */
-export function SidebarNewAgent({ hasProject }: { hasProject: boolean }) {
+/** New agent is the main action; More opens everything else in the project. */
+export function SidebarNewAgent({ hasProject, openActions }: { hasProject: boolean; openActions: ProjectOpenActions }) {
+  const [menu, setMenu] = useState<{ x: number; y: number; anchor: HTMLElement } | null>(null);
   const startAgent = () => {
     useUIStore.getState().deactivateAllOverlays();
     useTerminalStore.getState().addPanelTab("launcher");
   };
+  const disabledTitle = hasProject ? undefined : "Add a project first";
 
   return (
     <div className="side-nav side-nav--primary">
@@ -16,12 +20,37 @@ export function SidebarNewAgent({ hasProject }: { hasProject: boolean }) {
         className="nav-item"
         onClick={hasProject ? startAgent : undefined}
         aria-disabled={!hasProject}
-        title={hasProject ? undefined : "Add a project first"}
+        title={disabledTitle}
       >
-        {tabKindMeta.launcher.icon(16)}
-        <span className="nav-item__label">New tab</span>
+        <Plus size={16} />
+        <span className="nav-item__label">New agent</span>
         <kbd className="nav-item__kbd">{tabKindMeta.launcher.shortcut}</kbd>
       </button>
+      <button
+        className="nav-item"
+        onClick={hasProject ? (event) => {
+          const anchor = event.currentTarget;
+          const rect = anchor.getBoundingClientRect();
+          setMenu(menu ? null : { x: rect.right + 6, y: rect.top, anchor });
+        } : undefined}
+        aria-disabled={!hasProject}
+        title={disabledTitle}
+        aria-haspopup="menu"
+        aria-expanded={menu !== null}
+      >
+        <Ellipsis size={16} />
+        <span className="nav-item__label">More</span>
+        <ChevronRight size={13} className="nav-item__chevron" />
+      </button>
+      {menu && (
+        <ProjectOpenMenu
+          x={menu.x}
+          y={menu.y}
+          anchor={menu.anchor}
+          actions={openActions}
+          onClose={() => setMenu(null)}
+        />
+      )}
     </div>
   );
 }

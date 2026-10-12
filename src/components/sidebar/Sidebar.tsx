@@ -11,6 +11,7 @@ import SidebarUsage from "./SidebarUsage";
 import AgentSessionList, { type AgentSessionItem } from "./AgentSessionList";
 import SidebarSectionToggle from "./SidebarSectionToggle";
 import type { ProjectHandlers } from "../shared/useProjectMenu";
+import type { ProjectOpenActions } from "../shared/ProjectOpenMenu";
 
 function agentSessionPriority(activity: TabActivity | undefined, agentInterface?: AgentInterface): number {
   if (agentInterface === "chat") {
@@ -30,6 +31,7 @@ interface SidebarProps {
   activeRepoPath: string | null;
   activeTabId: string | null;
   handlers: ProjectHandlers;
+  openActions: ProjectOpenActions;
   onSelectRepo: (repoPath: string) => void;
   onSelectProjectTab: (repoPath: string, tabId: string) => void;
 }
@@ -39,6 +41,7 @@ export default function Sidebar({
   activeRepoPath,
   activeTabId,
   handlers,
+  openActions,
   onSelectRepo,
   onSelectProjectTab,
 }: SidebarProps) {
@@ -88,7 +91,7 @@ export default function Sidebar({
   return (
     <aside className="sidebar" onContextMenu={(e) => e.preventDefault()}>
       <div className="sidebar-titlebar" onMouseDown={startWindowDrag} />
-      <SidebarNewAgent hasProject={activeRepoPath !== null} />
+      <SidebarNewAgent hasProject={activeRepoPath !== null} openActions={openActions} />
       <div className="side-scroll">
         <AgentSessionList
           sessions={agentSessions}
@@ -118,7 +121,7 @@ export default function Sidebar({
         <div className="side-island">
           <SidebarUsage />
         </div>
-        <div className="side-island">
+        <div className="side-island sidebar-toolbar">
           <SidebarNav />
         </div>
       </div>

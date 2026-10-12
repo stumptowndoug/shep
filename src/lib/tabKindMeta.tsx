@@ -28,7 +28,7 @@ const meta: Record<TabKind, TabKindMeta> = {
     shortcut: "⌘G",
   },
   launcher: {
-    label: "New tab",
+    label: "New agent",
     icon: (size) => <SquarePlus size={size} />,
     shortcut: "⇧⌘T",
   },

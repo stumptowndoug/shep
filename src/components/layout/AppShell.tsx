@@ -24,7 +24,8 @@ import { useGitWatcher } from "../../hooks/useGitWatcher";
 import { computeTerminalSize } from "../../lib/terminalMeasure";
 import { listen } from "@tauri-apps/api/event";
 import { ask, open } from "@tauri-apps/plugin-dialog";
-import { checkCommandExists, getUsername, getComputerName, getStorageWarning, openInEditor, saveWorkspace, refreshUsageData } from "../../lib/tauri";
+import { checkCommandExists, getUsername, getComputerName, getStorageWarning, openInEditor, revealInFinder, saveWorkspace, refreshUsageData } from "../../lib/tauri";
+import type { ProjectOpenActions } from "../shared/ProjectOpenMenu";
 import { requestAppShutdown } from "../../lib/appLifecycle";
 import { chatAdapterAvailable } from "../../lib/acp/adapters";
 import { sessionResumeInterface } from "../../lib/sessionResume";
@@ -621,14 +622,6 @@ export default function AppShell() {
     }
   }, [getTerminalDimensions, handleSelectRepo, spawnBlankShell]);
 
-  // From the launcher: open the tab, then retire the launcher like starting an agent does.
-  const handleLauncherOpen = useCallback(async (action: ProjectActionKind) => {
-    const repoPath = useTerminalStore.getState().activeProjectPath;
-    if (!repoPath) return;
-    await handleProjectAction(repoPath, action);
-    useTerminalStore.getState().removePanelTab("launcher");
-  }, [handleProjectAction]);
-
   const handleCreateCommand = useCallback(
     async (command: CommandConfig) => {
       if (!activeRepoPath) return false;
@@ -710,6 +703,28 @@ export default function AppShell() {
       });
     }
   }, [pushNotice]);
+
+  // The sidebar's More button and the tab bar's menu act on the active project.
+  const projectOpenActions = useMemo<ProjectOpenActions>(() => {
+    const activeProject = () => useTerminalStore.getState().activeProjectPath;
+    return {
+      open: (kind) => {
+        const repoPath = activeProject();
+        if (repoPath) void handleProjectAction(repoPath, kind);
+      },
+      openInEditor: () => {
+        const repoPath = activeProject();
+        if (repoPath) void handleOpenInEditor(repoPath);
+      },
+      revealInFinder: () => {
+        const repoPath = activeProject();
+        if (!repoPath) return;
+        revealInFinder(repoPath).catch((error) => {
+          pushNotice({ tone: "error", title: "Couldn’t open in Finder", message: getErrorMessage(error) });
+        });
+      },
+    };
+  }, [handleProjectAction, handleOpenInEditor, pushNotice]);
 
   const projectHandlers = useMemo<ProjectHandlers>(() => ({
     onAddProject: handleAddProject,
@@ -827,6 +842,7 @@ export default function AppShell() {
             activeRepoPath={activeRepoPath}
             activeTabId={showOverlay ? null : activeTabId}
             handlers={projectHandlers}
+            openActions={projectOpenActions}
             onSelectRepo={handleSelectRepo}
             onSelectProjectTab={handleSelectSidebarProjectTab}
           />
@@ -839,6 +855,7 @@ export default function AppShell() {
           >
             <TabBar
               onClose={handleCloseTab}
+              openActions={projectOpenActions}
               changesActive={!showOverlay && activeTab?.kind === "git"}
             />
           </div>
@@ -903,7 +920,7 @@ export default function AppShell() {
             )}
             {!showOverlay && activeTab?.kind === "launcher" && (
               <Suspense fallback={<PanelLoader />}>
-                <SessionLauncher onStartSession={handleStartSession} onRunInTerminal={handleRunInTerminal} onOpen={(action) => void handleLauncherOpen(action)} onOpenInEditor={() => { if (activeRepoPath) void handleOpenInEditor(activeRepoPath); }} />
+                <SessionLauncher onStartSession={handleStartSession} onRunInTerminal={handleRunInTerminal} />
               </Suspense>
             )}
             {!showOverlay && activeTab?.kind === "todos" && (
@@ -915,7 +932,7 @@ export default function AppShell() {
             {/* A project with no tabs lands on its launcher; with no projects at all, welcome. */}
             {!showOverlay && !activeTab && tabs.length === 0 && (activeRepoPath ? (
               <Suspense fallback={<PanelLoader />}>
-                <SessionLauncher onStartSession={handleStartSession} onRunInTerminal={handleRunInTerminal} onOpen={(action) => void handleLauncherOpen(action)} onOpenInEditor={() => { if (activeRepoPath) void handleOpenInEditor(activeRepoPath); }} />
+                <SessionLauncher onStartSession={handleStartSession} onRunInTerminal={handleRunInTerminal} />
               </Suspense>
             ) : repoLoadStatus === "error" ? (
               <div className="empty-state" role="alert">

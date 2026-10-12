@@ -144,6 +144,7 @@ pub fn get_all_usage_snapshots(
         grok_snapshot(&conn),
         opencode_snapshot(&conn),
         pi_snapshot(&conn),
+        muse_snapshot(&conn),
     ]
 }
 
@@ -166,6 +167,7 @@ pub fn get_usage_snapshot(
         "grok" => Ok(grok_snapshot(&conn)),
         "opencode" => Ok(opencode_snapshot(&conn)),
         "pi" => Ok(pi_snapshot(&conn)),
+        "muse" => Ok(muse_snapshot(&conn)),
         other => Err(format!("Unsupported usage provider: {other}")),
     }
 }
@@ -891,6 +893,214 @@ fn pi_snapshot(conn: &rusqlite::Connection) -> ProviderUsageSnapshot {
         extra_windows: Vec::new(),
         local_details: local,
         error: None,
+    }
+}
+
+/// Store the latest Muse subscription reading, as its chat adapter reports it
+/// (`SubscriptionUsage` from Muse's session protocol). Muse has no public
+/// on-demand quota API, so this is the only source of its limits.
+pub fn record_muse_subscription_usage(
+    db: &UsageDb,
+    usage: &serde_json::Value,
+) -> Result<(), String> {
+    let observed_ms = usage
+        .get("observedAtMs")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or("Muse usage is missing observedAtMs")?;
+    if muse_limit_windows(usage, observed_ms).is_empty() {
+        return Err("Muse usage has no readable windows".to_string());
+    }
+    let conn = db.conn.lock().unwrap();
+    // A reading never replaces a newer one, e.g. from another open chat.
+    conn.execute(
+        "INSERT INTO provider_observations (provider, payload, observed_at) VALUES ('muse', ?1, ?2)
+         ON CONFLICT(provider) DO UPDATE SET payload = excluded.payload, observed_at = excluded.observed_at
+         WHERE excluded.observed_at >= provider_observations.observed_at",
+        rusqlite::params![usage.to_string(), (observed_ms / 1000) as i64],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// The 5-hour and weekly windows from a reading, as of `now_ms`. A 5-hour
+/// window whose reset has passed has started over; a weekly window whose
+/// reset has passed is unknown, so it is left out rather than shown stale.
+fn muse_limit_windows(usage: &serde_json::Value, now_ms: u64) -> Vec<UsageWindowSnapshot> {
+    let read = |name: &str| {
+        let block = usage.get(name)?;
+        let used = block
+            .get("usedPercent")
+            .and_then(serde_json::Value::as_f64)?;
+        let resets_ms = block
+            .get("resetsAtMs")
+            .and_then(serde_json::Value::as_u64)?;
+        Some((used.max(0.0), resets_ms))
+    };
+    let window = |id: &str, scope: &str, used: f64, reset_at: Option<String>| UsageWindowSnapshot {
+        provider: "muse".to_string(),
+        window_id: format!("muse-{id}"),
+        window: id.to_string(),
+        label: id.to_string(),
+        scope: scope.to_string(),
+        limit: Some(100.0),
+        used: Some(used),
+        source_type: "provider".to_string(),
+        confidence: "observed".to_string(),
+        cost_kind: "included".to_string(),
+        used_percent: Some(used),
+        remaining_percent: Some((100.0 - used).max(0.0)),
+        reset_at,
+        token_total: None,
+        pace_status: None,
+    };
+    let iso = |ms: u64| helpers::iso_from_epoch_seconds(ms / 1000);
+
+    let mut windows = Vec::new();
+    if let Some((used, resets_ms)) = read("window") {
+        windows.push(if resets_ms > now_ms {
+            window("5h", "session", used, Some(iso(resets_ms)))
+        } else {
+            window("5h", "session", 0.0, None)
+        });
+    }
+    if let Some((used, resets_ms)) = read("weekly").filter(|(_, resets_ms)| *resets_ms > now_ms) {
+        windows.push(window("7d", "plan", used, Some(iso(resets_ms))));
+    }
+    windows
+}
+
+fn muse_snapshot(conn: &rusqlite::Connection) -> ProviderUsageSnapshot {
+    let local = queries::local_details(conn, "muse");
+    let reading: Option<(String, i64)> = conn
+        .query_row(
+            "SELECT payload, observed_at FROM provider_observations WHERE provider = 'muse'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .ok();
+    let now_ms = now_epoch_seconds() * 1000;
+    let limits = reading
+        .as_ref()
+        .and_then(|(payload, _)| serde_json::from_str::<serde_json::Value>(payload).ok())
+        .map(|usage| muse_limit_windows(&usage, now_ms))
+        .unwrap_or_default();
+
+    let mut summary_windows = limits;
+    if summary_windows.is_empty() {
+        if let Some(ref details) = local {
+            for (window, tokens) in [
+                ("5h", details.tokens_5h),
+                ("7d", details.tokens_7d),
+                ("30d", details.tokens_30d),
+            ] {
+                summary_windows.push(UsageWindowSnapshot {
+                    provider: "muse".to_string(),
+                    window_id: format!("muse-local-{window}"),
+                    window: window.to_string(),
+                    label: window.to_string(),
+                    scope: "reporting".to_string(),
+                    limit: None,
+                    used: None,
+                    source_type: "local".to_string(),
+                    confidence: "observed".to_string(),
+                    cost_kind: "unknown".to_string(),
+                    used_percent: None,
+                    remaining_percent: None,
+                    reset_at: None,
+                    token_total: Some(tokens),
+                    pace_status: None,
+                });
+            }
+        }
+    }
+
+    ProviderUsageSnapshot {
+        provider: "muse".to_string(),
+        status: if summary_windows.is_empty() {
+            "unavailable"
+        } else {
+            "ready"
+        }
+        .to_string(),
+        // When the limits were read, not when this snapshot was built.
+        fetched_at: match reading {
+            Some((_, observed_at)) => helpers::iso_from_epoch_seconds(observed_at.max(0) as u64),
+            None => helpers::now_iso_string(),
+        },
+        summary_windows,
+        extra_windows: Vec::new(),
+        local_details: local,
+        error: None,
+    }
+}
+
+#[cfg(test)]
+mod muse_usage_tests {
+    use super::*;
+
+    fn reading(observed_ms: u64, window_reset_ms: u64, weekly_reset_ms: u64) -> serde_json::Value {
+        serde_json::json!({
+            "observedAtMs": observed_ms,
+            "tier": "pro",
+            "window": { "usedPercent": 38, "resetsAtMs": window_reset_ms, "windowDurationMins": 300 },
+            "weekly": { "usedPercent": 12, "resetsAtMs": weekly_reset_ms },
+        })
+    }
+
+    #[test]
+    fn live_reading_shows_both_windows_with_resets() {
+        let windows = muse_limit_windows(&reading(1_000, 2_000_000, 9_000_000), 1_500);
+        let summary: Vec<_> = windows
+            .iter()
+            .map(|w| {
+                (
+                    w.window.as_str(),
+                    w.used_percent,
+                    w.remaining_percent,
+                    w.reset_at.is_some(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            summary,
+            vec![
+                ("5h", Some(38.0), Some(62.0), true),
+                ("7d", Some(12.0), Some(88.0), true)
+            ]
+        );
+    }
+
+    #[test]
+    fn a_passed_reset_starts_the_5h_window_over_and_drops_a_stale_week() {
+        let windows = muse_limit_windows(&reading(1_000, 2_000, 3_000), 5_000);
+        assert_eq!(windows.len(), 1);
+        assert_eq!(
+            (
+                windows[0].window.as_str(),
+                windows[0].used_percent,
+                windows[0].reset_at.clone()
+            ),
+            ("5h", Some(0.0), None)
+        );
+    }
+
+    #[test]
+    fn readings_are_stored_and_an_older_one_never_replaces_a_newer_one() {
+        let db = UsageDb::open_in_memory();
+        let far = now_epoch_seconds() * 1000 + 3_600_000;
+        record_muse_subscription_usage(&db, &reading(2_000_000, far, far)).unwrap();
+        let mut older = reading(1_000_000, far, far);
+        older["window"]["usedPercent"] = serde_json::json!(90);
+        record_muse_subscription_usage(&db, &older).unwrap();
+        assert!(
+            record_muse_subscription_usage(&db, &serde_json::json!({ "observedAtMs": 5 })).is_err()
+        );
+
+        let conn = db.conn.lock().unwrap();
+        let snapshot = muse_snapshot(&conn);
+        assert_eq!(snapshot.status, "ready");
+        assert_eq!(snapshot.summary_windows[0].used_percent, Some(38.0));
+        assert_eq!(snapshot.fetched_at, helpers::iso_from_epoch_seconds(2_000));
     }
 }
 
