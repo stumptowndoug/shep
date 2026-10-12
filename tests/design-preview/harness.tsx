@@ -173,6 +173,7 @@ mockIPC((cmd, payload) => {
       // A 1×1 PNG.
       return Uint8Array.from(atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='), c => c.charCodeAt(0)).buffer;
     }
+    case 'list_font_families': return [{family:'Georgia',isSystem:true},{family:'Preview Sans',isSystem:false}];
     case 'get_pi_config': return {settings:{defaultProvider:null,defaultModel:null},configuredProviders:[]};
     case 'get_all_usage_snapshots': return snapshots;
     case 'list_session_history': {
