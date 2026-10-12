@@ -17,8 +17,13 @@ installations default to Chat. History records which interface each session used
 and resumes it the same way.
 
 Chat for Claude Code, Codex, and Pi needs a separate ACP adapter (see the
-[README table](../README.md#supported-agents)). Cursor and OpenCode include ACP
-support in their CLIs. For Antigravity, Shep downloads Google's chat runtime for
+[README table](../README.md#supported-agents)). If it isn't installed, the launcher's
+**Install chat adapter** button installs a pinned version with your `npm` into
+Shep's application data folder, so it works wherever npm puts global packages and
+whatever is on your `PATH`. It needs Node.js. An adapter already on your `PATH`
+takes precedence. Shep rereads your shell's `PATH` when a command is missing, so
+CLIs and adapters installed while Shep is open are found without a restart.
+Cursor and OpenCode include ACP support in their CLIs. For Antigravity, Shep downloads Google's chat runtime for
 you and verifies it against pinned checksums. It is kept separate from `agy` and
 never changes your CLI installation or `PATH`.
 
