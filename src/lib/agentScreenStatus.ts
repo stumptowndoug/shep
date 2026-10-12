@@ -426,6 +426,51 @@ function detectPi(screen: string): AgentScreenDetection {
   return fallback("Pi");
 }
 
+function detectMuse(screen: string): AgentScreenDetection {
+  const recent = lastNonEmptyLines(screen, 12);
+  const lower = recent.toLocaleLowerCase();
+
+  if (lower.includes("allow once") && (lower.includes("reject once") || lower.includes("allow for this session"))) {
+    return matched(
+      "blocked",
+      "muse-approval",
+      "Muse is visibly asking for approval",
+      evidenceFor(recent, "allow once"),
+    );
+  }
+
+  if (lower.includes("do you trust this workspace?")) {
+    return matched(
+      "blocked",
+      "muse-trust-prompt",
+      "Muse is asking whether to trust the workspace",
+      evidenceFor(recent, "do you trust this workspace?"),
+    );
+  }
+
+  if (lower.includes("esc to interrupt")) {
+    return matched(
+      "working",
+      "muse-interrupt-hint",
+      "Muse's interrupt hint shows that it is working",
+      evidenceFor(recent, "esc to interrupt"),
+    );
+  }
+
+  // The live prompt sits between two rules, with the status footer below.
+  const [topRule, prompt, bottomRule] = lastNonEmptyLines(screen, 4).split("\n");
+  if (/^\s*─{2,}/u.test(topRule ?? "") && /^\s*❯/u.test(prompt ?? "") && /^\s*─{10,}\s*$/u.test(bottomRule ?? "")) {
+    return matched(
+      "idle",
+      "muse-live-prompt",
+      "Muse's live prompt is ready for input",
+      prompt.trim(),
+    );
+  }
+
+  return fallback("Muse");
+}
+
 function detectCursor(screen: string, title: string): AgentScreenDetection {
   const recent = lastNonEmptyLines(screen, 12);
   const recentLower = recent.toLocaleLowerCase();
@@ -513,6 +558,8 @@ export function detectAgentScreenStatus(
       return detectOpenCode(screen);
     case "pi":
       return detectPi(screen);
+    case "muse":
+      return detectMuse(screen);
     default:
       return preserve(
         "unsupported-provider",

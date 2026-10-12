@@ -36,6 +36,13 @@ export const CODING_ASSISTANTS: CodingAssistant[] = [
       setupNote: "Installs pi’s chat adapter inside Shep with npm. Needs Node.js.", setupAction: "Install chat adapter",
     },
   },
+  {
+    id: "muse", name: "Muse Code", command: "muse", yoloFlag: "--yolo", modelFlag: "--model",
+    acp: {
+      command: "muse-acp", args: [], install: "npm i -g @brokkai/muse-acp", managed: "muse",
+      setupNote: "Installs a community chat adapter for Muse inside Shep with npm. Needs Node.js 22 or newer.", setupAction: "Install chat adapter",
+    },
+  },
 ];
 
 export const ASSISTANT_INSTALL_URLS: Record<string, string> = {
@@ -45,4 +52,5 @@ export const ASSISTANT_INSTALL_URLS: Record<string, string> = {
   antigravity: "https://github.com/google-antigravity/antigravity-cli",
   opencode: "https://opencode.ai/",
   pi: "https://pi.dev/",
+  muse: "https://dev.meta.ai/products/muse-code",
 };

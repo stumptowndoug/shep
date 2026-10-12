@@ -21,6 +21,7 @@ const PROVIDER_LABELS: Record<string, string> = {
   antigravity: "Antigravity",
   opencode: "OpenCode",
   pi: "Pi",
+  muse: "Muse Code",
 };
 
 function projectName(path: string): string {

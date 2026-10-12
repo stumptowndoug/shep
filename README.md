@@ -3,7 +3,7 @@
 **A macOS workspace for running AI coding agents across all your projects, as a chat or in their own terminal.**
 
 Shep keeps your agents, terminals, commands, and git changes together, organized by
-project. Start Claude Code, Codex, Cursor, Antigravity, OpenCode, or Pi in a click,
+project. Start Claude Code, Codex, Cursor, Antigravity, OpenCode, Pi, or Muse Code in a click,
 see which sessions are working or waiting on you, review what they changed, and keep
 an eye on your usage limits, all from one window instead of a pile of terminal tabs.
 
@@ -57,6 +57,7 @@ an eye on your usage limits, all from one window instead of a pile of terminal t
 | Antigravity | `agy` | Installed by Shep from the launcher | ✓ |
 | OpenCode | `opencode` | Included with OpenCode | ✓ |
 | Pi | `pi` | Installed by Shep from the launcher (needs Node.js) | — |
+| Muse Code | `muse` | Community adapter, installed by Shep from the launcher (needs Node.js 22+) | ✓ |
 
 Install the CLI for any agent you want to run in a terminal. Chat needs the adapter
 in the third column; when one is missing, the launcher offers to install it. An

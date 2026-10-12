@@ -227,7 +227,7 @@ export interface AcpAdapter {
   /** Advertised authentication method to use before opening a session. */
   authMethodId?: string;
   /** Installed into Shep's application data directory by the setup button. */
-  managed?: "antigravity" | "claude" | "codex" | "pi";
+  managed?: "antigravity" | "claude" | "codex" | "muse" | "pi";
   /** Chat works without the agent's own CLI installed. */
   standalone?: boolean;
   /** Explains a managed install, and labels its button. */
