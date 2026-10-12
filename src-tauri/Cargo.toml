@@ -1,6 +1,6 @@
 [package]
 name = "shep"
-version = "0.10.1"
+version = "0.10.2"
 description = "Terminal workspace manager"
 authors = []
 license = "MIT"
