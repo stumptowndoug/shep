@@ -15,6 +15,7 @@ let releaseSession: (() => void) | undefined;
 let holdSession = true;
 let failPrompt = false;
 let canResume = true;
+let echoPrompt = false;
 const channels = new Map<number, Channel<AcpOutput>>();
 mockIPC((cmd, payload) => {
   const args = payload as Record<string, unknown>;
@@ -28,6 +29,16 @@ mockIPC((cmd, payload) => {
   if (message.method === "session/new" || message.method === "session/load") {
     const reply = () => emit({ result: { sessionId: message.params.sessionId ?? `session-${id}` } });
     if (holdSession) releaseSession = reply; else reply();
+  }
+  if (message.method === "session/prompt" && echoPrompt) {
+    // Like muse-acp: echo the prompt being answered, then reply.
+    const notify = (update: object) => channels.get(id)?.onmessage({ event: "line", data: JSON.stringify({ jsonrpc: "2.0", method: "session/update", params: { sessionId: message.params.sessionId, update } }) });
+    queueMicrotask(() => {
+      notify({ sessionUpdate: "user_message_chunk", content: { type: "text", text: message.params.prompt[0].text } });
+      notify({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Answer" } });
+      channels.get(id)?.onmessage({ event: "line", data: JSON.stringify({ jsonrpc: "2.0", id: message.id, result: { stopReason: "end_turn" } }) });
+    });
+    return null;
   }
   if (message.method === "session/prompt") emit(failPrompt ? { error: { code: -32603, message: "Preview provider unavailable" } } : { result: { stopReason: "max_turn_requests" } });
   return null;
@@ -45,7 +56,7 @@ function Harness() {
   const [results, setResults] = useState<string[]>([]);
   const run = async () => {
     setStatus("Running"); setResults([]);
-    holdSession = true; failPrompt = false; canResume = true; releaseSession = undefined;
+    holdSession = true; failPrompt = false; canResume = true; echoPrompt = false; releaseSession = undefined;
     const pass = (name: string) => setResults(rows => [...rows, `PASS: ${name}`]);
     try {
       useTerminalStore.getState().switchProject(repoPath);
@@ -76,6 +87,13 @@ function Harness() {
       assert(turnStopMessage(failed) === "Preview provider unavailable", "Error missing from turn");
       assert(!failed.items.some(item => item.kind === "notice"), "Error duplicated as a notice");
       pass("Prompt completion explains limits and preserves provider errors once");
+      failPrompt = false; echoPrompt = true;
+      sendPrompt(resumed, "What were the scores?");
+      await until(() => Boolean(useChatStore.getState().chats[resumed].turns[2]?.endedAt));
+      const echoed = useChatStore.getState().chats[resumed].turns;
+      assert(echoed.length === 3 && echoed[2].prompt === "What were the scores?", `Echoed prompt was duplicated: ${JSON.stringify(echoed.slice(2).map(turn => turn.prompt))}`);
+      echoPrompt = false;
+      pass("A prompt the agent echoes back is shown once");
       await closeChat(resumed);
       canResume = false;
       const replacement = await open(`session-${id}`);
@@ -83,7 +101,7 @@ function Harness() {
       const replacementKey = useChatStore.getState().chats[replacement].draftKey!;
       assert(replacementKey !== stable && useChatDraftStore.getState().drafts[replacementKey] === "Typed while starting", "Fallback to a new session lost the draft");
       pass("Agents without session/load preserve drafts in the replacement chat");
-      setStatus("All 4 checks passed");
+      setStatus("All 5 checks passed");
     } catch (error) { setStatus(`FAIL: ${error instanceof Error ? error.message : error}`); }
     finally {
       for (const id of Object.keys(useChatStore.getState().chats)) await closeChat(Number(id));
