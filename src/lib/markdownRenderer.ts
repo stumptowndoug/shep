@@ -1,6 +1,6 @@
 import markdownit, { type MarkdownIt, type RendererRule } from "markdown-it";
 import { fromHighlighter } from "@shikijs/markdown-it/core";
-import type { HighlighterGeneric } from "shiki";
+import type { BundledLanguage, HighlighterGeneric } from "shiki";
 import { getHighlighter } from "./shikiHighlighter";
 import { chatImageHtml } from "./acp/chatImages";
 
@@ -51,6 +51,9 @@ export function getMarkdownRenderer(theme: string): Promise<MarkdownIt> {
       markdown.use(
         fromHighlighter(highlighter as unknown as HighlighterGeneric<any, any>, {
           theme,
+          // Shiki throws on a language it hasn't loaded; agents name any language.
+          // "text" is Shiki's always-available plain language, which the option's type omits.
+          fallbackLanguage: "text" as BundledLanguage,
         }),
       );
       return markdown;
