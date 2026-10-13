@@ -15,6 +15,9 @@ test("long chats retain older text and clearly mark trimmed tool details", async
   await expect(chat.locator(".chat-turn")).toHaveCount(50);
   await expect(page.getByText("Answer 199", {exact:true})).toBeVisible();
   await expect(chat.locator(".chat-worked__items")).toHaveCount(0);
+  // Reading back up stops following the newest output.
+  await chat.locator(".chat-view__scroll").hover();
+  await page.mouse.wheel(0, -100_000);
   await page.getByRole("button", {name:"Show 50 earlier turns"}).click();
   await expect(chat.locator(".chat-turn")).toHaveCount(100);
   await chat.locator(".chat-worked summary").first().click();

@@ -43,6 +43,8 @@ interface ChatComposerProps {
   fullAccess: boolean;
   /** Open this agent's CLI in a new terminal tab, for commands chat can't run. */
   onOpenTerminal?: () => void;
+  /** A prompt was sent or queued. */
+  onSent?: () => void;
 }
 
 /** Where a chat's unsent composer text is kept. */
@@ -55,7 +57,7 @@ function fitHeight(textarea: HTMLTextAreaElement) {
   textarea.style.height = `${Math.min(textarea.scrollHeight, MAX_INPUT_HEIGHT)}px`;
 }
 
-export default function ChatComposer({ chatId, chat, repoPath, assistantId, agentName, fullAccess, onOpenTerminal }: ChatComposerProps) {
+export default function ChatComposer({ chatId, chat, repoPath, assistantId, agentName, fullAccess, onOpenTerminal, onSent }: ChatComposerProps) {
   const logo = assistantId ? assistantLogoSrc[assistantId] : undefined;
   const draftKey = composerDraftKey(chat, chatId);
   const text = useChatDraftStore((state) => state.drafts[draftKey] ?? "");
@@ -171,6 +173,7 @@ export default function ChatComposer({ chatId, chat, repoPath, assistantId, agen
     setText("");
     setImages([]);
     if (inputRef.current) inputRef.current.style.height = "auto";
+    onSent?.();
   };
 
   const pickCommand = (name: string) => {

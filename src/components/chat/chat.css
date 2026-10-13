@@ -33,12 +33,42 @@
   min-height: 0;
 }
 
+.chat-view__scroll-area {
+  position: relative;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
 .chat-view__scroll {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
 }
+
+/* Back to the newest output, shown while the user is reading history. */
+.chat-jump {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 11px;
+  border: none;
+  border-radius: var(--radius-pill);
+  background: var(--surface-strong);
+  box-shadow: var(--shadow);
+  color: var(--muted);
+  font-size: var(--text-xs);
+  font-weight: 650;
+  cursor: pointer;
+  transform: translateX(-50%);
+}
+.chat-jump:hover { color: var(--fg); }
 
 .chat-view__content,
 .chat-view__dock {
@@ -173,7 +203,7 @@
   color: var(--muted);
 }
 
-/* Folded work of a finished turn */
+/* A turn's folded work: thoughts, tools, and narration */
 .chat-worked {
   color: var(--muted);
   font-size: var(--text-sm);
@@ -182,6 +212,7 @@
   display: inline-flex;
   align-items: center;
   gap: 8px;
+  max-width: 100%;
   margin-left: -6px;
   padding: 4px 10px 4px 6px;
   border-radius: var(--radius-pill);
@@ -201,7 +232,24 @@
 .chat-worked[open] .chat-worked__chevron {
   transform: rotate(90deg);
 }
+.chat-worked__status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  max-width: 36ch;
+  color: var(--fg);
+  opacity: 0.78;
+}
+.chat-worked__status > svg { flex-shrink: 0; color: var(--muted); }
+.chat-worked__status > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .chat-worked__facts {
+  flex-shrink: 0;
   color: var(--faint);
   font-family: var(--font-mono);
   font-size: var(--text-xs);
@@ -418,6 +466,8 @@
 summary.chat-tool__row { cursor: pointer; }
 summary.chat-tool__row::-webkit-details-marker { display: none; }
 summary.chat-tool__row:hover { background: var(--state-hover); }
+summary.chat-tool__row--static { cursor: default; }
+summary.chat-tool__row--static:hover { background: none; }
 .chat-tool__row > svg { flex-shrink: 0; }
 .chat-tool__verb {
   flex-shrink: 0;

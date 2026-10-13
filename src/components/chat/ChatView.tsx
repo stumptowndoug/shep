@@ -1,6 +1,7 @@
-import { Fragment, useCallback, useMemo, useRef, useState, type CSSProperties } from "react";
-import { ChevronRight, CircleAlert, ShieldAlert, X } from "lucide-react";
+import { Fragment, useCallback, useMemo, useState, type CSSProperties } from "react";
+import { ArrowDown, ChevronRight, CircleAlert, ShieldAlert, X } from "lucide-react";
 import ChatComposer, { composerDraftKey } from "./ChatComposer";
+import { useFollowOutput } from "./useFollowOutput";
 import { ChatErrorNotice } from "./ChatItems";
 import { PromptImages, Turn } from "./ChatTurn";
 import { ChatAgentGroup } from "./ChatWorkers";
@@ -15,6 +16,7 @@ import { answerPermission, cancelChatStartup, cancelTurn } from "../../lib/acp/c
 import { isStopShortcut } from "../../lib/acp/chatKeys";
 import { openUrl } from "../../lib/tauri";
 import { pendingRequest, RECENT_TURN_LIMIT } from "../../lib/acp/chatModel";
+import { splitTurn } from "../../lib/acp/chatPresentation";
 import { waitingWorkerIds, type ChatWorker } from "../../lib/acp/chatWorkers";
 import { chatAppearanceStyle } from "../../lib/chatAppearance";
 import { buildCSSFontFamily } from "../../lib/terminalConfig";
@@ -25,8 +27,6 @@ import "./chat.css";
 /** Rejections first, the one-time allow last (it's the primary action). */
 const APPROVAL_ORDER = ["reject_always", "reject_once", "allow_always", "allow_once"];
 
-/** Distance from the bottom (px) within which new output keeps the view pinned. */
-const STICK_THRESHOLD = 48;
 const TURN_PAGE_SIZE = RECENT_TURN_LIMIT;
 const NO_WORKERS: ChatWorker[] = [];
 const NO_WAITING: ReadonlySet<string> = new Set();
@@ -90,8 +90,8 @@ export default function ChatView({ chatId, assistantId, repoPath, fullAccess, on
   const codeFont = useTerminalSettingsStore((s) => s.settings.fontFamily);
   const assistant = CODING_ASSISTANTS.find((entry) => entry.id === assistantId);
   const agentName = assistant?.name ?? "Agent";
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const stuckRef = useRef(true);
+  // Follows new output until the user scrolls up, and resumes once they're back at the end.
+  const { scrollerRef, following, followNow, stopFollowing } = useFollowOutput();
   const [visibleTurnCount, setVisibleTurnCount] = useState(TURN_PAGE_SIZE);
   const [openWorkerId, setOpenWorkerId] = useState<string | null>(null);
   const workers = chat?.workers ?? NO_WORKERS;
@@ -105,17 +105,6 @@ export default function ChatView({ chatId, assistantId, repoPath, fullAccess, on
   // A string key keeps the set stable while unrelated chat updates stream in.
   const waitingKey = chat ? waitingWorkerIds(chat).join("\n") : "";
   const waiting = useMemo(() => waitingKey ? new Set(waitingKey.split("\n")) : NO_WAITING, [waitingKey]);
-
-  // Keep the newest output in view while the user is already at the bottom.
-  const contentRef = useCallback((node: HTMLDivElement | null) => {
-    if (!node) return;
-    const observer = new ResizeObserver(() => {
-      const scroller = scrollRef.current;
-      if (scroller && stuckRef.current) scroller.scrollTop = scroller.scrollHeight;
-    });
-    observer.observe(node);
-    return () => observer.disconnect();
-  }, []);
 
   // Esc or Ctrl+C stops the agent from anywhere in this chat, or when nothing
   // has focus. Hidden chats (other tabs, overlays) and other focused UI are left alone.
@@ -146,20 +135,17 @@ export default function ChatView({ chatId, assistantId, repoPath, fullAccess, on
   const projectName = repoPath.split("/").filter(Boolean).pop() ?? repoPath;
   const orphans = workers.filter(worker => worker.turnId === undefined || !chat.turns.some(turn => turn.id === worker.turnId));
   const openWorker = workers.find(worker => worker.sessionId === openWorkerId);
+  // A running turn's folded work already says it's working.
+  const lastTurn = chat.turns[chat.turns.length - 1];
+  const workShown = lastTurn?.endedAt === null && splitTurn(lastTurn).work.length > 0;
 
   return (
     <ChatProjectPath value={repoPath}>
     <div ref={rootRef} className="chat-view" style={appearanceStyle as CSSProperties}>
       <div className="chat-view__main">
-        <div
-          ref={scrollRef}
-          className="chat-view__scroll"
-          onScroll={(event) => {
-            const el = event.currentTarget;
-            stuckRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < STICK_THRESHOLD;
-          }}
-        >
-          <div ref={contentRef} className="chat-view__content">
+        <div className="chat-view__scroll-area">
+        <div ref={scrollerRef} className="chat-view__scroll">
+          <div className="chat-view__content">
             {chat.turns.length === 0 && chat.status !== "exited" && (
               <div className="chat-empty">
                 <div className="chat-empty__eyebrow">
@@ -176,12 +162,12 @@ export default function ChatView({ chatId, assistantId, repoPath, fullAccess, on
               </div>
             )}
             {chat.turns.length > visibleTurnCount && <button type="button" className="btn-secondary" onClick={() => {
-              stuckRef.current = false;
+              stopFollowing();
               setVisibleTurnCount(count => count + TURN_PAGE_SIZE);
             }}>Show {Math.min(TURN_PAGE_SIZE, chat.turns.length - visibleTurnCount)} earlier turns</button>}
             {visibleTurnCount > TURN_PAGE_SIZE && <button type="button" className="btn-secondary" onClick={() => {
-              stuckRef.current = true;
               setVisibleTurnCount(TURN_PAGE_SIZE);
+              followNow();
             }}>Show recent turns</button>}
             {unsentPrompts.filter(prompt => prompt.afterTurnId === null).map((prompt, index) => <PendingMessage key={index} text={prompt.text} unsent />)}
             {chat.turns.slice(-visibleTurnCount).map((turn) => <Fragment key={turn.id}>
@@ -189,7 +175,7 @@ export default function ChatView({ chatId, assistantId, repoPath, fullAccess, on
               {unsentPrompts.filter(prompt => prompt.afterTurnId === turn.id).map((prompt, index) => <PendingMessage key={index} text={prompt.text} unsent />)}
             </Fragment>)}
             {orphans.length > 0 && <ChatAgentGroup workers={orphans} waiting={waiting} openId={openWorkerId} onOpen={setOpenWorkerId} />}
-            {chat.status === "working" && !request && <div className="chat-working chat-shimmer">Working</div>}
+            {chat.status === "working" && !request && !workShown && <div className="chat-working chat-shimmer">Working</div>}
             {chat.error && <ChatErrorNotice text={chat.error} />}
             {(chat.queuedImages?.length ?? 0) > 0 && <div className="chat-pending" role="group" aria-label="Queued images">
               <div className="chat-pending__head">
@@ -216,6 +202,10 @@ export default function ChatView({ chatId, assistantId, repoPath, fullAccess, on
               onRemove={() => takeQueued(chatId, index)}
             />)}
           </div>
+        </div>
+        {!following && <button type="button" className="chat-jump" onClick={followNow}>
+          <ArrowDown size={13} aria-hidden="true" /> Latest
+        </button>}
         </div>
 
         <div className="chat-view__dock">
@@ -254,7 +244,7 @@ export default function ChatView({ chatId, assistantId, repoPath, fullAccess, on
             </div>
           )}
           {request?.kind === "cursor_request" && <CursorRequestCard key={request.id} chatId={chatId} item={request} />}
-          <ChatComposer chatId={chatId} chat={chat} repoPath={repoPath} assistantId={assistantId} agentName={agentName} fullAccess={fullAccess} onOpenTerminal={onOpenTerminal} />
+          <ChatComposer chatId={chatId} chat={chat} repoPath={repoPath} assistantId={assistantId} agentName={agentName} fullAccess={fullAccess} onOpenTerminal={onOpenTerminal} onSent={followNow} />
         </div>
       </div>
       {openWorker && <ChatWorkerPeek
