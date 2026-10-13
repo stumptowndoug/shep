@@ -1,6 +1,6 @@
 import { Fragment, useCallback, useMemo, useRef, useState, type CSSProperties } from "react";
 import { ChevronRight, CircleAlert, ShieldAlert, X } from "lucide-react";
-import ChatComposer from "./ChatComposer";
+import ChatComposer, { composerDraftKey } from "./ChatComposer";
 import { ChatErrorNotice } from "./ChatItems";
 import { PromptImages, Turn } from "./ChatTurn";
 import { ChatAgentGroup } from "./ChatWorkers";
@@ -8,6 +8,7 @@ import ChatWorkerPeek from "./ChatWorkerPeek";
 import { ChatProjectPath } from "./chatProjectPath";
 import CursorRequestCard from "./CursorRequestCard";
 import { useChatStore } from "../../stores/useChatStore";
+import { useChatDraftStore } from "../../stores/useChatDraftStore";
 import { useChatAppearanceStore } from "../../stores/useChatAppearanceStore";
 import { useTerminalSettingsStore } from "../../stores/useTerminalSettingsStore";
 import { answerPermission, cancelChatStartup, cancelTurn } from "../../lib/acp/chatSessions";
@@ -45,13 +46,33 @@ function ChatSignIn({ chatId, url }: { chatId: number; url?: string }) {
   </>;
 }
 
-function PendingMessage({ text, unsent = false }: { text: string; unsent?: boolean }) {
+interface PendingMessageProps {
+  text: string;
+  unsent?: boolean;
+  /** Queued only: take it back into the composer, or drop it. */
+  onEdit?: (event: React.MouseEvent<HTMLButtonElement>) => void;
+  onRemove?: () => void;
+}
+
+function PendingMessage({ text, unsent = false, onEdit, onRemove }: PendingMessageProps) {
   return <div className="chat-pending" role="group" aria-label={unsent ? "Not sent message" : "Queued message"}>
-    <span className="chat-pending__label" title={unsent ? "This message was not sent to the agent." : "Will be sent when the current turn finishes."}>
-      {unsent ? "Not sent" : "Queued"}
-    </span>
+    <div className="chat-pending__head">
+      {onEdit && <button type="button" className="chat-pending__action" onClick={onEdit}>Edit</button>}
+      {onRemove && <button type="button" className="chat-pending__action" onClick={onRemove}>Remove</button>}
+      <span className="chat-pending__label" title={unsent ? "This message was not sent to the agent." : "Will be sent when the current turn finishes."}>
+        {unsent ? "Not sent" : "Queued"}
+      </span>
+    </div>
     <div className="chat-user">{text}</div>
   </div>;
+}
+
+/** Drop the queued follow-up at `index`, returning its text if it was still queued. */
+function takeQueued(chatId: number, index: number): string | null {
+  const text = useChatStore.getState().chats[chatId]?.queued[index];
+  if (text === undefined) return null;
+  useChatStore.getState().update(chatId, (state) => ({ ...state, queued: state.queued.filter((_, i) => i !== index) }));
+  return text;
 }
 
 interface ChatViewProps {
@@ -171,10 +192,29 @@ export default function ChatView({ chatId, assistantId, repoPath, fullAccess, on
             {chat.status === "working" && !request && <div className="chat-working chat-shimmer">Working</div>}
             {chat.error && <ChatErrorNotice text={chat.error} />}
             {(chat.queuedImages?.length ?? 0) > 0 && <div className="chat-pending" role="group" aria-label="Queued images">
-              <span className="chat-pending__label">Queued</span>
+              <div className="chat-pending__head">
+                <button type="button" className="chat-pending__action" onClick={() => {
+                  useChatStore.getState().update(chatId, (state) => ({ ...state, queuedImages: [] }));
+                }}>Remove</button>
+                <span className="chat-pending__label">Queued</span>
+              </div>
               <PromptImages images={chat.queuedImages} />
             </div>}
-            {chat.queued.map((text, index) => <PendingMessage key={index} text={text} />)}
+            {chat.queued.map((text, index) => <PendingMessage
+              key={index}
+              text={text}
+              onEdit={(event) => {
+                const taken = takeQueued(chatId, index);
+                if (taken === null) return;
+                // Back into the composer, after anything already being written there.
+                const drafts = useChatDraftStore.getState();
+                const key = composerDraftKey(chat, chatId);
+                const draft = drafts.drafts[key] ?? "";
+                drafts.setDraft(key, draft.trim() ? `${draft.trimEnd()}\n${taken}` : taken);
+                event.currentTarget.closest(".chat-view")?.querySelector<HTMLTextAreaElement>(".chat-composer__input")?.focus();
+              }}
+              onRemove={() => takeQueued(chatId, index)}
+            />)}
           </div>
         </div>
 

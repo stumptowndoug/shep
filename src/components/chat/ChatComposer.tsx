@@ -44,6 +44,11 @@ interface ChatComposerProps {
   onOpenTerminal?: () => void;
 }
 
+/** Where a chat's unsent composer text is kept. */
+export function composerDraftKey(chat: ChatState, chatId: number): string {
+  return chat.draftKey ?? `temporary:${chatId}`;
+}
+
 function fitHeight(textarea: HTMLTextAreaElement) {
   textarea.style.height = "auto";
   textarea.style.height = `${Math.min(textarea.scrollHeight, MAX_INPUT_HEIGHT)}px`;
@@ -51,7 +56,7 @@ function fitHeight(textarea: HTMLTextAreaElement) {
 
 export default function ChatComposer({ chatId, chat, repoPath, assistantId, agentName, fullAccess, onOpenTerminal }: ChatComposerProps) {
   const logo = assistantId ? assistantLogoSrc[assistantId] : undefined;
-  const draftKey = chat.draftKey ?? `temporary:${chatId}`;
+  const draftKey = composerDraftKey(chat, chatId);
   const text = useChatDraftStore((state) => state.drafts[draftKey] ?? "");
   const setText = (value: string) => useChatDraftStore.getState().setDraft(draftKey, value);
   const [highlight, setHighlight] = useState(0);

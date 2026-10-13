@@ -148,6 +148,22 @@
   gap: 4px;
   margin: 6px 0 10px;
 }
+.chat-pending__head { display: flex; align-items: center; gap: 4px; }
+.chat-pending__action {
+  padding: 1px 6px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--faint);
+  font: inherit;
+  font-size: var(--text-xs);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--fast), color var(--fast), background var(--fast);
+}
+.chat-pending:hover .chat-pending__action,
+.chat-pending__action:focus-visible { opacity: 1; }
+.chat-pending__action:hover { color: var(--fg); background: var(--state-hover); }
 .chat-pending__label {
   color: var(--muted);
   font-size: var(--text-xs);
