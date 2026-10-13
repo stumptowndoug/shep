@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { ArrowUp, ImagePlus, LoaderCircle, Square, Terminal, X } from "lucide-react";
 import Select from "../shared/Select";
 import ChatSettings from "./ChatSettings";
@@ -146,11 +147,14 @@ export default function ChatComposer({ chatId, chat, repoPath, assistantId, agen
     const insert = `@${path} `;
     const next = text.slice(0, activeMention.start) + insert + text.slice(caret);
     const at = activeMention.start + insert.length;
-    setText(next);
-    setCaret(at);
-    setHighlight(0);
-    // The textarea takes the new value on the next render; place the caret after it.
-    requestAnimationFrame(() => inputRef.current?.setSelectionRange(at, at));
+    // Render the new value now so the caret lands after the path before the next
+    // keystroke; placing it a frame later would move the caret back under typing.
+    flushSync(() => {
+      setText(next);
+      setCaret(at);
+      setHighlight(0);
+    });
+    inputRef.current?.setSelectionRange(at, at);
     inputRef.current?.focus();
   };
 
