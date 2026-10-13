@@ -1,6 +1,7 @@
 import { Fragment, useCallback, useMemo, useRef, useState, type CSSProperties } from "react";
 import { ChevronRight, CircleAlert, ShieldAlert, X } from "lucide-react";
 import ChatComposer from "./ChatComposer";
+import { ChatErrorNotice } from "./ChatItems";
 import { Turn } from "./ChatTurn";
 import { ChatAgentGroup } from "./ChatWorkers";
 import ChatWorkerPeek from "./ChatWorkerPeek";
@@ -40,7 +41,7 @@ function ChatSignIn({ chatId, url }: { chatId: number; url?: string }) {
       <button type="button" className="btn-secondary" onClick={() => cancelChatStartup(chatId)}>Cancel</button>
     </div>
     {url && <p className="field-note">Finish signing in in your browser. This chat will connect automatically.</p>}
-    {error && <p className="chat-error">Couldn’t open your browser. Try the sign-in button again.</p>}
+    {error && <ChatErrorNotice text="Couldn’t open your browser. Try the sign-in button again." />}
   </>;
 }
 
@@ -168,7 +169,7 @@ export default function ChatView({ chatId, assistantId, repoPath, fullAccess, on
             </Fragment>)}
             {orphans.length > 0 && <ChatAgentGroup workers={orphans} waiting={waiting} openId={openWorkerId} onOpen={setOpenWorkerId} />}
             {chat.status === "working" && !request && <div className="chat-working chat-shimmer">Working</div>}
-            {chat.error && <div className="chat-error">{chat.error}</div>}
+            {chat.error && <ChatErrorNotice text={chat.error} />}
             {chat.queued.map((text, index) => <PendingMessage key={index} text={text} />)}
           </div>
         </div>

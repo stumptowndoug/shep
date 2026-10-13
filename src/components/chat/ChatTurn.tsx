@@ -1,6 +1,6 @@
 import { memo, useState } from "react";
 import { ChevronRight } from "lucide-react";
-import { ChatItemView } from "./ChatItems";
+import { ChatErrorNotice, ChatItemView } from "./ChatItems";
 import { ChatAgentGroup } from "./ChatWorkers";
 import type { ChatTurn } from "../../lib/acp/chatModel";
 import type { ChatWorker } from "../../lib/acp/chatWorkers";
@@ -30,7 +30,8 @@ export const Turn = memo(function Turn({ turn, workers, waiting, openWorkerId = 
   const { work, answer } = splitTurn(turn);
   const tools = work.filter((item) => item.kind === "tool");
   const [workExpanded, setWorkExpanded] = useState<boolean | null>(null);
-  const showWork = workExpanded ?? tools.some((item) => item.kind === "tool" && item.status === "failed");
+  // Agents recover from failed tools on their own; only a failed turn opens its work.
+  const showWork = workExpanded ?? turn.stopReason === "error";
   const stopMessage = turnStopMessage(turn);
   const edits = tools.filter((item) => item.kind === "tool" && item.toolKind === "edit").length;
   const facts = [
@@ -58,7 +59,7 @@ export const Turn = memo(function Turn({ turn, workers, waiting, openWorkerId = 
         <ChatAgentGroup workers={workers} waiting={waiting} openId={openWorkerId} onOpen={onOpenWorker} />
       )}
       {answer.map((item) => <ChatItemView key={item.id} item={item} streaming={turn.endedAt === null} />)}
-      {stopMessage && <div className="chat-notice">{stopMessage}</div>}
+      {stopMessage && (turn.stopReason === "error" ? <ChatErrorNotice text={stopMessage} /> : <div className="chat-notice">{stopMessage}</div>)}
     </div>
   );
 });

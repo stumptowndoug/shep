@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { agentMedia, MAX_IMAGE_DATA, MAX_TOOL_TEXT, rawText } from "../src/lib/acp/chatContent.ts";
 import { addNotice, applySessionUpdate, emptyChat, endTurn, startTurn } from "../src/lib/acp/chatModel.ts";
-import { splitTurn, turnStopMessage } from "../src/lib/acp/chatPresentation.ts";
+import { errorTone, splitTurn, turnStopMessage } from "../src/lib/acp/chatPresentation.ts";
 
 const turn = () => startTurn(emptyChat(), "Review this change");
 const message = (text: string, messageId?: string) => ({ sessionUpdate: "agent_message_chunk", content: { type: "text", text }, messageId });
@@ -116,4 +116,13 @@ test("text diffs in tool output are recognized and split into colored lines", as
   // Ordinary output that merely has dashes or pluses stays plain.
   assert.equal(textDiffLines("- item one\n+ item two\nTotal: 2"), null);
   assert.equal(textDiffLines("--- original\n+++ updated\nno changes"), null);
+});
+
+test("limits read as warnings; other turn and session failures as errors", () => {
+  for (const text of ["Rate limit reached for claude-opus", "429 Too Many Requests", "You've hit your usage limit", "API Error: Overloaded"]) {
+    assert.equal(errorTone(text), "warning", text);
+  }
+  for (const text of ["Claude Code exited (code 1).", "Request failed", "Couldn’t start Codex: spawn ENOENT"]) {
+    assert.equal(errorTone(text), "error", text);
+  }
 });

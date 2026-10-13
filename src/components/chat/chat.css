@@ -319,17 +319,15 @@ summary.chat-tool__row:hover { background: var(--state-hover); }
 .chat-tool__added { color: var(--ok); }
 .chat-tool__removed { color: var(--danger); }
 
-/* Finished, successful work fades until you look at it. */
-.chat-tool:not(.chat-tool--live):not(.chat-tool--failed):not([open]) > .chat-tool__row {
+/* Finished work fades until you look at it, failed steps included: the agent
+   usually recovers on its own, so a failure is a detail, not an alarm. */
+.chat-tool:not(.chat-tool--live):not([open]) > .chat-tool__row {
   opacity: 0.55;
 }
 .chat-tool:not(.chat-tool--live) > .chat-tool__row:hover {
   opacity: 1;
 }
-.chat-tool--failed .chat-tool__row > svg,
-.chat-tool--failed .chat-tool__verb {
-  color: var(--danger);
-}
+.chat-tool__failed { color: var(--muted); }
 
 .chat-tool__body {
   display: grid;
@@ -532,14 +530,12 @@ summary.chat-tool__row:hover { background: var(--state-hover); }
   flex-shrink: 0;
   margin-top: 3px;
 }
-.chat-error {
-  padding: 12px 14px;
-  border-radius: var(--radius-lg);
-  background: var(--danger-ground);
-  color: var(--fg);
-  font-size: var(--text-sm);
-  white-space: pre-wrap;
-}
+.chat-notice--error,
+.chat-notice--warning { color: var(--fg); }
+.chat-notice--error > span,
+.chat-notice--warning > span { white-space: pre-wrap; overflow-wrap: anywhere; }
+.chat-notice--error > svg { color: var(--danger); }
+.chat-notice--warning > svg { color: var(--warn); }
 .chat-working {
   padding-bottom: 24px;
   font-size: var(--text-sm);
@@ -829,7 +825,7 @@ html[data-theme-tone="dark"] .chat-composer {
 .chat-agent__status { font-family: var(--font-sans); }
 .chat-agent--waiting .chat-agent__status,
 .chat-agent--disconnected .chat-agent__status { color: var(--warn); }
-.chat-agent--failed .chat-agent__status { color: var(--danger); }
+.chat-agent--failed .chat-agent__status { color: var(--muted); }
 .chat-agent__activity {
   overflow: hidden;
   margin: 0 0 2px 23px;
@@ -843,7 +839,9 @@ html[data-theme-tone="dark"] .chat-composer {
 .chat-agent__icon--completed { color: var(--ok); }
 .chat-agent__icon--waiting,
 .chat-agent__icon--disconnected { color: var(--warn); }
-.chat-agent__icon--failed { color: var(--danger); }
+.chat-agent__icon--failed { color: var(--muted); }
+/* The agent's own panel is where its failure gets the error tone. */
+.chat-peek__meta .chat-agent__icon--failed { color: var(--danger); }
 .chat-agent__dot {
   width: 7px;
   height: 7px;

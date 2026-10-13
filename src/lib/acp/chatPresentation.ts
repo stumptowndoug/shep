@@ -24,6 +24,13 @@ export function turnStopMessage(turn: ChatTurn): string | null {
   }
 }
 
+/** A limit is something to wait out, not a breakage: show it as a warning. */
+const LIMIT_ERROR = /rate[ -]?limit|usage limit|quota|too many requests|\b429\b|overloaded|credit balance|out of credits/i;
+
+export function errorTone(text: string): "warning" | "error" {
+  return LIMIT_ERROR.test(text) ? "warning" : "error";
+}
+
 export type TextDiffLineKind = "add" | "remove" | "hunk" | "header" | "context";
 export interface TextDiffLine { kind: TextDiffLineKind; text: string }
 

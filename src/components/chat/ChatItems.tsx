@@ -1,4 +1,4 @@
-import { memo, useEffect, useState } from "react";
+import { memo, useState } from "react";
 import { MultiFileDiff } from "@pierre/diffs/react";
 import {
   BookOpen,
@@ -21,7 +21,7 @@ import {
   X,
 } from "lucide-react";
 import ChatMarkdown from "./ChatMarkdown";
-import { textDiffLines } from "../../lib/acp/chatPresentation";
+import { errorTone, textDiffLines } from "../../lib/acp/chatPresentation";
 import type { ChatItem, ToolDiff } from "../../lib/acp/chatModel";
 import { useThemeStore } from "../../stores/useThemeStore";
 import { getCodeViewCSSVariables, getDiffViewOptions } from "../git/codeViewTheme";
@@ -31,26 +31,28 @@ type ItemOf<K extends ChatItem["kind"]> = Extract<ChatItem, { kind: K }>;
 
 const TOOL_OUTPUT_LINES = 16;
 
-/** Present tense while live, past tense once done (Springroll's tool rows). */
-const TOOL_VERBS: Record<string, [string, string, string]> = {
-  read: ["Reading", "Read", "Read failed"],
-  edit: ["Editing", "Edited", "Edit failed"],
-  delete: ["Deleting", "Deleted", "Delete failed"],
-  move: ["Moving", "Moved", "Move failed"],
-  search: ["Searching", "Searched", "Search failed"],
-  execute: ["Running", "Ran", "Command failed"],
-  fetch: ["Fetching", "Fetched", "Fetch failed"],
-  think: ["Thinking", "Thought", "Thinking failed"],
+/** Present tense while live, past tense once done (Springroll's tool rows).
+ * A failed tool keeps its past tense: agents recover from most failures
+ * (a nonzero exit, a search with no match), so it reads as ordinary work. */
+const TOOL_VERBS: Record<string, [string, string]> = {
+  read: ["Reading", "Read"],
+  edit: ["Editing", "Edited"],
+  delete: ["Deleting", "Deleted"],
+  move: ["Moving", "Moved"],
+  search: ["Searching", "Searched"],
+  execute: ["Running", "Ran"],
+  fetch: ["Fetching", "Fetched"],
+  think: ["Thinking", "Thought"],
 };
 
 /** Leading words agents put in titles that the verb already says. */
 const TITLE_VERB = /^(read|reading|edit|editing|write|writing|search|searching|grep|glob|find|run|running|fetch|fetching|delete|move)\b\s*/i;
 
-function toolParts(title: string, toolKind: string, live: boolean, failed: boolean) {
+function toolParts(title: string, toolKind: string, live: boolean) {
   const verbs = TOOL_VERBS[toolKind];
   if (!verbs) return { verb: null, target: title };
   const target = toolKind === "execute" ? title.replace(/^`|`$/g, "") : title.replace(TITLE_VERB, "") || title;
-  return { verb: verbs[failed ? 2 : live ? 0 : 1], target };
+  return { verb: verbs[live ? 0 : 1], target };
 }
 
 const TOOL_ICONS: Record<string, typeof Wrench> = {
@@ -98,10 +100,9 @@ function ToolRow({ item }: { item: ItemOf<"tool"> }) {
   const Icon = TOOL_ICONS[item.toolKind] ?? Wrench;
   const live = item.status === "pending" || item.status === "in_progress";
   const failed = item.status === "failed";
-  const [open, setOpen] = useState(failed);
+  const [open, setOpen] = useState(false);
   const [showEarlier, setShowEarlier] = useState(false);
-  useEffect(() => { if (failed) setOpen(true); }, [failed]);
-  const { verb, target } = toolParts(item.title, item.toolKind, live, failed);
+  const { verb, target } = toolParts(item.title, item.toolKind, live);
   const lines = item.output.trimEnd().split("\n");
   const earlier = Math.max(0, lines.length - TOOL_OUTPUT_LINES);
   const output = (showEarlier ? lines : lines.slice(-TOOL_OUTPUT_LINES)).join("\n");
@@ -114,18 +115,19 @@ function ToolRow({ item }: { item: ItemOf<"tool"> }) {
       added: textDiff.filter((line) => line.kind === "add").length,
       removed: textDiff.filter((line) => line.kind === "remove").length,
     } : null;
-  const className = `chat-tool ${live ? "chat-tool--live" : ""} ${failed ? "chat-tool--failed" : ""}`;
+  const className = `chat-tool ${live ? "chat-tool--live" : ""}`;
   const summary = (
     <>
       <Icon size={14} />
       {verb && <span className={`chat-tool__verb ${live ? "chat-shimmer" : ""}`}>{verb}</span>}
       <span className={`chat-tool__target ${isCommand ? "chat-tool__target--mono" : ""}`}>{target}</span>
-      {stats && (
+      {(stats || failed) && (
         <span className="chat-tool__deco">
-          <span className="chat-tool__added">+{stats.added}</span> <span className="chat-tool__removed">−{stats.removed}</span>
+          {stats && <><span className="chat-tool__added">+{stats.added}</span> <span className="chat-tool__removed">−{stats.removed}</span></>}
+          {stats && failed && " · "}
+          {failed && <span className="chat-tool__failed">failed</span>}
         </span>
       )}
-      {failed && <X size={13} />}
     </>
   );
 
@@ -152,6 +154,16 @@ function ToolRow({ item }: { item: ItemOf<"tool"> }) {
         {Boolean(item.omittedDiffs) && <div className="chat-diff__omitted">{item.omittedDiffs} more file changes omitted. Review them in your editor.</div>}
       </div>}
     </details>
+  );
+}
+
+/** A turn or session that stopped: one plain line, its icon carrying the tone. */
+export function ChatErrorNotice({ text }: { text: string }) {
+  return (
+    <div className={`chat-notice chat-notice--${errorTone(text)}`}>
+      <CircleAlert size={14} aria-hidden="true" />
+      <span>{text}</span>
+    </div>
   );
 }
 
