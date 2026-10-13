@@ -1,4 +1,4 @@
-import type { ChatItem, ChatTurn } from "./chatModel.ts";
+import type { ChatItem, ChatTurn, ToolDiff } from "./chatModel.ts";
 
 /** Keep every answer block after the last tool, including images and links. */
 export function splitTurn(turn: ChatTurn): { work: ChatItem[]; answer: ChatItem[] } {
@@ -22,6 +22,51 @@ export function turnStopMessage(turn: ChatTurn): string | null {
     case "error": return turn.error ?? null;
     default: return null;
   }
+}
+
+/** Rough +/- line counts for a diff summary. */
+export function diffStats(diffs: ToolDiff[]) {
+  let added = 0;
+  let removed = 0;
+  for (const diff of diffs) {
+    if (diff.truncated) continue;
+    const before = new Set((diff.oldText ?? "").split("\n"));
+    const after = new Set(diff.newText.split("\n"));
+    for (const line of after) if (!before.has(line)) added += 1;
+    for (const line of before) if (line && !after.has(line)) removed += 1;
+  }
+  return { added, removed };
+}
+
+export interface FileChange {
+  path: string;
+  diffs: ToolDiff[];
+  added: number;
+  removed: number;
+}
+
+/** Files a turn changed, in the order it first touched them, with their diffs
+ * and combined line counts. Failed edits didn't change anything. */
+export function turnChanges(turn: ChatTurn): FileChange[] {
+  const byPath = new Map<string, ToolDiff[]>();
+  for (const item of turn.items) {
+    if (item.kind !== "tool" || item.status === "failed") continue;
+    for (const diff of item.diffs) byPath.set(diff.path, [...(byPath.get(diff.path) ?? []), diff]);
+  }
+  return [...byPath].map(([path, diffs]) => ({ path, diffs, ...diffStats(diffs) }));
+}
+
+/** A path as shown in a project: relative when inside it. */
+export function projectRelativePath(path: string, repoPath: string): string {
+  const root = repoPath.replace(/\/+$/, "");
+  return root && path.startsWith(`${root}/`) ? path.slice(root.length + 1) : path;
+}
+
+/** A limit is something to wait out, not a breakage: show it as a warning. */
+const LIMIT_ERROR = /rate[ -]?limit|usage limit|quota|too many requests|\b429\b|overloaded|credit balance|out of credits/i;
+
+export function errorTone(text: string): "warning" | "error" {
+  return LIMIT_ERROR.test(text) ? "warning" : "error";
 }
 
 export type TextDiffLineKind = "add" | "remove" | "hunk" | "header" | "context";

@@ -310,7 +310,10 @@ body.theme-clear .app-shell__frame {
   min-width: 0;
   min-height: 0;
   flex-direction: column;
-  padding: 0 12px 10px;
+  /* Content inset; edge-to-edge surfaces (the chat's agent peek) bleed back over it. */
+  --workspace-inset-x: 12px;
+  --workspace-inset-bottom: 10px;
+  padding: 0 var(--workspace-inset-x) var(--workspace-inset-bottom);
   container-type: inline-size;
   container-name: workspace;
 }

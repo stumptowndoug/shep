@@ -30,7 +30,7 @@ export function createStreamBatch(publish: (updates: TextUpdate[]) => void) {
     enqueue(update: TextUpdate) {
       if (!update.content.text) return;
       const previous = pending[pending.length - 1];
-      if (previous?.sessionUpdate === update.sessionUpdate && previous.messageId === update.messageId) {
+      if (previous?.sessionUpdate === update.sessionUpdate && previous.messageId === update.messageId && previous.routeSessionId === update.routeSessionId) {
         previous.content.text += update.content.text;
         previous.messageId ??= update.messageId;
       } else {

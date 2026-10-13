@@ -799,6 +799,76 @@ pub fn create_branch(path: &str, branch_name: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Most files a project lists for chat's `@` file picker.
+pub const MAX_PROJECT_FILES: usize = 50_000;
+
+/// Files in a project, relative to it, for referencing in chat. In a git
+/// repo: tracked plus untracked-but-not-ignored, so build output and
+/// dependencies stay out. Elsewhere: a bounded walk that skips hidden and
+/// dependency folders.
+pub fn project_files(path: &str) -> Result<Vec<String>, String> {
+    let output = read_only_git()
+        .args([
+            "-C",
+            path,
+            "ls-files",
+            "-z",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+        ])
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !output.status.success() {
+        return Ok(walk_files(std::path::Path::new(path)));
+    }
+    let mut files: Vec<String> = String::from_utf8_lossy(&output.stdout)
+        .split('\0')
+        .filter(|entry| !entry.is_empty())
+        .map(str::to_string)
+        .collect();
+    // A file deleted from the worktree but still in the index isn't there to reference.
+    files.retain(|file| std::path::Path::new(path).join(file).is_file());
+    files.sort();
+    files.dedup();
+    files.truncate(MAX_PROJECT_FILES);
+    Ok(files)
+}
+
+fn walk_files(root: &std::path::Path) -> Vec<String> {
+    const SKIP: [&str; 4] = ["node_modules", "target", "dist", "build"];
+    let mut files = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name.starts_with('.') || SKIP.contains(&name.as_ref()) {
+                continue;
+            }
+            let Ok(kind) = entry.file_type() else {
+                continue;
+            };
+            if kind.is_dir() {
+                stack.push(entry.path());
+            } else if kind.is_file() {
+                if let Ok(relative) = entry.path().strip_prefix(root) {
+                    files.push(relative.to_string_lossy().into_owned());
+                }
+                if files.len() >= MAX_PROJECT_FILES {
+                    files.sort();
+                    return files;
+                }
+            }
+        }
+    }
+    files.sort();
+    files
+}
+
 #[cfg(test)]
 mod review_tests {
     use super::*;
@@ -944,5 +1014,52 @@ mod review_tests {
         assert!(diff.contains("@@ -"), "{diff}");
         assert!(diff.contains("+<<<<<<<"), "{diff}");
         assert!(!diff.contains("@@@"));
+    }
+}
+
+#[cfg(test)]
+mod project_files_tests {
+    use super::*;
+
+    #[test]
+    fn lists_tracked_and_untracked_files_but_not_ignored_ones() {
+        let path = std::env::temp_dir().join(format!("shep-project-files-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir_all(path.join("src")).unwrap();
+        std::fs::create_dir_all(path.join("node_modules/pkg")).unwrap();
+        let root = path.to_str().unwrap();
+        assert!(Command::new("git")
+            .args(["-C", root, "init", "-q"])
+            .status()
+            .unwrap()
+            .success());
+        std::fs::write(path.join(".gitignore"), "node_modules/\n").unwrap();
+        std::fs::write(path.join("src/main.rs"), "").unwrap();
+        std::fs::write(path.join("README.md"), "").unwrap();
+        std::fs::write(path.join("node_modules/pkg/index.js"), "").unwrap();
+        assert!(Command::new("git")
+            .args(["-C", root, "add", "src/main.rs"])
+            .status()
+            .unwrap()
+            .success());
+        assert_eq!(
+            project_files(root).unwrap(),
+            [".gitignore", "README.md", "src/main.rs"]
+        );
+        let _ = std::fs::remove_dir_all(&path);
+    }
+
+    #[test]
+    fn outside_git_walks_files_skipping_hidden_and_dependency_folders() {
+        let path = std::env::temp_dir().join(format!("shep-project-walk-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&path);
+        for dir in ["docs", ".cache", "node_modules"] {
+            std::fs::create_dir_all(path.join(dir)).unwrap();
+        }
+        for file in ["notes.md", "docs/plan.md", ".cache/x", "node_modules/y"] {
+            std::fs::write(path.join(file), "").unwrap();
+        }
+        assert_eq!(walk_files(&path), ["docs/plan.md", "notes.md"]);
+        let _ = std::fs::remove_dir_all(&path);
     }
 }

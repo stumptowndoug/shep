@@ -32,6 +32,11 @@ function createMarkdownRenderer(): MarkdownIt {
     return chatImageHtml(String(token.attrGet("src") ?? ""), alt, markdown.utils.escapeHtml);
   };
 
+  // Every code block gets a copy button; the chat's click handler does the copying.
+  const defaultFence = markdown.renderer.rules.fence!;
+  markdown.renderer.rules.fence = (tokens, idx, options, env, self) =>
+    `<div class="chat-code">${defaultFence(tokens, idx, options, env, self)}<button type="button" class="chat-code__copy" aria-label="Copy code">Copy</button></div>`;
+
   markdown.renderer.rules.link_open = (tokens, idx, options, env, self) => {
     const token = tokens[idx];
     token.attrSet("target", "_blank");

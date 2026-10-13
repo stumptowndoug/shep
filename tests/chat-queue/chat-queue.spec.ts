@@ -158,3 +158,38 @@ for (const theme of ["catppuccin", "github-light"]) {
     await expect(unsent(page).getByText("Not sent", { exact: true })).toBeVisible();
   });
 }
+
+test("a queued message can be taken back to edit, or removed, before it's sent", async ({ page }) => {
+  await open(page);
+  await send(page, "Start the review");
+  await send(page, "Check the tests too");
+  await send(page, "And the docs");
+  await expect(queued(page)).toHaveCount(2);
+
+  await queued(page).first().hover();
+  await queued(page).first().getByRole("button", { name: "Edit" }).click();
+  await expect(input(page)).toHaveValue("Check the tests too");
+  await expect(input(page)).toBeFocused();
+  await expect(queued(page).locator(".chat-user")).toHaveText(["And the docs"]);
+
+  await queued(page).first().hover();
+  await queued(page).first().getByRole("button", { name: "Remove" }).click();
+  await expect(queued(page)).toHaveCount(0);
+
+  await input(page).fill("Check the tests and the lint");
+  await input(page).press("Enter");
+  await action(page, "finish");
+  const { requests } = await snapshot(page);
+  expect(requests).toHaveLength(2);
+  expect(requests[1]).toEqual([{ type: "text", text: "Check the tests and the lint" }]);
+});
+
+test("editing a queued message keeps what's already in the composer", async ({ page }) => {
+  await open(page);
+  await send(page, "Start");
+  await send(page, "Queued thought");
+  await input(page).fill("Half-written");
+  await queued(page).hover();
+  await queued(page).getByRole("button", { name: "Edit" }).click();
+  await expect(input(page)).toHaveValue("Half-written\nQueued thought");
+});

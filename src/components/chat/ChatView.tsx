@@ -1,17 +1,21 @@
-import { Fragment, memo, useCallback, useRef, useState, type CSSProperties } from "react";
+import { Fragment, useCallback, useMemo, useRef, useState, type CSSProperties } from "react";
 import { ChevronRight, CircleAlert, ShieldAlert, X } from "lucide-react";
-import { ChatItemView } from "./ChatItems";
-import ChatComposer from "./ChatComposer";
+import ChatComposer, { composerDraftKey } from "./ChatComposer";
+import { ChatErrorNotice } from "./ChatItems";
+import { PromptImages, Turn } from "./ChatTurn";
+import { ChatAgentGroup } from "./ChatWorkers";
+import ChatWorkerPeek from "./ChatWorkerPeek";
 import { ChatProjectPath } from "./chatProjectPath";
 import CursorRequestCard from "./CursorRequestCard";
 import { useChatStore } from "../../stores/useChatStore";
+import { useChatDraftStore } from "../../stores/useChatDraftStore";
 import { useChatAppearanceStore } from "../../stores/useChatAppearanceStore";
 import { useTerminalSettingsStore } from "../../stores/useTerminalSettingsStore";
 import { answerPermission, cancelChatStartup, cancelTurn } from "../../lib/acp/chatSessions";
 import { isStopShortcut } from "../../lib/acp/chatKeys";
 import { openUrl } from "../../lib/tauri";
-import { pendingRequest, RECENT_TURN_LIMIT, type ChatTurn } from "../../lib/acp/chatModel";
-import { splitTurn, turnStopMessage } from "../../lib/acp/chatPresentation";
+import { pendingRequest, RECENT_TURN_LIMIT } from "../../lib/acp/chatModel";
+import { waitingWorkerIds, type ChatWorker } from "../../lib/acp/chatWorkers";
 import { chatAppearanceStyle } from "../../lib/chatAppearance";
 import { buildCSSFontFamily } from "../../lib/terminalConfig";
 import { assistantLogoSrc, getAssistantLogoClass } from "../../lib/assistantLogos";
@@ -24,6 +28,8 @@ const APPROVAL_ORDER = ["reject_always", "reject_once", "allow_always", "allow_o
 /** Distance from the bottom (px) within which new output keeps the view pinned. */
 const STICK_THRESHOLD = 48;
 const TURN_PAGE_SIZE = RECENT_TURN_LIMIT;
+const NO_WORKERS: ChatWorker[] = [];
+const NO_WAITING: ReadonlySet<string> = new Set();
 
 function ChatSignIn({ chatId, url }: { chatId: number; url?: string }) {
   const [error, setError] = useState(false);
@@ -36,63 +42,38 @@ function ChatSignIn({ chatId, url }: { chatId: number; url?: string }) {
       <button type="button" className="btn-secondary" onClick={() => cancelChatStartup(chatId)}>Cancel</button>
     </div>
     {url && <p className="field-note">Finish signing in in your browser. This chat will connect automatically.</p>}
-    {error && <p className="chat-error">Couldn’t open your browser. Try the sign-in button again.</p>}
+    {error && <ChatErrorNotice text="Couldn’t open your browser. Try the sign-in button again." />}
   </>;
 }
 
-function formatDuration(ms: number): string {
-  const seconds = Math.max(1, Math.round(ms / 1000));
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.floor(seconds / 60);
-  return `${minutes}m ${seconds % 60}s`;
+interface PendingMessageProps {
+  text: string;
+  unsent?: boolean;
+  /** Queued only: take it back into the composer, or drop it. */
+  onEdit?: (event: React.MouseEvent<HTMLButtonElement>) => void;
+  onRemove?: () => void;
 }
 
-function plural(count: number, word: string): string {
-  return `${count} ${word}${count === 1 ? "" : "s"}`;
-}
-
-function PendingMessage({ text, unsent = false }: { text: string; unsent?: boolean }) {
+function PendingMessage({ text, unsent = false, onEdit, onRemove }: PendingMessageProps) {
   return <div className="chat-pending" role="group" aria-label={unsent ? "Not sent message" : "Queued message"}>
-    <span className="chat-pending__label" title={unsent ? "This message was not sent to the agent." : "Will be sent when the current turn finishes."}>
-      {unsent ? "Not sent" : "Queued"}
-    </span>
+    <div className="chat-pending__head">
+      {onEdit && <button type="button" className="chat-pending__action" onClick={onEdit}>Edit</button>}
+      {onRemove && <button type="button" className="chat-pending__action" onClick={onRemove}>Remove</button>}
+      <span className="chat-pending__label" title={unsent ? "This message was not sent to the agent." : "Will be sent when the current turn finishes."}>
+        {unsent ? "Not sent" : "Queued"}
+      </span>
+    </div>
     <div className="chat-user">{text}</div>
   </div>;
 }
 
-const Turn = memo(function Turn({ turn }: { turn: ChatTurn }) {
-  const { work, answer } = splitTurn(turn);
-  const tools = work.filter((item) => item.kind === "tool");
-  const [workExpanded, setWorkExpanded] = useState<boolean | null>(null);
-  const showWork = workExpanded ?? tools.some((item) => item.kind === "tool" && item.status === "failed");
-  const stopMessage = turnStopMessage(turn);
-  const edits = tools.filter((item) => item.kind === "tool" && item.toolKind === "edit").length;
-  const facts = [
-    formatDuration((turn.endedAt ?? Date.now()) - turn.startedAt),
-    tools.length > 0 ? plural(tools.length, "step") : null,
-    edits > 0 ? plural(edits, "edit") : null,
-  ].filter(Boolean).join(" · ");
-  return (
-    <div className="chat-turn">
-      {turn.prompt && <div className="chat-user">{turn.prompt}</div>}
-      {turn.additionalPrompts?.map((text, index) => <div key={index} className="chat-user">{text}</div>)}
-      {work.length > 0 && (
-        <details className="chat-worked" open={showWork} onToggle={(event) => setWorkExpanded(event.currentTarget.open)}>
-          <summary>
-            <ChevronRight size={14} className="chat-worked__chevron" />
-            <span>Worked</span>
-            <span className="chat-worked__facts">{facts}</span>
-          </summary>
-          {showWork && <div className="chat-worked__items">
-            {work.map((item) => <ChatItemView key={item.id} item={item} streaming={turn.endedAt === null} />)}
-          </div>}
-        </details>
-      )}
-      {answer.map((item) => <ChatItemView key={item.id} item={item} streaming={turn.endedAt === null} />)}
-      {stopMessage && <div className="chat-notice">{stopMessage}</div>}
-    </div>
-  );
-});
+/** Drop the queued follow-up at `index`, returning its text if it was still queued. */
+function takeQueued(chatId: number, index: number): string | null {
+  const text = useChatStore.getState().chats[chatId]?.queued[index];
+  if (text === undefined) return null;
+  useChatStore.getState().update(chatId, (state) => ({ ...state, queued: state.queued.filter((_, i) => i !== index) }));
+  return text;
+}
 
 interface ChatViewProps {
   chatId: number;
@@ -112,6 +93,18 @@ export default function ChatView({ chatId, assistantId, repoPath, fullAccess, on
   const scrollRef = useRef<HTMLDivElement>(null);
   const stuckRef = useRef(true);
   const [visibleTurnCount, setVisibleTurnCount] = useState(TURN_PAGE_SIZE);
+  const [openWorkerId, setOpenWorkerId] = useState<string | null>(null);
+  const workers = chat?.workers ?? NO_WORKERS;
+  // Group by the turn that started them. Workers from before any turn (a
+  // resumed session's replay) have nowhere to sit, so they follow the turns.
+  const workersByTurn = useMemo(() => {
+    const groups = new Map<number | undefined, ChatWorker[]>();
+    for (const worker of workers) groups.set(worker.turnId, [...(groups.get(worker.turnId) ?? []), worker]);
+    return groups;
+  }, [workers]);
+  // A string key keeps the set stable while unrelated chat updates stream in.
+  const waitingKey = chat ? waitingWorkerIds(chat).join("\n") : "";
+  const waiting = useMemo(() => waitingKey ? new Set(waitingKey.split("\n")) : NO_WAITING, [waitingKey]);
 
   // Keep the newest output in view while the user is already at the bottom.
   const contentRef = useCallback((node: HTMLDivElement | null) => {
@@ -151,91 +144,126 @@ export default function ChatView({ chatId, assistantId, repoPath, fullAccess, on
   const permission = request?.kind === "permission" ? request : undefined;
   const logo = assistantId ? assistantLogoSrc[assistantId] : undefined;
   const projectName = repoPath.split("/").filter(Boolean).pop() ?? repoPath;
+  const orphans = workers.filter(worker => worker.turnId === undefined || !chat.turns.some(turn => turn.id === worker.turnId));
+  const openWorker = workers.find(worker => worker.sessionId === openWorkerId);
 
   return (
     <ChatProjectPath value={repoPath}>
     <div ref={rootRef} className="chat-view" style={appearanceStyle as CSSProperties}>
-      <div
-        ref={scrollRef}
-        className="chat-view__scroll"
-        onScroll={(event) => {
-          const el = event.currentTarget;
-          stuckRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < STICK_THRESHOLD;
-        }}
-      >
-        <div ref={contentRef} className="chat-view__content">
-          {chat.turns.length === 0 && chat.status !== "exited" && (
-            <div className="chat-empty">
-              <div className="chat-empty__eyebrow">
-                {logo && <img src={logo} alt="" width={14} height={14} className={getAssistantLogoClass(assistantId!)} />}
-                <span>{agentName} · {projectName}</span>
+      <div className="chat-view__main">
+        <div
+          ref={scrollRef}
+          className="chat-view__scroll"
+          onScroll={(event) => {
+            const el = event.currentTarget;
+            stuckRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < STICK_THRESHOLD;
+          }}
+        >
+          <div ref={contentRef} className="chat-view__content">
+            {chat.turns.length === 0 && chat.status !== "exited" && (
+              <div className="chat-empty">
+                <div className="chat-empty__eyebrow">
+                  {logo && <img src={logo} alt="" width={14} height={14} className={getAssistantLogoClass(assistantId!)} />}
+                  <span>{agentName} · {projectName}</span>
+                </div>
+                <h1 className="chat-empty__title">New chat.</h1>
+                <p role={chat.status === "starting" ? "status" : undefined} className={`chat-empty__lede ${chat.status === "starting" && !chat.startup?.authUrl ? "chat-shimmer" : ""}`}>
+                  {chat.status === "starting"
+                    ? chat.startup?.message ?? `Starting ${agentName}…`
+                    : fullAccess ? "Full access." : "Asks before making changes."}
+                </p>
+                {chat.status === "starting" && chat.startup && <ChatSignIn chatId={chatId} url={chat.startup.authUrl} />}
               </div>
-              <h1 className="chat-empty__title">New chat.</h1>
-              <p role={chat.status === "starting" ? "status" : undefined} className={`chat-empty__lede ${chat.status === "starting" && !chat.startup?.authUrl ? "chat-shimmer" : ""}`}>
-                {chat.status === "starting"
-                  ? chat.startup?.message ?? `Starting ${agentName}…`
-                  : `${fullAccess ? "Full access: it edits and runs commands without asking." : "It asks before editing or running commands."} Type / for commands.`}
-              </p>
-              {chat.status === "starting" && chat.startup && <ChatSignIn chatId={chatId} url={chat.startup.authUrl} />}
+            )}
+            {chat.turns.length > visibleTurnCount && <button type="button" className="btn-secondary" onClick={() => {
+              stuckRef.current = false;
+              setVisibleTurnCount(count => count + TURN_PAGE_SIZE);
+            }}>Show {Math.min(TURN_PAGE_SIZE, chat.turns.length - visibleTurnCount)} earlier turns</button>}
+            {visibleTurnCount > TURN_PAGE_SIZE && <button type="button" className="btn-secondary" onClick={() => {
+              stuckRef.current = true;
+              setVisibleTurnCount(TURN_PAGE_SIZE);
+            }}>Show recent turns</button>}
+            {unsentPrompts.filter(prompt => prompt.afterTurnId === null).map((prompt, index) => <PendingMessage key={index} text={prompt.text} unsent />)}
+            {chat.turns.slice(-visibleTurnCount).map((turn) => <Fragment key={turn.id}>
+              <Turn turn={turn} {...(workersByTurn.has(turn.id) ? { workers: workersByTurn.get(turn.id), waiting, openWorkerId, onOpenWorker: setOpenWorkerId } : {})} />
+              {unsentPrompts.filter(prompt => prompt.afterTurnId === turn.id).map((prompt, index) => <PendingMessage key={index} text={prompt.text} unsent />)}
+            </Fragment>)}
+            {orphans.length > 0 && <ChatAgentGroup workers={orphans} waiting={waiting} openId={openWorkerId} onOpen={setOpenWorkerId} />}
+            {chat.status === "working" && !request && <div className="chat-working chat-shimmer">Working</div>}
+            {chat.error && <ChatErrorNotice text={chat.error} />}
+            {(chat.queuedImages?.length ?? 0) > 0 && <div className="chat-pending" role="group" aria-label="Queued images">
+              <div className="chat-pending__head">
+                <button type="button" className="chat-pending__action" onClick={() => {
+                  useChatStore.getState().update(chatId, (state) => ({ ...state, queuedImages: [] }));
+                }}>Remove</button>
+                <span className="chat-pending__label">Queued</span>
+              </div>
+              <PromptImages images={chat.queuedImages} />
+            </div>}
+            {chat.queued.map((text, index) => <PendingMessage
+              key={index}
+              text={text}
+              onEdit={(event) => {
+                const taken = takeQueued(chatId, index);
+                if (taken === null) return;
+                // Back into the composer, after anything already being written there.
+                const drafts = useChatDraftStore.getState();
+                const key = composerDraftKey(chat, chatId);
+                const draft = drafts.drafts[key] ?? "";
+                drafts.setDraft(key, draft.trim() ? `${draft.trimEnd()}\n${taken}` : taken);
+                event.currentTarget.closest(".chat-view")?.querySelector<HTMLTextAreaElement>(".chat-composer__input")?.focus();
+              }}
+              onRemove={() => takeQueued(chatId, index)}
+            />)}
+          </div>
+        </div>
+
+        <div className="chat-view__dock">
+          {notices.length > 0 && <div className="chat-session-notices" role="status">
+            {notices.map((notice) => (
+              <div key={notice.id} className={`chat-session-notice ${notice.severity === "error" ? "chat-session-notice--error" : ""}`}>
+                <CircleAlert size={14} aria-hidden="true" />
+                <span><strong>{notice.title}</strong>{notice.description && <> · {notice.description}</>}</span>
+                <button type="button" className="icon-btn" aria-label={`Dismiss ${notice.title}`} onClick={() => {
+                  useChatStore.getState().update(chatId, (state) => ({ ...state, notices: (state.notices ?? []).filter((item) => item.id !== notice.id) }));
+                }}><X size={13} aria-hidden="true" /></button>
+              </div>
+            ))}
+          </div>}
+          {permission && (
+            <div className="chat-approval">
+              <div className="chat-approval__head">
+                <ShieldAlert size={14} />
+                <span className="chat-approval__label">Needs you</span>
+              </div>
+              <div className="chat-approval__title">{agentName} wants to: {permission.title}</div>
+              <div className="chat-approval__actions">
+                {[...permission.options]
+                  .sort((a, b) => APPROVAL_ORDER.indexOf(a.kind) - APPROVAL_ORDER.indexOf(b.kind))
+                  .map((option) => (
+                    <button
+                      key={option.optionId}
+                      type="button"
+                      className={option.kind === "allow_once" ? "btn-primary" : "btn-secondary"}
+                      onClick={() => answerPermission(chatId, permission.id, option.optionId)}
+                    >
+                      {option.name}
+                    </button>
+                  ))}
+              </div>
             </div>
           )}
-          {chat.turns.length > visibleTurnCount && <button type="button" className="btn-secondary" onClick={() => {
-            stuckRef.current = false;
-            setVisibleTurnCount(count => count + TURN_PAGE_SIZE);
-          }}>Show {Math.min(TURN_PAGE_SIZE, chat.turns.length - visibleTurnCount)} earlier turns</button>}
-          {visibleTurnCount > TURN_PAGE_SIZE && <button type="button" className="btn-secondary" onClick={() => {
-            stuckRef.current = true;
-            setVisibleTurnCount(TURN_PAGE_SIZE);
-          }}>Show recent turns</button>}
-          {unsentPrompts.filter(prompt => prompt.afterTurnId === null).map((prompt, index) => <PendingMessage key={index} text={prompt.text} unsent />)}
-          {chat.turns.slice(-visibleTurnCount).map((turn) => <Fragment key={turn.id}>
-            <Turn turn={turn} />
-            {unsentPrompts.filter(prompt => prompt.afterTurnId === turn.id).map((prompt, index) => <PendingMessage key={index} text={prompt.text} unsent />)}
-          </Fragment>)}
-          {chat.status === "working" && !request && <div className="chat-working chat-shimmer">Working</div>}
-          {chat.error && <div className="chat-error">{chat.error}</div>}
-          {chat.queued.map((text, index) => <PendingMessage key={index} text={text} />)}
+          {request?.kind === "cursor_request" && <CursorRequestCard key={request.id} chatId={chatId} item={request} />}
+          <ChatComposer chatId={chatId} chat={chat} repoPath={repoPath} assistantId={assistantId} agentName={agentName} fullAccess={fullAccess} onOpenTerminal={onOpenTerminal} />
         </div>
       </div>
-
-      <div className="chat-view__dock">
-        {notices.length > 0 && <div className="chat-session-notices" role="status">
-          {notices.map((notice) => (
-            <div key={notice.id} className={`chat-session-notice ${notice.severity === "error" ? "chat-session-notice--error" : ""}`}>
-              <CircleAlert size={14} aria-hidden="true" />
-              <span><strong>{notice.title}</strong>{notice.description && <> · {notice.description}</>}</span>
-              <button type="button" className="icon-btn" aria-label={`Dismiss ${notice.title}`} onClick={() => {
-                useChatStore.getState().update(chatId, (state) => ({ ...state, notices: (state.notices ?? []).filter((item) => item.id !== notice.id) }));
-              }}><X size={13} aria-hidden="true" /></button>
-            </div>
-          ))}
-        </div>}
-        {permission && (
-          <div className="chat-approval">
-            <div className="chat-approval__head">
-              <ShieldAlert size={14} />
-              <span className="chat-approval__label">Needs you</span>
-            </div>
-            <div className="chat-approval__title">{agentName} wants to: {permission.title}</div>
-            <div className="chat-approval__actions">
-              {[...permission.options]
-                .sort((a, b) => APPROVAL_ORDER.indexOf(a.kind) - APPROVAL_ORDER.indexOf(b.kind))
-                .map((option) => (
-                  <button
-                    key={option.optionId}
-                    type="button"
-                    className={option.kind === "allow_once" ? "btn-primary" : "btn-secondary"}
-                    onClick={() => answerPermission(chatId, permission.id, option.optionId)}
-                  >
-                    {option.name}
-                  </button>
-                ))}
-            </div>
-          </div>
-        )}
-        {request?.kind === "cursor_request" && <CursorRequestCard key={request.id} chatId={chatId} item={request} />}
-        <ChatComposer chatId={chatId} chat={chat} assistantId={assistantId} agentName={agentName} fullAccess={fullAccess} onOpenTerminal={onOpenTerminal} />
-      </div>
+      {openWorker && <ChatWorkerPeek
+        key={openWorker.sessionId}
+        worker={openWorker}
+        startedBy={workers.find(worker => worker.sessionId === openWorker.parentSessionId)?.name ?? agentName}
+        waiting={waiting.has(openWorker.sessionId)}
+        onClose={() => setOpenWorkerId(null)}
+      />}
     </div>
     </ChatProjectPath>
   );

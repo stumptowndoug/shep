@@ -426,6 +426,11 @@ export function gitStatus(path: string): Promise<GitStatus> {
   return invoke("git_status", { path });
 }
 
+/** Project files relative to its root, for chat's `@` file picker (gitignored files excluded). */
+export function listProjectFiles(path: string): Promise<string[]> {
+  return invoke("list_project_files", { path });
+}
+
 export function gitChangedFiles(path: string): Promise<ChangedFile[]> {
   return invoke("git_changed_files", { path });
 }

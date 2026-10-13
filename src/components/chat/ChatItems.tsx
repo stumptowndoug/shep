@@ -1,14 +1,17 @@
-import { memo, useEffect, useState } from "react";
+import { memo, useContext, useState } from "react";
 import { MultiFileDiff } from "@pierre/diffs/react";
 import {
   BookOpen,
   ClipboardList,
   Brain,
   Check,
+  ChevronRight,
   Circle,
   CircleAlert,
+  Copy,
   CircleCheck,
   CircleDot,
+  ExternalLink,
   FilePen,
   Globe,
   Link,
@@ -21,36 +24,41 @@ import {
   X,
 } from "lucide-react";
 import ChatMarkdown from "./ChatMarkdown";
-import { textDiffLines } from "../../lib/acp/chatPresentation";
+import { diffStats, errorTone, projectRelativePath, textDiffLines, type FileChange } from "../../lib/acp/chatPresentation";
+import { ChatProjectPath } from "./chatProjectPath";
+import { useNoticeStore } from "../../stores/useNoticeStore";
+import { getErrorMessage } from "../../lib/errors";
 import type { ChatItem, ToolDiff } from "../../lib/acp/chatModel";
 import { useThemeStore } from "../../stores/useThemeStore";
 import { getCodeViewCSSVariables, getDiffViewOptions } from "../git/codeViewTheme";
-import { openUrl } from "../../lib/tauri";
+import { openFileInEditor, openUrl } from "../../lib/tauri";
 
 type ItemOf<K extends ChatItem["kind"]> = Extract<ChatItem, { kind: K }>;
 
 const TOOL_OUTPUT_LINES = 16;
 
-/** Present tense while live, past tense once done (Springroll's tool rows). */
-const TOOL_VERBS: Record<string, [string, string, string]> = {
-  read: ["Reading", "Read", "Read failed"],
-  edit: ["Editing", "Edited", "Edit failed"],
-  delete: ["Deleting", "Deleted", "Delete failed"],
-  move: ["Moving", "Moved", "Move failed"],
-  search: ["Searching", "Searched", "Search failed"],
-  execute: ["Running", "Ran", "Command failed"],
-  fetch: ["Fetching", "Fetched", "Fetch failed"],
-  think: ["Thinking", "Thought", "Thinking failed"],
+/** Present tense while live, past tense once done (Springroll's tool rows).
+ * A failed tool keeps its past tense: agents recover from most failures
+ * (a nonzero exit, a search with no match), so it reads as ordinary work. */
+const TOOL_VERBS: Record<string, [string, string]> = {
+  read: ["Reading", "Read"],
+  edit: ["Editing", "Edited"],
+  delete: ["Deleting", "Deleted"],
+  move: ["Moving", "Moved"],
+  search: ["Searching", "Searched"],
+  execute: ["Running", "Ran"],
+  fetch: ["Fetching", "Fetched"],
+  think: ["Thinking", "Thought"],
 };
 
 /** Leading words agents put in titles that the verb already says. */
 const TITLE_VERB = /^(read|reading|edit|editing|write|writing|search|searching|grep|glob|find|run|running|fetch|fetching|delete|move)\b\s*/i;
 
-function toolParts(title: string, toolKind: string, live: boolean, failed: boolean) {
+function toolParts(title: string, toolKind: string, live: boolean) {
   const verbs = TOOL_VERBS[toolKind];
   if (!verbs) return { verb: null, target: title };
   const target = toolKind === "execute" ? title.replace(/^`|`$/g, "") : title.replace(TITLE_VERB, "") || title;
-  return { verb: verbs[failed ? 2 : live ? 0 : 1], target };
+  return { verb: verbs[live ? 0 : 1], target };
 }
 
 const TOOL_ICONS: Record<string, typeof Wrench> = {
@@ -64,21 +72,7 @@ const TOOL_ICONS: Record<string, typeof Wrench> = {
   fetch: Globe,
 };
 
-/** Rough +/- line counts for a diff summary. */
-function diffStats(diffs: ToolDiff[]) {
-  let added = 0;
-  let removed = 0;
-  for (const diff of diffs) {
-    if (diff.truncated) continue;
-    const before = new Set((diff.oldText ?? "").split("\n"));
-    const after = new Set(diff.newText.split("\n"));
-    for (const line of after) if (!before.has(line)) added += 1;
-    for (const line of before) if (line && !after.has(line)) removed += 1;
-  }
-  return { added, removed };
-}
-
-function DiffBlock({ diff }: { diff: ToolDiff }) {
+export function DiffBlock({ diff }: { diff: ToolDiff }) {
   const theme = useThemeStore((s) => s.theme);
   const name = diff.path.split("/").pop() ?? diff.path;
   return (
@@ -98,10 +92,9 @@ function ToolRow({ item }: { item: ItemOf<"tool"> }) {
   const Icon = TOOL_ICONS[item.toolKind] ?? Wrench;
   const live = item.status === "pending" || item.status === "in_progress";
   const failed = item.status === "failed";
-  const [open, setOpen] = useState(failed);
+  const [open, setOpen] = useState(false);
   const [showEarlier, setShowEarlier] = useState(false);
-  useEffect(() => { if (failed) setOpen(true); }, [failed]);
-  const { verb, target } = toolParts(item.title, item.toolKind, live, failed);
+  const { verb, target } = toolParts(item.title, item.toolKind, live);
   const lines = item.output.trimEnd().split("\n");
   const earlier = Math.max(0, lines.length - TOOL_OUTPUT_LINES);
   const output = (showEarlier ? lines : lines.slice(-TOOL_OUTPUT_LINES)).join("\n");
@@ -114,18 +107,19 @@ function ToolRow({ item }: { item: ItemOf<"tool"> }) {
       added: textDiff.filter((line) => line.kind === "add").length,
       removed: textDiff.filter((line) => line.kind === "remove").length,
     } : null;
-  const className = `chat-tool ${live ? "chat-tool--live" : ""} ${failed ? "chat-tool--failed" : ""}`;
+  const className = `chat-tool ${live ? "chat-tool--live" : ""}`;
   const summary = (
     <>
       <Icon size={14} />
       {verb && <span className={`chat-tool__verb ${live ? "chat-shimmer" : ""}`}>{verb}</span>}
       <span className={`chat-tool__target ${isCommand ? "chat-tool__target--mono" : ""}`}>{target}</span>
-      {stats && (
+      {(stats || failed) && (
         <span className="chat-tool__deco">
-          <span className="chat-tool__added">+{stats.added}</span> <span className="chat-tool__removed">−{stats.removed}</span>
+          {stats && <><span className="chat-tool__added">+{stats.added}</span> <span className="chat-tool__removed">−{stats.removed}</span></>}
+          {stats && failed && " · "}
+          {failed && <span className="chat-tool__failed">failed</span>}
         </span>
       )}
-      {failed && <X size={13} />}
     </>
   );
 
@@ -151,6 +145,81 @@ function ToolRow({ item }: { item: ItemOf<"tool"> }) {
         {item.diffs.map((diff, index) => <DiffBlock key={`${diff.path}-${index}`} diff={diff} />)}
         {Boolean(item.omittedDiffs) && <div className="chat-diff__omitted">{item.omittedDiffs} more file changes omitted. Review them in your editor.</div>}
       </div>}
+    </details>
+  );
+}
+
+/** A turn or session that stopped: one plain line, its icon carrying the tone. */
+export function ChatErrorNotice({ text }: { text: string }) {
+  return (
+    <div className={`chat-notice chat-notice--${errorTone(text)}`}>
+      <CircleAlert size={14} aria-hidden="true" />
+      <span>{text}</span>
+    </div>
+  );
+}
+
+/** Copies text to the clipboard and says so briefly. */
+export function CopyButton({ text, label }: { text: string; label: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button type="button" className="icon-btn chat-copy" aria-label={copied ? "Copied" : label} title={copied ? "Copied" : label}
+      onClick={() => {
+        void navigator.clipboard.writeText(text).then(() => {
+          setCopied(true);
+          window.setTimeout(() => setCopied(false), 1500);
+        }, (error) => useNoticeStore.getState().pushNotice({ tone: "error", title: "Couldn’t copy", message: getErrorMessage(error) }));
+      }}>
+      {copied ? <Check size={14} aria-hidden="true" /> : <Copy size={14} aria-hidden="true" />}
+    </button>
+  );
+}
+
+/** What a finished turn did to the code: its files, their line counts, and their diffs on demand. */
+export function TurnChanges({ changes }: { changes: FileChange[] }) {
+  const repoPath = useContext(ChatProjectPath);
+  const [openPath, setOpenPath] = useState<string | null>(null);
+  const added = changes.reduce((sum, change) => sum + change.added, 0);
+  const removed = changes.reduce((sum, change) => sum + change.removed, 0);
+  return (
+    <details className="chat-changes">
+      <summary>
+        <ChevronRight size={14} className="chat-worked__chevron" aria-hidden="true" />
+        <span>Changed {changes.length} {changes.length === 1 ? "file" : "files"}</span>
+        <span className="chat-worked__facts">
+          <span className="chat-tool__added">+{added}</span> <span className="chat-tool__removed">−{removed}</span>
+        </span>
+      </summary>
+      <div className="chat-changes__files">
+        {changes.map((change) => {
+          const path = projectRelativePath(change.path, repoPath);
+          const slash = path.lastIndexOf("/");
+          const open = openPath === change.path;
+          return (
+            <div key={change.path}>
+              <div className="chat-changes__row">
+                <button type="button" className="chat-changes__toggle" aria-expanded={open} onClick={() => setOpenPath(open ? null : change.path)}>
+                  <ChevronRight size={13} className="chat-changes__chevron" aria-hidden="true" />
+                  <span className="chat-changes__name">{path.slice(slash + 1)}</span>
+                  {slash > 0 && <span className="chat-changes__dir">{path.slice(0, slash)}</span>}
+                  <span className="chat-tool__deco">
+                    <span className="chat-tool__added">+{change.added}</span> <span className="chat-tool__removed">−{change.removed}</span>
+                  </span>
+                </button>
+                <button type="button" className="icon-btn chat-changes__open" aria-label={`Open ${path} in editor`} title="Open in editor"
+                  onClick={() => openFileInEditor(repoPath, change.path).catch((error) => {
+                    useNoticeStore.getState().pushNotice({ tone: "error", title: "Couldn’t open the file", message: getErrorMessage(error) });
+                  })}>
+                  <ExternalLink size={13} aria-hidden="true" />
+                </button>
+              </div>
+              {open && <div className="chat-changes__diffs">
+                {change.diffs.map((diff, index) => <DiffBlock key={index} diff={diff} />)}
+              </div>}
+            </div>
+          );
+        })}
+      </div>
     </details>
   );
 }
