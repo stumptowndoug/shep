@@ -54,6 +54,23 @@ const TOOL_VERBS: Record<string, [string, string]> = {
 /** Leading words agents put in titles that the verb already says. */
 const TITLE_VERB = /^(read|reading|edit|editing|write|writing|search|searching|grep|glob|find|run|running|fetch|fetching|delete|move)\b\s*/i;
 
+const FILE_TOOLS = new Set(["read", "edit", "delete", "move"]);
+
+/** What the agent is doing, for a running turn's folded work: the icon says
+ *  what kind of step it is, so the text is just the file or command. */
+export function workStatus(item: ChatItem): { Icon: typeof Wrench; text: string } | null {
+  switch (item.kind) {
+    case "tool": {
+      const { target } = toolParts(item.title, item.toolKind, false);
+      const text = FILE_TOOLS.has(item.toolKind) ? target.split("/").pop() || target : target;
+      return { Icon: TOOL_ICONS[item.toolKind] ?? Wrench, text };
+    }
+    case "thought": return { Icon: Brain, text: "Thinking" };
+    case "plan": return { Icon: ClipboardList, text: "Planning" };
+    default: return null;
+  }
+}
+
 function toolParts(title: string, toolKind: string, live: boolean) {
   const verbs = TOOL_VERBS[toolKind];
   if (!verbs) return { verb: null, target: title };
@@ -123,11 +140,15 @@ function ToolRow({ item }: { item: ItemOf<"tool"> }) {
     </>
   );
 
-  if (!hasBody) return <div className={className}><div className="chat-tool__row">{summary}</div></div>;
+  // Always a <details>, even before there's anything to show: swapping in a new
+  // element when output arrives makes WebKit jump the chat's scroll position.
   return (
-    <details className={className} open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
-      <summary className="chat-tool__row">{summary}</summary>
-      {open && <div className="chat-tool__body">
+    <details className={className} open={hasBody && open} onToggle={(event) => setOpen(event.currentTarget.open)}>
+      <summary
+        className={`chat-tool__row ${hasBody ? "" : "chat-tool__row--static"}`}
+        {...(hasBody ? {} : { tabIndex: -1, onClick: (event: React.MouseEvent) => event.preventDefault() })}
+      >{summary}</summary>
+      {hasBody && open && <div className="chat-tool__body">
         {item.outputTrimmed && <div className="chat-diff__omitted">Tool output and diffs trimmed from older history to reduce memory use.</div>}
         {output && (
           <div className="chat-terminal">

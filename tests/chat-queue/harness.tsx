@@ -31,6 +31,12 @@ export function failPrompt() {
   activeRequest = undefined;
   emit({ id, error: { code: -32000, message: "Simulated provider failure" } });
 }
+export function update(update: object) {
+  emit({ method: "session/update", params: { sessionId: "queue-session", update } });
+}
+export function stream(text: string) {
+  emit({ method: "session/update", params: { sessionId: "queue-session", update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text } } } });
+}
 export function releaseStartup() { emit({ id: sessionRequest, result: { sessionId: "queue-session" } }); }
 export function failStartup() { emit({ id: sessionRequest, error: { code: -32000, message: "Simulated startup failure" } }); }
 export function exitAgent() { channel.onmessage({ event: "exit", data: { code: 1, stderr: "Simulated crash" } }); }

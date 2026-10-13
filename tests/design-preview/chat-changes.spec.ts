@@ -38,6 +38,9 @@ test("a turn still running shows no change summary yet", async ({ page }) => {
       ],
     }] }));
   });
+  const work = page.locator(".chat-view:visible .chat-worked");
+  await expect(work.locator("summary")).toHaveText("WorkingEdit1 step · 1 edit");
+  await work.locator("summary").click();
   await expect(page.locator(".chat-view:visible .chat-tool")).toHaveCount(1);
   await expect(page.locator(".chat-view:visible .chat-changes")).toHaveCount(0);
 });

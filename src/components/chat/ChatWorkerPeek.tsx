@@ -52,7 +52,7 @@ export default function ChatWorkerPeek({ worker, startedBy, waiting, onClose }: 
       </>}
       {worker.transcriptTrimmed && <p className="chat-notice">Showing retained recent activity.</p>}
       {worker.state === "disconnected" && <p className="chat-notice">The connection ended without a confirmed outcome.</p>}
-      {turns.map(turn => <Turn key={turn.id} turn={turn} />)}
+      {turns.map(turn => <Turn key={turn.id} turn={turn} workOpen />)}
       {worker.state === "running" && !waiting && <div className="chat-working chat-shimmer">Working</div>}
       {!turns.some(turn => turn.items.length) && !worker.transcriptTrimmed && worker.state !== "running" && <p className="chat-notice">No activity reported.</p>}
     </div>

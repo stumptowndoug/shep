@@ -1,8 +1,8 @@
 import type { ChatItem, ChatTurn, ToolDiff } from "./chatModel.ts";
 
-/** Keep every answer block after the last tool, including images and links. */
+/** Keep every answer block after the last tool, including images and links.
+ *  The rest is work, grouped under one row while the turn runs and after. */
 export function splitTurn(turn: ChatTurn): { work: ChatItem[]; answer: ChatItem[] } {
-  if (turn.endedAt === null) return { work: [], answer: turn.items };
   let lastTool = -1;
   turn.items.forEach((item, index) => { if (item.kind === "tool") lastTool = index; });
   const work: ChatItem[] = [];
