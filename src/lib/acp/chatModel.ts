@@ -2,6 +2,7 @@
 // `session/update` notifications into it.
 import { agentMedia, clipText, MAX_DIFF_TEXT, MAX_TOOL_DIFFS, MAX_TOOL_TEXT, rawToolOutput, type AgentMedia } from "./chatContent.ts";
 import type { CursorOutcome, CursorRequest } from "./cursorProtocol.ts";
+import type { ChatWorker } from "./chatWorkers.ts";
 
 export type ToolStatus = "pending" | "in_progress" | "completed" | "failed";
 
@@ -49,6 +50,7 @@ export type ChatItem =
       title: string;
       options: PermissionOption[];
       chosen: string | null;
+      ownerSessionId?: string;
     }
   | { kind: "notice"; id: string; text: string };
 
@@ -105,6 +107,9 @@ export interface ChatState {
   notices: SessionNotice[];
   /** Context window use, when the agent reports it. */
   usage: { used: number; size: number } | null;
+  /** ACP child conversations share a connection, but never the parent's transcript. */
+  workers?: ChatWorker[];
+  acpSessionId?: string;
   draftKey?: string;
   /** Ephemeral sign-in progress; never persisted with drafts or conversation history. */
   startup?: { message: string; authUrl?: string };
@@ -207,10 +212,11 @@ export function addPermission(
   id: string,
   title: string,
   options: PermissionOption[],
+  ownerSessionId?: string,
 ): ChatState {
   return updateItems(state, (items) => [
     ...items,
-    { kind: "permission", id, title, options, chosen: null },
+    { kind: "permission", id, title, options, chosen: null, ...(ownerSessionId ? { ownerSessionId } : {}) },
   ]);
 }
 
@@ -241,7 +247,7 @@ export function pendingPermission(state: ChatState) {
 }
 
 export function pendingRequest(state: ChatState) {
-  return lastOf(state.turns)?.items.find(item =>
+  return state.turns.flatMap(turn => turn.items).find(item =>
     (item.kind === "permission" && item.chosen === null) || (item.kind === "cursor_request" && item.outcome === null),
   ) as Extract<ChatItem, { kind: "permission" | "cursor_request" }> | undefined;
 }
@@ -272,7 +278,7 @@ interface ToolCallContent {
   newText?: string;
 }
 
-interface SessionUpdate {
+export interface SessionUpdate {
   sessionUpdate: string;
   content?: ContentBlock;
   messageId?: string;

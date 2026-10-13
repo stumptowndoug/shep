@@ -29,6 +29,7 @@ import { applyCursorNotification, parseCursorRequest, validCursorOutcome, type C
 import { chatAdapterCommand } from "./adapters";
 import { antigravitySignInUrl } from "./antigravityProtocol";
 import { createStreamBatch } from "./streamBatch";
+import { applyWorkerNotification, disconnectWorkers, runningWorkers, workerCapabilities, workerSummary } from "./chatWorkers";
 
 const TITLE_MAX_CHARS = 60;
 const STARTUP_TIMEOUT_MS = 60_000;
@@ -81,39 +82,48 @@ export async function startChat(options: StartChatOptions): Promise<number> {
   const runtime = await chatAdapterCommand(adapter);
   let chatId = -1;
   const stream = createStreamBatch((updates) => {
-    useChatStore.getState().update(chatId, chat => updates.reduce(applySessionUpdate, chat));
+    useChatStore.getState().update(chatId, chat => updates.reduce((state, update) =>
+      applyWorkerNotification(state, update.routeSessionId as string | undefined, update), chat));
   });
   const connection = await AcpConnection.spawn(runtime.command, runtime.args, repoPath, {
     onRequest: (method, params) => handleRequest(chatId, method, params),
     onNotification: (method, params) => {
       if (method === "session/update") {
-        const update = (params as { update?: Parameters<typeof applySessionUpdate>[1] }).update;
+        const { update, sessionId: routeSessionId } = params as { update?: Parameters<typeof applySessionUpdate>[1]; sessionId?: string };
         if (update) {
           const session = live.get(chatId);
           if (!session) return;
           // Some adapters (muse-acp) echo the prompt being answered. Shep already shows it,
           // so only replayed history from session/load may open a turn this way.
-          if (session.prompting && update.sessionUpdate === "user_message_chunk") return;
-          if (session?.startupMessage && update.sessionUpdate === "agent_message_chunk" &&
+          const current = useChatStore.getState().chats[chatId];
+          const isRoot = !routeSessionId || routeSessionId === (current?.acpSessionId ?? session.sessionId) || (!current?.acpSessionId && !session.sessionId);
+          if (isRoot && session.prompting && update.sessionUpdate === "user_message_chunk") return;
+          if (isRoot && session?.startupMessage && update.sessionUpdate === "agent_message_chunk" &&
             update.content?.type === "text" && update.content.text === session.startupMessage) {
             session.startupMessage = null;
             return;
           }
           if ((update.sessionUpdate === "agent_message_chunk" || update.sessionUpdate === "agent_thought_chunk") && update.content?.type === "text") {
-            stream.enqueue({ sessionUpdate: update.sessionUpdate, messageId: update.messageId, content: { type: "text", text: update.content.text ?? "" } });
+            stream.enqueue({ routeSessionId, sessionUpdate: update.sessionUpdate, messageId: update.messageId, content: { type: "text", text: update.content.text ?? "" } });
             return;
           }
           stream.flush();
-          const museUsage = assistant.id === "muse" ? museSubscriptionUsage(update) : null;
+          const museUsage = isRoot && assistant.id === "muse" ? museSubscriptionUsage(update) : null;
           if (museUsage) {
             recordMuseSubscriptionUsage(museUsage).catch((error) => {
               if (import.meta.env.DEV) console.warn("Failed to record Muse usage:", error);
             });
           }
           const previous = useChatStore.getState().chats[chatId]?.options.find(isAccessOption)?.value;
-          useChatStore.getState().update(chatId, (chat) => applySessionUpdate(chat, update));
+          const hadWorkers = current && runningWorkers(current).length > 0;
+          useChatStore.getState().update(chatId, (chat) => applyWorkerNotification(chat, routeSessionId, update));
           const access = useChatStore.getState().chats[chatId]?.options.find(isAccessOption);
           if (access && previous !== access.value) syncAccessPolicy(chatId, access.value);
+          refreshWaitingState(chatId);
+          const next = useChatStore.getState().chats[chatId];
+          if (hadWorkers && next?.status === "ready" && !runningWorkers(next).length && !pendingRequest(next) && !session.cancelling && !isChatVisible(chatId)) {
+            void notifyAgent(chatId, `${session.assistant.name}: background agents settled`, { attention: false });
+          }
         }
       } else if (assistant.id === "cursor" && method.startsWith("cursor/")) {
         stream.flush();
@@ -149,6 +159,7 @@ export async function startChat(options: StartChatOptions): Promise<number> {
     stream,
   });
   useChatStore.getState().init(chatId);
+  if (resume) useChatStore.getState().update(chatId, chat => ({ ...chat, acpSessionId: resume.sessionId }));
   const draftKey = chatDraftKey(assistant.id, repoPath, resume?.sessionId ?? `pending:${crypto.randomUUID()}`);
   useChatDraftStore.getState().load(draftKey);
   useChatStore.getState().update(chatId, (chat) => ({ ...chat, draftKey }));
@@ -205,7 +216,7 @@ export function sendPrompt(chatId: number, text: string): boolean {
   const chat = useChatStore.getState().chats[chatId];
   const session = live.get(chatId);
   if (!prompt || !chat || chat.status === "exited" || !session) return false;
-  if (chat.status !== "ready") {
+  if (chat.status !== "ready" || (session.cancelling && session.cancelTimer !== undefined)) {
     useChatStore.getState().update(chatId, (state) => {
       const next = { ...state, queued: [...state.queued, prompt] };
       // Stop may take time to complete. Keep new follow-ups visible without
@@ -224,9 +235,10 @@ export function cancelTurn(chatId: number) {
   session.stream?.flush();
   cancelPendingRequests(session);
   useChatStore.getState().update(chatId, markQueuedPromptsUnsent);
-  setAgentState(chatId, "idle", "Stopped");
+  const childWork = runningWorkers(useChatStore.getState().chats[chatId]).length > 0;
+  setAgentState(chatId, childWork ? "working" : "idle", childWork ? "Waiting for background agents to stop" : "Stopped");
   session.connection.notify("session/cancel", { sessionId: session.sessionId });
-  if (session.cancelTimer === undefined && useChatStore.getState().chats[chatId]?.status === "working") {
+  if (session.cancelTimer === undefined && (useChatStore.getState().chats[chatId]?.status === "working" || childWork)) {
     session.cancelTimer = window.setTimeout(() => {
       if (live.get(chatId) !== session) return;
       failChat(chatId, "The agent did not respond to Stop and was closed. Resume this conversation from History or start a new chat.", 0);
@@ -338,6 +350,7 @@ export async function closeChat(chatId: number) {
 // ── Session lifecycle ────────────────────────────────────────────────
 
 interface InitializeResult {
+  protocolVersion?: number;
   agentCapabilities?: { loadSession?: boolean };
   authMethods?: { id: string; name: string; description?: string }[];
 }
@@ -350,9 +363,10 @@ async function openSession(chatId: number, options: StartChatOptions, resetStart
   const init = await connection.request<InitializeResult>("initialize", {
     protocolVersion: 1,
     // Agents read, write and run commands themselves, exactly as their CLI does.
-    clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false, session: { notices: {} } },
+    clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false, session: { notices: {} }, ...workerCapabilities(session.assistant.id) },
     clientInfo: { name: "shep", version: "1" },
   });
+  if (init.protocolVersion !== undefined && init.protocolVersion !== 1) throw new Error(`Unsupported ACP protocol version: ${init.protocolVersion}`);
 
   const authMethodId = session.assistant.acp?.authMethodId;
   if (authMethodId) {
@@ -385,14 +399,19 @@ async function openSession(chatId: number, options: StartChatOptions, resetStart
     useChatStore.getState().update(chatId, (chat) => endTurn(chat, "end_turn"));
   } else {
     if (options.resume) {
+      // A fresh session can emit updates before session/new returns its id.
+      // Do not route those updates against the history session we couldn't load.
+      session.sessionId = null;
       useChatStore.getState().update(chatId, (chat) =>
-        addNotice(chat, `${session.assistant.name} can’t reload earlier conversations in chat, so this is a new session.`),
+        addNotice({ ...chat, acpSessionId: undefined }, `${session.assistant.name} can’t reload earlier conversations in chat, so this is a new session.`),
       );
     }
     info = await connection.request("session/new", { cwd: repoPath, mcpServers: [] });
     session.sessionId = info.sessionId ?? null;
   }
   if (!live.has(chatId)) return;
+
+  if (session.sessionId) useChatStore.getState().update(chatId, chat => ({ ...chat, acpSessionId: session.sessionId! }));
 
   session.stream?.flush();
 
@@ -474,17 +493,27 @@ async function runTurn(chatId: number, prompts: string[]) {
     if (!session.cancelling) turnError = errorText(error);
   } finally {
     session.prompting = false;
-    window.clearTimeout(session.cancelTimer);
-    session.cancelTimer = undefined;
+    const chat = useChatStore.getState().chats[chatId];
+    if (!session.cancelling || !chat || !runningWorkers(chat).length) {
+      window.clearTimeout(session.cancelTimer);
+      session.cancelTimer = undefined;
+    }
   }
   if (!live.has(chatId)) return;
 
   session.stream?.flush();
-  cancelPendingRequests(session);
+  // A child may request approval after the parent prompt completes. Keep its
+  // request alive, and don't mark a normally completed session as cancelling.
+  const permissions = useChatStore.getState().chats[chatId]?.turns.flatMap(turn => turn.items) ?? [];
+  for (const [id, resolve] of session.permissions) {
+    const item = permissions.find(item => item.id === id);
+    if (session.cancelling || item?.kind !== "permission" || !item.ownerSessionId) resolve(null);
+  }
+  for (const resolve of session.interactions?.values() ?? []) resolve({ outcome: "cancelled" });
   if (stopReason === "cancelled") store.update(chatId, markQueuedPromptsUnsent);
   store.update(chatId, (chat) => endTurn(chat, stopReason, turnError));
   void recordHistoryActivity(session, false);
-  if (!isChatVisible(chatId) && stopReason !== "cancelled") {
+  if (!isChatVisible(chatId) && stopReason !== "cancelled" && !runningWorkers(useChatStore.getState().chats[chatId]).length) {
     void notifyAgent(chatId, stopReason === "error" ? `${session.assistant.name} needs you: ${turnError ?? "Request failed"}` : `${session.assistant.name} finished`, { attention: false });
   }
   setReady(chatId, stopReason === "error" ? turnError ?? "Request failed" : undefined);
@@ -496,7 +525,8 @@ function setReady(chatId: number, error?: string) {
   if (!chat || chat.status === "exited") return;
   const prompts = chat.queued;
   useChatStore.getState().update(chatId, (state) => ({ ...state, status: "ready", queued: [] }));
-  setAgentState(chatId, error ? "blocked" : "idle", error ?? "Waiting for a prompt");
+  refreshWaitingState(chatId);
+  if (error) setAgentState(chatId, "blocked", error);
   if (prompts.length > 0) void runTurn(chatId, prompts);
 }
 
@@ -504,6 +534,13 @@ async function handleRequest(chatId: number, method: string, params: unknown) {
   const session = live.get(chatId);
   if (!session || session.cancelling) return { outcome: { outcome: "cancelled" } };
   session.stream?.flush();
+  const requestSessionId = (params as { sessionId?: string })?.sessionId;
+  const chat = useChatStore.getState().chats[chatId];
+  const worker = chat?.workers?.find(worker => worker.sessionId === requestSessionId);
+  const knownRoot = session.sessionId ?? chat?.acpSessionId;
+  if (requestSessionId && knownRoot && requestSessionId !== knownRoot && !worker) {
+    throw new AcpError("Unknown agent session", -32602);
+  }
   // Cursor also sends its fire-and-forget extensions as JSON-RPC requests in
   // some CLI versions. Acknowledge them without asking the user or doing work.
   if (session.assistant.id === "cursor" && ["cursor/update_todos", "cursor/task", "cursor/generate_image"].includes(method)) {
@@ -544,8 +581,8 @@ async function handleRequest(chatId: number, method: string, params: unknown) {
   }
 
   const itemId = `permission-${crypto.randomUUID()}`;
-  const title = toolCall?.title ?? "Run a tool";
-  useChatStore.getState().update(chatId, (chat) => addPermission(chat, itemId, title, options));
+  const title = `${worker ? `${worker.name}: ` : ""}${toolCall?.title ?? "Run a tool"}`;
+  useChatStore.getState().update(chatId, (chat) => addPermission(chat, itemId, title, options, worker?.sessionId));
   setAgentState(chatId, "blocked", "Waiting for permission");
   if (!isChatVisible(chatId)) void notifyAgent(chatId, `${session.assistant.name} needs permission: ${title}`, { attention: false });
 
@@ -560,9 +597,21 @@ async function handleRequest(chatId: number, method: string, params: unknown) {
 
 function refreshWaitingState(chatId: number) {
   const chat = useChatStore.getState().chats[chatId];
-  if (!live.has(chatId) || live.get(chatId)?.cancelling || chat?.status !== "working") return;
+  const session = live.get(chatId);
+  if (!session || !chat || chat.status === "starting" || chat.status === "exited") return;
+  if (session.cancelling) {
+    const running = runningWorkers(chat).length > 0;
+    setAgentState(chatId, running ? "working" : "idle", running ? "Waiting for background agents to stop" : "Stopped");
+    if (!running && chat.status === "ready") {
+      window.clearTimeout(session.cancelTimer);
+      session.cancelTimer = undefined;
+    }
+    return;
+  }
   if (pendingRequest(chat)) setAgentState(chatId, "blocked", "Waiting for your input");
-  else setAgentState(chatId, "working", "Agent is responding");
+  else if (runningWorkers(chat).length) setAgentState(chatId, "working", workerSummary(chat)!);
+  else if (chat.status === "working") setAgentState(chatId, "working", "Agent is responding");
+  else setAgentState(chatId, "idle", "Waiting for a prompt");
 }
 
 function handleExit(chatId: number, code: number, stderr: string) {
@@ -581,7 +630,7 @@ function handleExit(chatId: number, code: number, stderr: string) {
 function failChat(chatId: number, error: string | null, exitCode = 1) {
   live.get(chatId)?.stream?.flush();
   useChatStore.getState().update(chatId, (chat) => ({
-    ...markQueuedPromptsUnsent(endTurn(chat, "error")),
+    ...disconnectWorkers(markQueuedPromptsUnsent(endTurn(chat, "error"))),
     status: "exited",
     startup: undefined,
     error: error ?? chat.error,

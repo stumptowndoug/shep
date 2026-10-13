@@ -18,9 +18,19 @@
   position: absolute;
   inset: 0;
   display: flex;
-  flex-direction: column;
   min-height: 0;
   font-family: var(--font-sans);
+  container: chat-view / inline-size;
+}
+
+/* The conversation; an agent peek, when open, sits beside it. */
+.chat-view__main {
+  position: relative;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
 }
 
 .chat-view__scroll {
@@ -731,3 +741,225 @@ html[data-theme-tone="dark"] .chat-composer {
   color: var(--muted);
 }
 .chat-sign-in { display: flex; align-items: center; gap: 8px; margin: 20px 0 12px; }
+
+/* ── Delegated agents: rows in the turn that started them ── */
+
+.chat-agents {
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+.chat-agents > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: -6px;
+  padding: 4px 10px 4px 6px;
+  border-radius: var(--radius-pill);
+  color: var(--fg);
+  list-style: none;
+  cursor: pointer;
+  user-select: none;
+  transition: background var(--fast);
+}
+.chat-agents > summary::-webkit-details-marker { display: none; }
+.chat-agents > summary:hover { background: var(--state-hover); }
+.chat-agents[open] .chat-worked__chevron { transform: rotate(90deg); }
+.chat-agents__items {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 6px 0 4px 7px;
+  padding: 2px 0 2px 16px;
+  border-left: 1px solid var(--line);
+}
+
+.chat-agent {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  margin: 0 -8px;
+  padding: 3px 8px 3px calc(8px + var(--depth, 0) * 18px);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--fast), opacity var(--fast);
+}
+.chat-agent:hover { background: var(--state-hover); }
+.chat-agent:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.chat-agent[aria-pressed="true"] { background: var(--surface-selected); }
+/* Settled agents fade like finished tools, until you look at them. */
+.chat-agent--completed:not([aria-pressed="true"]):not(:hover),
+.chat-agent--cancelled:not([aria-pressed="true"]):not(:hover) { opacity: 0.55; }
+
+.chat-agent__row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  min-height: 22px;
+}
+.chat-agent__name {
+  flex: none;
+  max-width: 40%;
+  overflow: hidden;
+  color: var(--fg);
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-agent__task {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-agent__deco {
+  display: flex;
+  flex: none;
+  gap: 8px;
+  margin-left: auto;
+  color: var(--faint);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+.chat-agent__status { font-family: var(--font-sans); }
+.chat-agent--waiting .chat-agent__status,
+.chat-agent--disconnected .chat-agent__status { color: var(--warn); }
+.chat-agent--failed .chat-agent__status { color: var(--danger); }
+.chat-agent__activity {
+  overflow: hidden;
+  margin: 0 0 2px 23px;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-agent__icon { flex: none; color: var(--faint); }
+.chat-agent__icon--completed { color: var(--ok); }
+.chat-agent__icon--waiting,
+.chat-agent__icon--disconnected { color: var(--warn); }
+.chat-agent__icon--failed { color: var(--danger); }
+.chat-agent__dot {
+  width: 7px;
+  height: 7px;
+  margin: 0 3px;
+  border-radius: 50%;
+  background: var(--run);
+  animation: chat-agent-pulse 1.6s ease-in-out infinite;
+}
+@keyframes chat-agent-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--run) 45%, transparent); }
+  50% { box-shadow: 0 0 0 4px transparent; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat-agent__dot { animation: none; }
+}
+
+/* ── Agent peek: one agent's transcript beside the chat ── */
+
+.chat-peek {
+  /* Run the background to the window's right and bottom edges, past the
+     workspace inset, while the content keeps its place. */
+  --peek-bleed-x: var(--workspace-inset-x, 0px);
+  --peek-bleed-bottom: var(--workspace-inset-bottom, 0px);
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  box-sizing: border-box;
+  width: calc(min(440px, 45%) + var(--peek-bleed-x));
+  min-height: 0;
+  margin: 0 calc(-1 * var(--peek-bleed-x)) calc(-1 * var(--peek-bleed-bottom)) 0;
+  padding: 0 var(--peek-bleed-x) var(--peek-bleed-bottom) 0;
+  /* The sidebar's ground: a recessed side surface, set apart without a line. */
+  background: var(--sidebar-bg, var(--surface-recessed));
+  animation: pop-in var(--med);
+}
+/* Too narrow to share: the peek covers the conversation instead. */
+@container chat-view (max-width: 820px) {
+  .chat-peek {
+    position: absolute;
+    inset: 0 0 0 auto;
+    z-index: 2;
+    width: calc(min(440px, 100%) + var(--peek-bleed-x));
+    box-shadow: var(--shadow-lg);
+  }
+}
+.chat-peek__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 12px 8px 20px;
+  font-size: var(--text-sm);
+}
+.chat-peek__crumb {
+  padding: 2px 4px;
+  margin-left: -4px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--faint);
+  font: inherit;
+  cursor: pointer;
+}
+.chat-peek__crumb:hover { color: var(--fg); background: var(--state-hover); }
+.chat-peek__sep { flex: none; color: var(--faint); }
+.chat-peek__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--fg);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-peek__head .icon-btn { width: 28px; height: 28px; }
+.chat-peek__meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 20px 6px;
+  color: var(--faint);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+.chat-peek__meta > span:last-child { min-width: 0; overflow-wrap: anywhere; }
+.chat-peek__scroll {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  padding: 16px 20px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.chat-peek__label {
+  color: var(--faint);
+  font-size: var(--text-2xs);
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.chat-peek__task {
+  margin-bottom: 12px;
+  padding: 10px 14px;
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  color: var(--muted);
+  font-size: var(--text-sm);
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.chat-peek .chat-turn { margin-bottom: 20px; }
+.chat-peek .chat-user { font-size: var(--text-sm); }
+.chat-peek__foot {
+  display: flex;
+  gap: 8px;
+  padding: 8px 20px 14px;
+}

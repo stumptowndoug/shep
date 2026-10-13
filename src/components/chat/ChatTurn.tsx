@@ -1,0 +1,64 @@
+import { memo, useState } from "react";
+import { ChevronRight } from "lucide-react";
+import { ChatItemView } from "./ChatItems";
+import { ChatAgentGroup } from "./ChatWorkers";
+import type { ChatTurn } from "../../lib/acp/chatModel";
+import type { ChatWorker } from "../../lib/acp/chatWorkers";
+import { splitTurn, turnStopMessage } from "../../lib/acp/chatPresentation";
+
+export function formatDuration(ms: number): string {
+  const seconds = Math.max(1, Math.round(ms / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  return `${minutes}m ${seconds % 60}s`;
+}
+
+export function plural(count: number, word: string): string {
+  return `${count} ${word}${count === 1 ? "" : "s"}`;
+}
+
+interface TurnProps {
+  turn: ChatTurn;
+  /** Agents started in this turn; they sit between its work and its answer. */
+  workers?: ChatWorker[];
+  waiting?: ReadonlySet<string>;
+  openWorkerId?: string | null;
+  onOpenWorker?: (sessionId: string | null) => void;
+}
+
+export const Turn = memo(function Turn({ turn, workers, waiting, openWorkerId = null, onOpenWorker }: TurnProps) {
+  const { work, answer } = splitTurn(turn);
+  const tools = work.filter((item) => item.kind === "tool");
+  const [workExpanded, setWorkExpanded] = useState<boolean | null>(null);
+  const showWork = workExpanded ?? tools.some((item) => item.kind === "tool" && item.status === "failed");
+  const stopMessage = turnStopMessage(turn);
+  const edits = tools.filter((item) => item.kind === "tool" && item.toolKind === "edit").length;
+  const facts = [
+    formatDuration((turn.endedAt ?? Date.now()) - turn.startedAt),
+    tools.length > 0 ? plural(tools.length, "step") : null,
+    edits > 0 ? plural(edits, "edit") : null,
+  ].filter(Boolean).join(" · ");
+  return (
+    <div className="chat-turn">
+      {turn.prompt && <div className="chat-user">{turn.prompt}</div>}
+      {turn.additionalPrompts?.map((text, index) => <div key={index} className="chat-user">{text}</div>)}
+      {work.length > 0 && (
+        <details className="chat-worked" open={showWork} onToggle={(event) => setWorkExpanded(event.currentTarget.open)}>
+          <summary>
+            <ChevronRight size={14} className="chat-worked__chevron" />
+            <span>Worked</span>
+            <span className="chat-worked__facts">{facts}</span>
+          </summary>
+          {showWork && <div className="chat-worked__items">
+            {work.map((item) => <ChatItemView key={item.id} item={item} streaming={turn.endedAt === null} />)}
+          </div>}
+        </details>
+      )}
+      {workers && workers.length > 0 && onOpenWorker && (
+        <ChatAgentGroup workers={workers} waiting={waiting} openId={openWorkerId} onOpen={onOpenWorker} />
+      )}
+      {answer.map((item) => <ChatItemView key={item.id} item={item} streaming={turn.endedAt === null} />)}
+      {stopMessage && <div className="chat-notice">{stopMessage}</div>}
+    </div>
+  );
+});

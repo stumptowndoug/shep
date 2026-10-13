@@ -23,6 +23,16 @@ function clock(t: TestContext) {
 
 const chunk = (text: string, messageId?: string, sessionUpdate = "agent_message_chunk") => ({ sessionUpdate, messageId, content: { type: "text" as const, text } });
 
+test("child sessions cannot merge text even when their message ids match", t => {
+  const time = clock(t);
+  const received: unknown[] = [];
+  const batch = createStreamBatch(updates => received.push(...updates));
+  for (const routeSessionId of ["a", "b", "a"]) batch.enqueue({ ...chunk(routeSessionId, "same"), routeSessionId });
+  time.frame();
+  assert.equal(received.length, 3);
+  assert.deepEqual(received.map(value => (value as {content: {text: string}}).content.text), ["a", "b", "a"]);
+});
+
 test("a burst of 1,000 tokens publishes once per frame and preserves message boundaries", t => {
   const time = clock(t);
   const publications: Parameters<Parameters<typeof createStreamBatch>[0]>[0][] = [];
