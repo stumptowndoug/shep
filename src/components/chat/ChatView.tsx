@@ -170,7 +170,7 @@ export default function ChatView({ chatId, assistantId, repoPath, fullAccess, on
                 <p role={chat.status === "starting" ? "status" : undefined} className={`chat-empty__lede ${chat.status === "starting" && !chat.startup?.authUrl ? "chat-shimmer" : ""}`}>
                   {chat.status === "starting"
                     ? chat.startup?.message ?? `Starting ${agentName}…`
-                    : `${fullAccess ? "Full access: it edits and runs commands without asking." : "It asks before editing or running commands."} Type / for commands, @ for files.`}
+                    : fullAccess ? "Full access." : "Asks before making changes."}
                 </p>
                 {chat.status === "starting" && chat.startup && <ChatSignIn chatId={chatId} url={chat.startup.authUrl} />}
               </div>
