@@ -149,6 +149,19 @@ test("finished blocks of a reply keep their DOM while it streams and when the tu
   expect(await reply.locator("p").first().evaluate((node, before) => node === before, first)).toBe(true);
 });
 
+test("a huge reply keeps its markdown while it streams, and turns plain only once finished", async ({ page }) => {
+  await open(page);
+  await send(page, "Write a huge answer");
+  await stream(page, "A link: https://example.com\n\n" + "Lots of words in a long reply. ".repeat(3_400));
+  const reply = page.locator(".chat-turn > .chat-markdown");
+  await expect(reply.locator("a")).toHaveCount(1);
+  await expect(reply.locator(".chat-markdown__plain")).toHaveCount(0);
+  await finish(page);
+  await expect(reply.locator(".chat-markdown__plain")).toBeVisible({ timeout: 15_000 });
+  await expect(reply.locator("a")).toHaveCount(0);
+  await expectAtEnd(page);
+});
+
 test("scrolling back down to the end resumes following", async ({ page }) => {
   await open(page);
   await send(page, "Write a long answer");

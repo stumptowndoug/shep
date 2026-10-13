@@ -348,6 +348,7 @@
   overflow-wrap: anywhere;
 }
 .chat-markdown > * + * { margin-top: 0.8em; }
+.chat-markdown__plain { white-space: pre-wrap; overflow-wrap: anywhere; }
 .chat-markdown h1,
 .chat-markdown h2,
 .chat-markdown h3,

@@ -21,18 +21,16 @@ test("streaming code uses plain markdown and highlights the final text only", as
   await expect(page.locator(".chat-view:visible code")).toContainText("const value = 2;");
 });
 
-test("large agent responses remain available without rich rendering", async ({ page }) => {
+test("large finished responses show in full as plain text, without rich rendering", async ({ page }) => {
   await page.goto("/tests/design-preview/?view=chat");
   await page.evaluate(async () => {
     const { useChatStore } = await import("/src/stores/useChatStore.ts");
     useChatStore.getState().update(900, chat => ({...chat,turns:chat.turns.map(turn=>({...turn,items:[{kind:"message",id:"large",messageId:null,text:"a@b.co\n".repeat(40_000)}]}))}));
   });
-  const summary = page.getByText("Show large response as plain text (280,000 characters)");
-  await expect(summary).toBeVisible();
-  await expect(page.locator(".chat-markdown pre")).toBeHidden();
-  await summary.click();
-  await expect(page.locator(".chat-markdown pre")).toBeVisible();
-  expect(await page.locator(".chat-markdown pre").textContent()).toHaveLength(280_000);
+  const plain = page.locator(".chat-view:visible .chat-markdown__plain");
+  await expect(plain).toBeVisible();
+  expect(await plain.textContent()).toHaveLength(280_000);
+  await expect(page.locator(".chat-view:visible .chat-markdown a")).toHaveCount(0);
 });
 
 test("a finished reply with SQL, an unknown language, and a table renders instead of blanking the window", async ({ page }) => {
