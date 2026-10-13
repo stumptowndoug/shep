@@ -18,7 +18,7 @@ const repoPath = "/test/queue";
 let channel: Channel<AcpOutput>;
 let sessionRequest: number;
 let activeRequest: number | undefined;
-const requests: { type: string; text: string }[][] = [];
+const requests: { type: string; text?: string; mimeType?: string; data?: string }[][] = [];
 const emit = (body: object) => queueMicrotask(() => channel.onmessage({ event: "line", data: JSON.stringify({ jsonrpc: "2.0", ...body }) }));
 
 export function finish(stopReason = "end_turn") {
@@ -44,7 +44,7 @@ mockIPC((cmd, payload) => {
   if (cmd === "spawn_acp_agent") { channel = args.onOutput as Channel<AcpOutput>; return chatId; }
   if (cmd !== "write_acp_agent") return null;
   const message = JSON.parse(String(args.line));
-  if (message.method === "initialize") emit({ id: message.id, result: {} });
+  if (message.method === "initialize") emit({ id: message.id, result: params.has("images") ? { agentCapabilities: { promptCapabilities: { image: true } } } : {} });
   if (message.method === "session/new") {
     sessionRequest = message.id;
     if (params.get("startup") !== "hold") releaseStartup();

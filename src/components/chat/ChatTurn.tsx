@@ -2,7 +2,7 @@ import { memo, useState } from "react";
 import { ChevronRight } from "lucide-react";
 import { ChatErrorNotice, ChatItemView } from "./ChatItems";
 import { ChatAgentGroup } from "./ChatWorkers";
-import type { ChatTurn } from "../../lib/acp/chatModel";
+import type { ChatTurn, PromptImage } from "../../lib/acp/chatModel";
 import type { ChatWorker } from "../../lib/acp/chatWorkers";
 import { splitTurn, turnStopMessage } from "../../lib/acp/chatPresentation";
 
@@ -15,6 +15,19 @@ export function formatDuration(ms: number): string {
 
 export function plural(count: number, word: string): string {
   return `${count} ${word}${count === 1 ? "" : "s"}`;
+}
+
+/** Images sent with a prompt, above its bubble. */
+export function PromptImages({ images = [], trimmed = 0 }: { images?: PromptImage[]; trimmed?: number }) {
+  if (!images.length && !trimmed) return null;
+  return (
+    <div className="chat-user-images">
+      {images.map((image, index) => (
+        <img key={index} src={`data:${image.mimeType};base64,${image.data}`} alt={image.name ?? `Image ${index + 1}`} loading="lazy" decoding="async" />
+      ))}
+      {trimmed > 0 && <span className="chat-user-images__trimmed">{plural(trimmed, "image")} sent</span>}
+    </div>
+  );
 }
 
 interface TurnProps {
@@ -41,6 +54,7 @@ export const Turn = memo(function Turn({ turn, workers, waiting, openWorkerId = 
   ].filter(Boolean).join(" · ");
   return (
     <div className="chat-turn">
+      <PromptImages images={turn.images} trimmed={turn.trimmedImages} />
       {turn.prompt && <div className="chat-user">{turn.prompt}</div>}
       {turn.additionalPrompts?.map((text, index) => <div key={index} className="chat-user">{text}</div>)}
       {work.length > 0 && (

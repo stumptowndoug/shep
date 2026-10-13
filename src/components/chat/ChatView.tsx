@@ -2,7 +2,7 @@ import { Fragment, useCallback, useMemo, useRef, useState, type CSSProperties } 
 import { ChevronRight, CircleAlert, ShieldAlert, X } from "lucide-react";
 import ChatComposer from "./ChatComposer";
 import { ChatErrorNotice } from "./ChatItems";
-import { Turn } from "./ChatTurn";
+import { PromptImages, Turn } from "./ChatTurn";
 import { ChatAgentGroup } from "./ChatWorkers";
 import ChatWorkerPeek from "./ChatWorkerPeek";
 import { ChatProjectPath } from "./chatProjectPath";
@@ -170,6 +170,10 @@ export default function ChatView({ chatId, assistantId, repoPath, fullAccess, on
             {orphans.length > 0 && <ChatAgentGroup workers={orphans} waiting={waiting} openId={openWorkerId} onOpen={setOpenWorkerId} />}
             {chat.status === "working" && !request && <div className="chat-working chat-shimmer">Working</div>}
             {chat.error && <ChatErrorNotice text={chat.error} />}
+            {(chat.queuedImages?.length ?? 0) > 0 && <div className="chat-pending" role="group" aria-label="Queued images">
+              <span className="chat-pending__label">Queued</span>
+              <PromptImages images={chat.queuedImages} />
+            </div>}
             {chat.queued.map((text, index) => <PendingMessage key={index} text={text} />)}
           </div>
         </div>

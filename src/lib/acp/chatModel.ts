@@ -54,11 +54,23 @@ export type ChatItem =
     }
   | { kind: "notice"; id: string; text: string };
 
+/** An image the user attached to a prompt, as an ACP image content block. */
+export interface PromptImage {
+  mimeType: string;
+  /** Base64, without a data: prefix. */
+  data: string;
+  name?: string;
+}
+
 export interface ChatTurn {
   id: number;
   prompt: string | null;
   /** Follow-ups sent together with the first prompt in a single agent turn. */
   additionalPrompts?: string[];
+  /** Images sent with this turn's prompt. */
+  images?: PromptImage[];
+  /** How many images older history released to save memory. */
+  trimmedImages?: number;
   items: ChatItem[];
   startedAt: number;
   endedAt: number | null;
@@ -100,6 +112,10 @@ export interface ChatState {
   options: ChatOption[];
   commands: ChatCommand[];
   queued: string[];
+  /** Images waiting with the queued prompts, sent in the same turn. */
+  queuedImages?: PromptImage[];
+  /** The agent accepts image content in prompts (its promptCapabilities.image). */
+  acceptsImages?: boolean;
   /** Keep stopped follow-ups in their original place in the conversation. */
   unsentPrompts: { text: string; afterTurnId: number | null }[];
   error: string | null;
@@ -126,12 +142,15 @@ export function emptyChat(): ChatState {
 // ── Turns ────────────────────────────────────────────────────────────
 
 export function markQueuedPromptsUnsent(state: ChatState): ChatState {
-  if (state.queued.length === 0) return state;
+  const images = state.queuedImages?.length ?? 0;
+  if (state.queued.length === 0 && images === 0) return state;
   const afterTurnId = lastOf(state.turns)?.id ?? null;
+  const imageNote = images ? [{ text: `${images} ${images === 1 ? "image" : "images"}`, afterTurnId }] : [];
   return {
     ...state,
     queued: [],
-    unsentPrompts: [...(state.unsentPrompts ?? []), ...state.queued.map(text => ({ text, afterTurnId }))],
+    queuedImages: [],
+    unsentPrompts: [...(state.unsentPrompts ?? []), ...state.queued.map(text => ({ text, afterTurnId })), ...imageNote],
   };
 }
 
@@ -143,7 +162,8 @@ export function trimOldTurnDetails(state: ChatState): ChatState {
   const turns = state.turns.map((turn, index) => {
     if (index >= boundary || turn.endedAt === null || turn.detailsTrimmed) return turn;
     changed = true;
-    return { ...turn, detailsTrimmed: true, items: turn.items.map((item): ChatItem => {
+    const images = turn.images?.length ? { images: undefined, trimmedImages: turn.images.length } : {};
+    return { ...turn, ...images, detailsTrimmed: true, items: turn.items.map((item): ChatItem => {
       if (item.kind === "tool" && (item.output || item.diffs.length || item.omittedDiffs)) {
         return { ...item, output: "", diffs: [], omittedDiffs: undefined, outputTrimmed: true };
       }
@@ -156,11 +176,12 @@ export function trimOldTurnDetails(state: ChatState): ChatState {
   return changed ? { ...state, turns } : state;
 }
 
-export function startTurn(state: ChatState, prompt: string | null, additionalPrompts: string[] = []): ChatState {
+export function startTurn(state: ChatState, prompt: string | null, additionalPrompts: string[] = [], images: PromptImage[] = []): ChatState {
   const turn: ChatTurn = {
     id: state.turns.length,
     prompt,
     ...(additionalPrompts.length > 0 ? { additionalPrompts } : {}),
+    ...(images.length > 0 ? { images } : {}),
     items: [],
     startedAt: Date.now(),
     endedAt: null,

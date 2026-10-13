@@ -121,6 +121,26 @@
   overflow-wrap: anywhere;
 }
 
+/* Images sent with a prompt sit above its bubble, like attachments in a message app. */
+.chat-user-images {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-self: flex-end;
+  gap: 6px;
+  max-width: min(78%, 620px);
+  margin-top: 6px;
+}
+.chat-user-images + .chat-user { margin-top: 0; }
+.chat-user-images img {
+  display: block;
+  max-width: 220px;
+  max-height: 160px;
+  border-radius: 12px;
+  object-fit: cover;
+}
+.chat-user-images__trimmed { color: var(--faint); font-size: var(--text-xs); }
+
 .chat-pending {
   display: flex;
   flex-direction: column;
@@ -654,6 +674,46 @@ html[data-theme-tone="dark"] .chat-composer {
   min-width: 0;
   padding: 4px 8px 8px 10px;
 }
+/* Attached images: small thumbnails above the text, removable before sending. */
+.chat-composer__attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px 14px 0;
+}
+.chat-attachment {
+  position: relative;
+  width: 56px;
+  height: 56px;
+  overflow: hidden;
+  border-radius: 10px;
+  background: var(--surface);
+}
+.chat-attachment img { width: 100%; height: 100%; object-fit: cover; }
+.chat-attachment__remove {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: 50%;
+  background: rgb(0 0 0 / 60%);
+  color: #fff;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--fast);
+}
+.chat-attachment:hover .chat-attachment__remove,
+.chat-attachment__remove:focus-visible { opacity: 1; }
+.chat-composer--dropping {
+  border-color: color-mix(in srgb, var(--accent) 60%, var(--line));
+  background: color-mix(in srgb, var(--accent) 6%, var(--surface-overlay));
+}
+.chat-composer__attach { width: 30px; height: 30px; color: var(--muted); }
+
 /* Two buttons, so the row never wraps: the model, then every other setting. */
 .chat-composer__controls { display: flex; flex: 1; align-items: center; gap: 2px; min-width: 0; }
 .chat-composer__model { min-width: 0; }

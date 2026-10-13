@@ -15,6 +15,7 @@ import {
   startTurn,
   type AcpSessionInfo,
   type PermissionOption,
+  type PromptImage,
 } from "./chatModel";
 import { useChatStore } from "../../stores/useChatStore";
 import { useChatModelStore } from "../../stores/useChatModelStore";
@@ -211,21 +212,25 @@ export function cancelChatStartup(chatId: number) {
   }
 }
 
-export function sendPrompt(chatId: number, text: string): boolean {
+export function sendPrompt(chatId: number, text: string, images: PromptImage[] = []): boolean {
   const prompt = text.trim();
   const chat = useChatStore.getState().chats[chatId];
   const session = live.get(chatId);
-  if (!prompt || !chat || chat.status === "exited" || !session) return false;
+  if ((!prompt && !images.length) || !chat || chat.status === "exited" || !session) return false;
   if (chat.status !== "ready" || (session.cancelling && session.cancelTimer !== undefined)) {
     useChatStore.getState().update(chatId, (state) => {
-      const next = { ...state, queued: [...state.queued, prompt] };
+      const next = {
+        ...state,
+        queued: prompt ? [...state.queued, prompt] : state.queued,
+        queuedImages: [...(state.queuedImages ?? []), ...images],
+      };
       // Stop may take time to complete. Keep new follow-ups visible without
       // allowing them to restart the agent when cancellation is acknowledged.
       return session.cancelling ? markQueuedPromptsUnsent(next) : next;
     });
     return true;
   }
-  void runTurn(chatId, [prompt]);
+  void runTurn(chatId, prompt ? [prompt] : [], images);
   return true;
 }
 
@@ -351,7 +356,7 @@ export async function closeChat(chatId: number) {
 
 interface InitializeResult {
   protocolVersion?: number;
-  agentCapabilities?: { loadSession?: boolean };
+  agentCapabilities?: { loadSession?: boolean; promptCapabilities?: { image?: boolean } };
   authMethods?: { id: string; name: string; description?: string }[];
 }
 
@@ -367,6 +372,8 @@ async function openSession(chatId: number, options: StartChatOptions, resetStart
     clientInfo: { name: "shep", version: "1" },
   });
   if (init.protocolVersion !== undefined && init.protocolVersion !== 1) throw new Error(`Unsupported ACP protocol version: ${init.protocolVersion}`);
+  const acceptsImages = init.agentCapabilities?.promptCapabilities?.image === true;
+  useChatStore.getState().update(chatId, (chat) => ({ ...chat, acceptsImages }));
 
   const authMethodId = session.assistant.acp?.authMethodId;
   if (authMethodId) {
@@ -463,17 +470,17 @@ async function enableFullAccess(chatId: number) {
   if (mode && full && mode.value !== full.value) await setChatOption(chatId, mode.id, full.value);
 }
 
-async function runTurn(chatId: number, prompts: string[]) {
+async function runTurn(chatId: number, prompts: string[], images: PromptImage[] = []) {
   const session = live.get(chatId);
   if (!session?.sessionId) return;
   session.stream?.flush();
   session.cancelling = false;
   const store = useChatStore.getState();
-  store.update(chatId, (chat) => ({ ...startTurn(chat, prompts[0], prompts.slice(1)), status: "working" }));
+  store.update(chatId, (chat) => ({ ...startTurn(chat, prompts[0] ?? null, prompts.slice(1), images), status: "working" }));
   setAgentState(chatId, "working", "Agent is responding");
   if (!session.titled) {
     session.titled = true;
-    const title = summarizeTitle(prompts[0]);
+    const title = prompts.length ? summarizeTitle(prompts[0]) : images.length === 1 ? "Image" : "Images";
     useTerminalStore.getState().setTabSessionInfo(chatId, session.sessionId, title);
     void persistHistory(session, title);
   }
@@ -484,7 +491,11 @@ async function runTurn(chatId: number, prompts: string[]) {
   try {
     const result = await session.connection.request<{ stopReason?: string }>("session/prompt", {
       sessionId: session.sessionId,
-      prompt: prompts.map(text => ({ type: "text", text })),
+      // Images first, then the words about them, as agents' own UIs send them.
+      prompt: [
+        ...images.map(image => ({ type: "image", mimeType: image.mimeType, data: image.data })),
+        ...prompts.map(text => ({ type: "text", text })),
+      ],
     });
     stopReason = session.cancelling ? "cancelled" : result?.stopReason ?? "end_turn";
   } catch (error) {
@@ -524,10 +535,11 @@ function setReady(chatId: number, error?: string) {
   const chat = useChatStore.getState().chats[chatId];
   if (!chat || chat.status === "exited") return;
   const prompts = chat.queued;
-  useChatStore.getState().update(chatId, (state) => ({ ...state, status: "ready", queued: [] }));
+  const images = chat.queuedImages ?? [];
+  useChatStore.getState().update(chatId, (state) => ({ ...state, status: "ready", queued: [], queuedImages: [] }));
   refreshWaitingState(chatId);
   if (error) setAgentState(chatId, "blocked", error);
-  if (prompts.length > 0) void runTurn(chatId, prompts);
+  if (prompts.length > 0 || images.length > 0) void runTurn(chatId, prompts, images);
 }
 
 async function handleRequest(chatId: number, method: string, params: unknown) {

@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowUp, LoaderCircle, Square, Terminal, X } from "lucide-react";
+import { ArrowUp, ImagePlus, LoaderCircle, Square, Terminal, X } from "lucide-react";
 import Select from "../shared/Select";
 import ChatSettings from "./ChatSettings";
 import { useChatDraftStore } from "../../stores/useChatDraftStore";
-import type { ChatState } from "../../lib/acp/chatModel";
+import { useNoticeStore } from "../../stores/useNoticeStore";
+import type { ChatState, PromptImage } from "../../lib/acp/chatModel";
+import { imageFiles, MAX_PROMPT_IMAGES, promptImageFromFile } from "../../lib/acp/promptImages";
+import { getErrorMessage } from "../../lib/errors";
 import { cancelTurn, sendPrompt, setChatOption } from "../../lib/acp/chatSessions";
 import { recallStep, sentPrompts } from "../../lib/acp/chatKeys";
 import { assistantLogoSrc, getAssistantLogoClass } from "../../lib/assistantLogos";
@@ -52,6 +55,10 @@ export default function ChatComposer({ chatId, chat, assistantId, agentName, ful
   // A slash command chat doesn't offer: point to the CLI instead of sending.
   const [cliOnly, setCliOnly] = useState<string | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [images, setImages] = useState<PromptImage[]>([]);
+  const [dropping, setDropping] = useState(false);
+  const hasContent = Boolean(text.trim()) || images.length > 0;
   // ↑/↓ prompt recall: how far back we are, and the text we put in the box.
   const recallRef = useRef<{ index: number; text: string } | null>(null);
   useEffect(() => { useChatDraftStore.getState().load(draftKey); }, [draftKey]);
@@ -87,17 +94,36 @@ export default function ChatComposer({ chatId, chat, assistantId, agentName, ful
       .slice(0, MAX_COMMAND_SUGGESTIONS);
   }, [chat.commands, text]);
 
+  const addImages = async (files: File[]) => {
+    const { pushNotice } = useNoticeStore.getState();
+    if (!files.length) return;
+    if (!chat.acceptsImages) {
+      pushNotice({ tone: "info", title: `${agentName} doesn’t accept images in chat` });
+      return;
+    }
+    const room = MAX_PROMPT_IMAGES - images.length;
+    if (files.length > room) pushNotice({ tone: "info", title: `Up to ${MAX_PROMPT_IMAGES} images per message` });
+    const results = await Promise.allSettled(files.slice(0, Math.max(0, room)).map(promptImageFromFile));
+    const added = results.flatMap(result => result.status === "fulfilled" ? [result.value] : []);
+    for (const result of results) {
+      if (result.status === "rejected") pushNotice({ tone: "error", title: "Couldn’t attach image", message: getErrorMessage(result.reason) });
+    }
+    if (added.length) setImages(current => [...current, ...added].slice(0, MAX_PROMPT_IMAGES));
+    inputRef.current?.focus();
+  };
+
   const submit = (force = false) => {
-    if (!text.trim()) return;
+    if (!hasContent) return;
     const command = slashCommandName(text);
     if (!force && command && chat.commands.length > 0 && !chat.commands.some((entry) => entry.name === command)) {
       setCliOnly(command);
       return;
     }
     setCliOnly(null);
-    if (!sendPrompt(chatId, text)) return;
+    if (!sendPrompt(chatId, text, images)) return;
     recallRef.current = null;
     setText("");
+    setImages([]);
     if (inputRef.current) inputRef.current.style.height = "auto";
   };
 
@@ -172,7 +198,25 @@ export default function ChatComposer({ chatId, chat, assistantId, agentName, ful
           <button type="button" className="icon-btn" aria-label="Dismiss" onClick={() => setCliOnly(null)}><X size={13} aria-hidden="true" /></button>
         </div>
       )}
-    <div className="chat-composer">
+    <div
+      className={`chat-composer ${dropping ? "chat-composer--dropping" : ""}`}
+      onDragOver={(event) => {
+        if (closed || !event.dataTransfer.types.includes("Files")) return;
+        event.preventDefault();
+        setDropping(true);
+      }}
+      onDragLeave={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDropping(false);
+      }}
+      onDrop={(event) => {
+        if (closed || !event.dataTransfer.files.length) return;
+        event.preventDefault();
+        setDropping(false);
+        const files = imageFiles(event.dataTransfer.files);
+        if (files.length) void addImages(files);
+        else useNoticeStore.getState().pushNotice({ tone: "info", title: "Only images can be attached" });
+      }}
+    >
       {suggestions.length > 0 && (
         <div className="popover chat-composer__commands" role="listbox">
           {suggestions.map((command, index) => (
@@ -195,6 +239,23 @@ export default function ChatComposer({ chatId, chat, assistantId, agentName, ful
         </div>
       )}
 
+      {images.length > 0 && (
+        <div className="chat-composer__attachments">
+          {images.map((image, index) => {
+            const label = image.name ?? `image ${index + 1}`;
+            return (
+              <div key={index} className="chat-attachment">
+                <img src={`data:${image.mimeType};base64,${image.data}`} alt={label} />
+                <button type="button" className="chat-attachment__remove" aria-label={`Remove ${label}`}
+                  onClick={() => setImages(current => current.filter((_, i) => i !== index))}>
+                  <X size={11} aria-hidden="true" />
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
       <textarea
         ref={inputRef}
         autoFocus
@@ -212,6 +273,13 @@ export default function ChatComposer({ chatId, chat, assistantId, agentName, ful
           fitHeight(event.target);
         }}
         onKeyDown={handleKeyDown}
+        onPaste={(event) => {
+          const files = imageFiles(event.clipboardData.files);
+          if (!files.length) return;
+          // An image alone attaches; text copied along with it still pastes.
+          if (!event.clipboardData.types.includes("text/plain")) event.preventDefault();
+          void addImages(files);
+        }}
       />
 
       <div className="chat-composer__footer">
@@ -239,6 +307,16 @@ export default function ChatComposer({ chatId, chat, assistantId, agentName, ful
             disabled={settingsDisabled}
             onChange={changeOption}
           />
+          {chat.acceptsImages && !closed && <>
+            <button type="button" className="icon-btn chat-composer__attach" aria-label="Attach images" title="Attach images (or paste / drop them)"
+              onClick={() => fileInputRef.current?.click()}>
+              <ImagePlus size={16} aria-hidden="true" />
+            </button>
+            <input ref={fileInputRef} type="file" accept="image/*" multiple hidden onChange={(event) => {
+              void addImages(imageFiles(event.currentTarget.files ?? []));
+              event.currentTarget.value = "";
+            }} />
+          </>}
         </div>
         <div className="chat-composer__actions">
           {chat.queued.length > 0 && (
@@ -258,11 +336,11 @@ export default function ChatComposer({ chatId, chat, assistantId, agentName, ful
             </button>
           )}
           {/* Mid-turn, Stop stands alone until there's a follow-up to queue. */}
-          {!(working && !text.trim()) && (
+          {!(working && !hasContent) && (
             <button
               type="button"
               className="chat-composer__send"
-              disabled={closed || !text.trim()}
+              disabled={closed || !hasContent}
               title={working ? "Queue follow-up (Enter)" : "Send (Enter)"}
               aria-label={working ? "Queue follow-up" : "Send message"}
               onClick={() => submit()}
