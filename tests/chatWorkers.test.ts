@@ -85,8 +85,12 @@ test("child output retention is bounded independently of parent history", () => 
 
 test("only supported adapters opt into the implemented legacy child contract", () => {
   assert.deepEqual(workerCapabilities("pi"), {});
-  assert.deepEqual(workerCapabilities("claude")._meta?.jetbrains.air.capabilities, ["nativeSubagentSessions"]);
+  assert.deepEqual(workerCapabilities("claude")._meta?.jetbrains?.air.capabilities, ["nativeSubagentSessions"]);
   assert.equal("subagents" in workerCapabilities("codex"), false);
+  assert.deepEqual(workerCapabilities("muse")._meta?.jetbrains?.air.capabilities, ["nativeSubagentSessions"]);
+  // Cursor reads only `subagents`; keep it under _meta, never the top-level draft field.
+  assert.deepEqual(workerCapabilities("cursor"), { _meta: { subagents: true } });
+  assert.deepEqual(workerCapabilities("opencode"), {});
 });
 
 test("agents remember the turn that started them, and nested agents share their parent's", () => {

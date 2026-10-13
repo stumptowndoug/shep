@@ -18,15 +18,18 @@ export interface ChatWorker {
   transcriptTrimmed?: boolean;
 }
 
-/** Compatibility with the nativeSubagentSessions extension in the pinned adapters.
- * Do not advertise the newer draft `subagents` capability: its reusable-session
- * and directed-message contract differs from these spawn/terminal events.
+/** Opt in to the subagent spawn/terminal events these adapters send.
+ * Claude, Codex and Muse read the JetBrains AIR nativeSubagentSessions flag;
+ * Cursor only reads `subagents`, which it also accepts under `_meta`.
+ * Do not advertise the top-level draft `subagents` capability: its
+ * reusable-session and directed-message contract differs from these events.
  * Keep the client identity Shep; only opt in to the extension we implement.
  */
 export function workerCapabilities(assistantId: string) {
-  return assistantId === "claude" || assistantId === "codex"
-    ? { _meta: { jetbrains: { air: { version: 1, capabilities: ["nativeSubagentSessions"] } } } }
-    : {};
+  if (assistantId === "claude" || assistantId === "codex" || assistantId === "muse") {
+    return { _meta: { jetbrains: { air: { version: 1, capabilities: ["nativeSubagentSessions"] } } } };
+  }
+  return assistantId === "cursor" ? { _meta: { subagents: true } } : {};
 }
 
 const TERMINAL_STATES = new Set<WorkerState>(["completed", "failed", "cancelled", "disconnected"]);
