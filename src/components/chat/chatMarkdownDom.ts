@@ -77,6 +77,15 @@ function openLocal(path: string, baseDir: string) {
  */
 export function handleChatMarkdownClick(event: React.MouseEvent<HTMLElement>, baseDir: string) {
   const target = event.target as HTMLElement;
+  const copy = target.closest<HTMLButtonElement>(".chat-code__copy");
+  if (copy) {
+    const code = (copy.closest(".chat-code")?.querySelector("code")?.textContent ?? "").replace(/\n$/, "");
+    void navigator.clipboard.writeText(code).then(() => {
+      copy.textContent = "Copied";
+      window.setTimeout(() => { copy.textContent = "Copy"; }, 1500);
+    }, (error) => notifyError("Couldn’t copy", error));
+    return;
+  }
   const local = target.closest<HTMLElement>(".chat-image__img[data-path], .chat-image__open[data-path]");
   if (local) {
     event.preventDefault();

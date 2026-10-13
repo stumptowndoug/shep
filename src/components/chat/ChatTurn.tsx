@@ -1,6 +1,6 @@
 import { memo, useState } from "react";
 import { ChevronRight } from "lucide-react";
-import { ChatErrorNotice, ChatItemView, TurnChanges } from "./ChatItems";
+import { ChatErrorNotice, ChatItemView, CopyButton, TurnChanges } from "./ChatItems";
 import { ChatAgentGroup } from "./ChatWorkers";
 import type { ChatTurn, PromptImage } from "../../lib/acp/chatModel";
 import type { ChatWorker } from "../../lib/acp/chatWorkers";
@@ -48,6 +48,8 @@ export const Turn = memo(function Turn({ turn, workers, waiting, openWorkerId = 
   const stopMessage = turnStopMessage(turn);
   // Summarize changes once the turn is done, so the list doesn't grow under the reader.
   const changes = turn.endedAt === null ? [] : turnChanges(turn);
+  // The answer as the agent wrote it, Markdown and all.
+  const answerText = turn.endedAt === null ? "" : answer.flatMap((item) => item.kind === "message" ? [item.text] : []).join("\n\n").trim();
   const edits = tools.filter((item) => item.kind === "tool" && item.toolKind === "edit").length;
   const facts = [
     formatDuration((turn.endedAt ?? Date.now()) - turn.startedAt),
@@ -76,6 +78,7 @@ export const Turn = memo(function Turn({ turn, workers, waiting, openWorkerId = 
       )}
       {answer.map((item) => <ChatItemView key={item.id} item={item} streaming={turn.endedAt === null} />)}
       {changes.length > 0 && <TurnChanges changes={changes} />}
+      {answerText && <div className="chat-turn__actions"><CopyButton text={answerText} label="Copy response" /></div>}
       {stopMessage && (turn.stopReason === "error" ? <ChatErrorNotice text={stopMessage} /> : <div className="chat-notice">{stopMessage}</div>)}
     </div>
   );

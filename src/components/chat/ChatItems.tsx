@@ -8,6 +8,7 @@ import {
   ChevronRight,
   Circle,
   CircleAlert,
+  Copy,
   CircleCheck,
   CircleDot,
   ExternalLink,
@@ -155,6 +156,22 @@ export function ChatErrorNotice({ text }: { text: string }) {
       <CircleAlert size={14} aria-hidden="true" />
       <span>{text}</span>
     </div>
+  );
+}
+
+/** Copies text to the clipboard and says so briefly. */
+export function CopyButton({ text, label }: { text: string; label: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button type="button" className="icon-btn chat-copy" aria-label={copied ? "Copied" : label} title={copied ? "Copied" : label}
+      onClick={() => {
+        void navigator.clipboard.writeText(text).then(() => {
+          setCopied(true);
+          window.setTimeout(() => setCopied(false), 1500);
+        }, (error) => useNoticeStore.getState().pushNotice({ tone: "error", title: "Couldn’t copy", message: getErrorMessage(error) }));
+      }}>
+      {copied ? <Check size={14} aria-hidden="true" /> : <Copy size={14} aria-hidden="true" />}
+    </button>
   );
 }
 

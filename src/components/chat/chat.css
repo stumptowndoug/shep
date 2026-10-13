@@ -268,6 +268,13 @@
 /* The row above already names the file. */
 .chat-changes__diffs .chat-diff__path { display: none; }
 
+/* A finished turn's quiet actions, shown when you're on that turn. */
+.chat-turn__actions { display: flex; gap: 2px; margin: -4px 0 0 -7px; }
+.chat-copy { width: 28px; height: 28px; color: var(--faint); opacity: 0; transition: opacity var(--fast), color var(--fast); }
+.chat-turn:hover .chat-copy,
+.chat-copy:focus-visible { opacity: 1; }
+.chat-copy:hover { color: var(--fg); }
+
 /* ── Markdown (agent prose) ── */
 
 .chat-markdown {
@@ -317,6 +324,26 @@
   font-size: var(--text-sm);
   line-height: 1.5;
 }
+/* Code blocks carry a copy button, shown on hover. */
+.chat-markdown .chat-code { position: relative; }
+.chat-markdown .chat-code__copy {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  padding: 2px 8px;
+  border: none;
+  border-radius: 6px;
+  background: var(--surface-strong);
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--text-2xs);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--fast), color var(--fast);
+}
+.chat-markdown .chat-code:hover .chat-code__copy,
+.chat-markdown .chat-code__copy:focus-visible { opacity: 1; }
+.chat-markdown .chat-code__copy:hover { color: var(--fg); }
 .chat-markdown pre code {
   padding: 0;
   background: none;
