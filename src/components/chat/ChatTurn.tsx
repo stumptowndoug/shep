@@ -1,10 +1,10 @@
 import { memo, useState } from "react";
 import { ChevronRight } from "lucide-react";
-import { ChatErrorNotice, ChatItemView } from "./ChatItems";
+import { ChatErrorNotice, ChatItemView, TurnChanges } from "./ChatItems";
 import { ChatAgentGroup } from "./ChatWorkers";
 import type { ChatTurn, PromptImage } from "../../lib/acp/chatModel";
 import type { ChatWorker } from "../../lib/acp/chatWorkers";
-import { splitTurn, turnStopMessage } from "../../lib/acp/chatPresentation";
+import { splitTurn, turnChanges, turnStopMessage } from "../../lib/acp/chatPresentation";
 
 export function formatDuration(ms: number): string {
   const seconds = Math.max(1, Math.round(ms / 1000));
@@ -46,6 +46,8 @@ export const Turn = memo(function Turn({ turn, workers, waiting, openWorkerId = 
   // Agents recover from failed tools on their own; only a failed turn opens its work.
   const showWork = workExpanded ?? turn.stopReason === "error";
   const stopMessage = turnStopMessage(turn);
+  // Summarize changes once the turn is done, so the list doesn't grow under the reader.
+  const changes = turn.endedAt === null ? [] : turnChanges(turn);
   const edits = tools.filter((item) => item.kind === "tool" && item.toolKind === "edit").length;
   const facts = [
     formatDuration((turn.endedAt ?? Date.now()) - turn.startedAt),
@@ -73,6 +75,7 @@ export const Turn = memo(function Turn({ turn, workers, waiting, openWorkerId = 
         <ChatAgentGroup workers={workers} waiting={waiting} openId={openWorkerId} onOpen={onOpenWorker} />
       )}
       {answer.map((item) => <ChatItemView key={item.id} item={item} streaming={turn.endedAt === null} />)}
+      {changes.length > 0 && <TurnChanges changes={changes} />}
       {stopMessage && (turn.stopReason === "error" ? <ChatErrorNotice text={stopMessage} /> : <div className="chat-notice">{stopMessage}</div>)}
     </div>
   );

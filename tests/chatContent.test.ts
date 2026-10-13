@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { agentMedia, MAX_IMAGE_DATA, MAX_TOOL_TEXT, rawText } from "../src/lib/acp/chatContent.ts";
 import { addNotice, applySessionUpdate, emptyChat, endTurn, startTurn } from "../src/lib/acp/chatModel.ts";
-import { errorTone, splitTurn, turnStopMessage } from "../src/lib/acp/chatPresentation.ts";
+import { errorTone, projectRelativePath, splitTurn, turnChanges, turnStopMessage } from "../src/lib/acp/chatPresentation.ts";
 
 const turn = () => startTurn(emptyChat(), "Review this change");
 const message = (text: string, messageId?: string) => ({ sessionUpdate: "agent_message_chunk", content: { type: "text", text }, messageId });
@@ -125,4 +125,25 @@ test("limits read as warnings; other turn and session failures as errors", () =>
   for (const text of ["Claude Code exited (code 1).", "Request failed", "Couldn’t start Codex: spawn ENOENT"]) {
     assert.equal(errorTone(text), "error", text);
   }
+});
+
+test("a turn's changes group its diffs by file in first-touched order and skip failed edits", () => {
+  const tool = (id: string, status: string, diffs: { path: string; oldText: string | null; newText: string }[]) =>
+    ({ kind: "tool" as const, id, toolCallId: id, title: id, toolKind: "edit", status: status as "completed", output: "", diffs });
+  const turn = {
+    id: 0, prompt: "fix", startedAt: 0, endedAt: 1, stopReason: "end_turn",
+    items: [
+      tool("a", "completed", [{ path: "/repo/src/b.ts", oldText: "x\ny", newText: "x\nz" }]),
+      tool("b", "completed", [{ path: "/repo/README.md", oldText: null, newText: "# Hi\nnew" }]),
+      tool("c", "failed", [{ path: "/repo/src/c.ts", oldText: "a", newText: "b" }]),
+      tool("d", "completed", [{ path: "/repo/src/b.ts", oldText: "z", newText: "z\nw" }]),
+    ],
+  };
+  assert.deepEqual(turnChanges(turn).map(({ path, diffs, added, removed }) => [path, diffs.length, added, removed]), [
+    ["/repo/src/b.ts", 2, 2, 1],
+    ["/repo/README.md", 1, 2, 0],
+  ]);
+  assert.equal(projectRelativePath("/repo/src/b.ts", "/repo/"), "src/b.ts");
+  assert.equal(projectRelativePath("/elsewhere/x.ts", "/repo"), "/elsewhere/x.ts");
+  assert.equal(projectRelativePath("/repository/x.ts", "/repo"), "/repository/x.ts");
 });

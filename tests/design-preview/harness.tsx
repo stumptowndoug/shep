@@ -170,6 +170,7 @@ mockIPC((cmd, payload) => {
     case 'kill_port': previewPorts = previewPorts.filter(port => port.pid !== args?.pid); return null;
     case 'open_url': document.documentElement.dataset.previewLastOpenedUrl = String(args?.url); return null;
     case 'reveal_in_finder': document.documentElement.dataset.previewLastRevealed = String(args?.path); return null;
+    case 'open_file_in_editor': document.documentElement.dataset.previewLastEdited = String(args?.filePath); return null;
     case 'read_chat_image': {
       const path = String(args?.path);
       if (path.includes('missing')) return Promise.reject('missing');

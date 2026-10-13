@@ -1,14 +1,16 @@
-import { memo, useState } from "react";
+import { memo, useContext, useState } from "react";
 import { MultiFileDiff } from "@pierre/diffs/react";
 import {
   BookOpen,
   ClipboardList,
   Brain,
   Check,
+  ChevronRight,
   Circle,
   CircleAlert,
   CircleCheck,
   CircleDot,
+  ExternalLink,
   FilePen,
   Globe,
   Link,
@@ -21,11 +23,14 @@ import {
   X,
 } from "lucide-react";
 import ChatMarkdown from "./ChatMarkdown";
-import { errorTone, textDiffLines } from "../../lib/acp/chatPresentation";
+import { diffStats, errorTone, projectRelativePath, textDiffLines, type FileChange } from "../../lib/acp/chatPresentation";
+import { ChatProjectPath } from "./chatProjectPath";
+import { useNoticeStore } from "../../stores/useNoticeStore";
+import { getErrorMessage } from "../../lib/errors";
 import type { ChatItem, ToolDiff } from "../../lib/acp/chatModel";
 import { useThemeStore } from "../../stores/useThemeStore";
 import { getCodeViewCSSVariables, getDiffViewOptions } from "../git/codeViewTheme";
-import { openUrl } from "../../lib/tauri";
+import { openFileInEditor, openUrl } from "../../lib/tauri";
 
 type ItemOf<K extends ChatItem["kind"]> = Extract<ChatItem, { kind: K }>;
 
@@ -66,21 +71,7 @@ const TOOL_ICONS: Record<string, typeof Wrench> = {
   fetch: Globe,
 };
 
-/** Rough +/- line counts for a diff summary. */
-function diffStats(diffs: ToolDiff[]) {
-  let added = 0;
-  let removed = 0;
-  for (const diff of diffs) {
-    if (diff.truncated) continue;
-    const before = new Set((diff.oldText ?? "").split("\n"));
-    const after = new Set(diff.newText.split("\n"));
-    for (const line of after) if (!before.has(line)) added += 1;
-    for (const line of before) if (line && !after.has(line)) removed += 1;
-  }
-  return { added, removed };
-}
-
-function DiffBlock({ diff }: { diff: ToolDiff }) {
+export function DiffBlock({ diff }: { diff: ToolDiff }) {
   const theme = useThemeStore((s) => s.theme);
   const name = diff.path.split("/").pop() ?? diff.path;
   return (
@@ -164,6 +155,55 @@ export function ChatErrorNotice({ text }: { text: string }) {
       <CircleAlert size={14} aria-hidden="true" />
       <span>{text}</span>
     </div>
+  );
+}
+
+/** What a finished turn did to the code: its files, their line counts, and their diffs on demand. */
+export function TurnChanges({ changes }: { changes: FileChange[] }) {
+  const repoPath = useContext(ChatProjectPath);
+  const [openPath, setOpenPath] = useState<string | null>(null);
+  const added = changes.reduce((sum, change) => sum + change.added, 0);
+  const removed = changes.reduce((sum, change) => sum + change.removed, 0);
+  return (
+    <details className="chat-changes">
+      <summary>
+        <ChevronRight size={14} className="chat-worked__chevron" aria-hidden="true" />
+        <span>Changed {changes.length} {changes.length === 1 ? "file" : "files"}</span>
+        <span className="chat-worked__facts">
+          <span className="chat-tool__added">+{added}</span> <span className="chat-tool__removed">−{removed}</span>
+        </span>
+      </summary>
+      <div className="chat-changes__files">
+        {changes.map((change) => {
+          const path = projectRelativePath(change.path, repoPath);
+          const slash = path.lastIndexOf("/");
+          const open = openPath === change.path;
+          return (
+            <div key={change.path}>
+              <div className="chat-changes__row">
+                <button type="button" className="chat-changes__toggle" aria-expanded={open} onClick={() => setOpenPath(open ? null : change.path)}>
+                  <ChevronRight size={13} className="chat-changes__chevron" aria-hidden="true" />
+                  <span className="chat-changes__name">{path.slice(slash + 1)}</span>
+                  {slash > 0 && <span className="chat-changes__dir">{path.slice(0, slash)}</span>}
+                  <span className="chat-tool__deco">
+                    <span className="chat-tool__added">+{change.added}</span> <span className="chat-tool__removed">−{change.removed}</span>
+                  </span>
+                </button>
+                <button type="button" className="icon-btn chat-changes__open" aria-label={`Open ${path} in editor`} title="Open in editor"
+                  onClick={() => openFileInEditor(repoPath, change.path).catch((error) => {
+                    useNoticeStore.getState().pushNotice({ tone: "error", title: "Couldn’t open the file", message: getErrorMessage(error) });
+                  })}>
+                  <ExternalLink size={13} aria-hidden="true" />
+                </button>
+              </div>
+              {open && <div className="chat-changes__diffs">
+                {change.diffs.map((diff, index) => <DiffBlock key={index} diff={diff} />)}
+              </div>}
+            </div>
+          );
+        })}
+      </div>
+    </details>
   );
 }
 

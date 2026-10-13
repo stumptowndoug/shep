@@ -203,6 +203,71 @@
   font-size: var(--text-sm);
 }
 
+/* What a finished turn changed: a pill like Worked, then one row per file. */
+.chat-changes {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+.chat-changes > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: -6px;
+  padding: 4px 10px 4px 6px;
+  border-radius: var(--radius-pill);
+  list-style: none;
+  cursor: pointer;
+  user-select: none;
+  transition: background var(--fast), color var(--fast);
+}
+.chat-changes > summary::-webkit-details-marker { display: none; }
+.chat-changes > summary:hover { background: var(--state-hover); color: var(--fg); }
+.chat-changes[open] > summary .chat-worked__chevron { transform: rotate(90deg); }
+.chat-changes__files {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 6px 0 4px 7px;
+  padding: 2px 0 2px 16px;
+  border-left: 1px solid var(--line);
+}
+.chat-changes__row { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.chat-changes__toggle {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 28px;
+  margin-left: -8px;
+  padding: 3px 8px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.chat-changes__toggle:hover { background: var(--state-hover); }
+.chat-changes__toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.chat-changes__chevron { flex-shrink: 0; transition: transform var(--fast); }
+.chat-changes__toggle[aria-expanded="true"] .chat-changes__chevron { transform: rotate(90deg); }
+.chat-changes__name { flex-shrink: 0; color: var(--fg); font-weight: 500; opacity: 0.85; }
+.chat-changes__dir {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--faint);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-changes__open { flex-shrink: 0; width: 26px; height: 26px; color: var(--faint); }
+.chat-changes__open:hover { color: var(--fg); }
+.chat-changes__diffs { display: grid; gap: 8px; padding: 6px 0 10px 13px; }
+/* The row above already names the file. */
+.chat-changes__diffs .chat-diff__path { display: none; }
+
 /* ── Markdown (agent prose) ── */
 
 .chat-markdown {
