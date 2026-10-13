@@ -690,6 +690,13 @@ pub async fn git_changed_files(path: String) -> Result<Vec<ChangedFile>, String>
 }
 
 #[tauri::command]
+pub async fn list_project_files(path: String) -> Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || git::project_files(&path))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 pub async fn git_file_diff(
     path: String,
     file_path: String,

@@ -30,6 +30,8 @@ import { applyCursorNotification, parseCursorRequest, validCursorOutcome, type C
 import { chatAdapterCommand } from "./adapters";
 import { antigravitySignInUrl } from "./antigravityProtocol";
 import { createStreamBatch } from "./streamBatch";
+import { promptBlocks } from "./fileMentions";
+import { knownProjectFiles } from "./projectFiles";
 import { applyWorkerNotification, disconnectWorkers, runningWorkers, workerCapabilities, workerSummary } from "./chatWorkers";
 
 const TITLE_MAX_CHARS = 60;
@@ -494,7 +496,8 @@ async function runTurn(chatId: number, prompts: string[], images: PromptImage[] 
       // Images first, then the words about them, as agents' own UIs send them.
       prompt: [
         ...images.map(image => ({ type: "image", mimeType: image.mimeType, data: image.data })),
-        ...prompts.map(text => ({ type: "text", text })),
+        // `@path` mentions of project files go as resource links, in place.
+        ...prompts.flatMap(text => promptBlocks(text, knownProjectFiles(session.repoPath), session.repoPath)),
       ],
     });
     stopReason = session.cancelling ? "cancelled" : result?.stopReason ?? "end_turn";

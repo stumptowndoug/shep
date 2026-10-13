@@ -6,6 +6,8 @@ import { useChatDraftStore } from "../../stores/useChatDraftStore";
 import { useNoticeStore } from "../../stores/useNoticeStore";
 import type { ChatState, PromptImage } from "../../lib/acp/chatModel";
 import { imageFiles, MAX_PROMPT_IMAGES, promptImageFromFile } from "../../lib/acp/promptImages";
+import { mentionAt, rankFiles } from "../../lib/acp/fileMentions";
+import { loadProjectFiles } from "../../lib/acp/projectFiles";
 import { getErrorMessage } from "../../lib/errors";
 import { cancelTurn, sendPrompt, setChatOption } from "../../lib/acp/chatSessions";
 import { recallStep, sentPrompts } from "../../lib/acp/chatKeys";
@@ -33,6 +35,8 @@ const MAX_INPUT_HEIGHT = 240;
 interface ChatComposerProps {
   chatId: number;
   chat: ChatState;
+  /** The project, for `@` file mentions. */
+  repoPath: string;
   assistantId: string | null;
   agentName: string;
   fullAccess: boolean;
@@ -45,7 +49,7 @@ function fitHeight(textarea: HTMLTextAreaElement) {
   textarea.style.height = `${Math.min(textarea.scrollHeight, MAX_INPUT_HEIGHT)}px`;
 }
 
-export default function ChatComposer({ chatId, chat, assistantId, agentName, fullAccess, onOpenTerminal }: ChatComposerProps) {
+export default function ChatComposer({ chatId, chat, repoPath, assistantId, agentName, fullAccess, onOpenTerminal }: ChatComposerProps) {
   const logo = assistantId ? assistantLogoSrc[assistantId] : undefined;
   const draftKey = chat.draftKey ?? `temporary:${chatId}`;
   const text = useChatDraftStore((state) => state.drafts[draftKey] ?? "");
@@ -59,6 +63,10 @@ export default function ChatComposer({ chatId, chat, assistantId, agentName, ful
   const [images, setImages] = useState<PromptImage[]>([]);
   const [dropping, setDropping] = useState(false);
   const hasContent = Boolean(text.trim()) || images.length > 0;
+  // `@` file mentions: where the caret is, the project's files, and an Esc-dismissed mention.
+  const [caret, setCaret] = useState(0);
+  const [files, setFiles] = useState<string[]>([]);
+  const [dismissedMention, setDismissedMention] = useState<number | null>(null);
   // ↑/↓ prompt recall: how far back we are, and the text we put in the box.
   const recallRef = useRef<{ index: number; text: string } | null>(null);
   useEffect(() => { useChatDraftStore.getState().load(draftKey); }, [draftKey]);
@@ -112,6 +120,35 @@ export default function ChatComposer({ chatId, chat, assistantId, agentName, ful
     inputRef.current?.focus();
   };
 
+  const mention = mentionAt(text, caret);
+  const activeMention = mention && mention.start !== dismissedMention ? mention : null;
+  const mentionQuery = activeMention?.query ?? null;
+  const fileSuggestions = useMemo(() => mentionQuery === null ? [] : rankFiles(files, mentionQuery), [files, mentionQuery]);
+
+  // Load the file list when a mention starts, not before: most messages have none.
+  const trackCaret = (textarea: HTMLTextAreaElement) => {
+    setCaret(textarea.selectionStart);
+    const next = mentionAt(textarea.value, textarea.selectionStart);
+    if (next && next.start !== mention?.start) {
+      loadProjectFiles(repoPath).then(setFiles, (error) => {
+        if (import.meta.env.DEV) console.error("Couldn’t list project files:", error);
+      });
+    }
+  };
+
+  const pickFile = (path: string) => {
+    if (!activeMention) return;
+    const insert = `@${path} `;
+    const next = text.slice(0, activeMention.start) + insert + text.slice(caret);
+    const at = activeMention.start + insert.length;
+    setText(next);
+    setCaret(at);
+    setHighlight(0);
+    // The textarea takes the new value on the next render; place the caret after it.
+    requestAnimationFrame(() => inputRef.current?.setSelectionRange(at, at));
+    inputRef.current?.focus();
+  };
+
   const submit = (force = false) => {
     if (!hasContent) return;
     const command = slashCommandName(text);
@@ -135,6 +172,25 @@ export default function ChatComposer({ chatId, chat, assistantId, agentName, ful
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.nativeEvent.isComposing) return;
+    if (fileSuggestions.length) {
+      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        event.preventDefault();
+        const delta = event.key === "ArrowDown" ? 1 : -1;
+        setHighlight((index) => (index + delta + fileSuggestions.length) % fileSuggestions.length);
+        return;
+      }
+      if (event.key === "Tab" || (event.key === "Enter" && !event.shiftKey)) {
+        event.preventDefault();
+        pickFile(fileSuggestions[Math.min(highlight, fileSuggestions.length - 1)]);
+        return;
+      }
+      // Esc closes the picker here instead of stopping the agent.
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setDismissedMention(activeMention!.start);
+        return;
+      }
+    }
     if (suggestions.length) {
       if (event.key === "ArrowDown" || event.key === "ArrowUp") {
         event.preventDefault();
@@ -217,6 +273,30 @@ export default function ChatComposer({ chatId, chat, assistantId, agentName, ful
         else useNoticeStore.getState().pushNotice({ tone: "info", title: "Only images can be attached" });
       }}
     >
+      {fileSuggestions.length > 0 && (
+        <div className="popover chat-composer__commands" role="listbox" aria-label="Files">
+          {fileSuggestions.map((path, index) => {
+            const slash = path.lastIndexOf("/");
+            return (
+              <button
+                key={path}
+                type="button"
+                role="option"
+                aria-selected={index === highlight}
+                className={`popover__item ${index === highlight ? "popover__item--highlight" : ""}`}
+                onMouseDown={(event) => {
+                  event.preventDefault();
+                  pickFile(path);
+                }}
+                onMouseEnter={() => setHighlight(index)}
+              >
+                <span className="chat-composer__file-name">{path.slice(slash + 1)}</span>
+                {slash > 0 && <span className="popover__item-label chat-composer__command-desc">{path.slice(0, slash)}</span>}
+              </button>
+            );
+          })}
+        </div>
+      )}
       {suggestions.length > 0 && (
         <div className="popover chat-composer__commands" role="listbox">
           {suggestions.map((command, index) => (
@@ -271,7 +351,9 @@ export default function ChatComposer({ chatId, chat, assistantId, agentName, ful
           setCliOnly(null);
           setHighlight(0);
           fitHeight(event.target);
+          trackCaret(event.target);
         }}
+        onSelect={(event) => setCaret(event.currentTarget.selectionStart)}
         onKeyDown={handleKeyDown}
         onPaste={(event) => {
           const files = imageFiles(event.clipboardData.files);

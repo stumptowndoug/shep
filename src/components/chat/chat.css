@@ -793,6 +793,11 @@ html[data-theme-tone="dark"] .chat-composer {
   font-family: var(--font-mono);
   font-size: var(--text-xs);
 }
+.chat-composer__file-name {
+  flex-shrink: 0;
+  color: var(--fg);
+  font-size: var(--text-sm);
+}
 .chat-composer__command-desc {
   color: var(--muted);
 }

@@ -149,7 +149,7 @@ export default function ChatView({ chatId, assistantId, repoPath, fullAccess, on
                 <p role={chat.status === "starting" ? "status" : undefined} className={`chat-empty__lede ${chat.status === "starting" && !chat.startup?.authUrl ? "chat-shimmer" : ""}`}>
                   {chat.status === "starting"
                     ? chat.startup?.message ?? `Starting ${agentName}…`
-                    : `${fullAccess ? "Full access: it edits and runs commands without asking." : "It asks before editing or running commands."} Type / for commands.`}
+                    : `${fullAccess ? "Full access: it edits and runs commands without asking." : "It asks before editing or running commands."} Type / for commands, @ for files.`}
                 </p>
                 {chat.status === "starting" && chat.startup && <ChatSignIn chatId={chatId} url={chat.startup.authUrl} />}
               </div>
@@ -214,7 +214,7 @@ export default function ChatView({ chatId, assistantId, repoPath, fullAccess, on
             </div>
           )}
           {request?.kind === "cursor_request" && <CursorRequestCard key={request.id} chatId={chatId} item={request} />}
-          <ChatComposer chatId={chatId} chat={chat} assistantId={assistantId} agentName={agentName} fullAccess={fullAccess} onOpenTerminal={onOpenTerminal} />
+          <ChatComposer chatId={chatId} chat={chat} repoPath={repoPath} assistantId={assistantId} agentName={agentName} fullAccess={fullAccess} onOpenTerminal={onOpenTerminal} />
         </div>
       </div>
       {openWorker && <ChatWorkerPeek

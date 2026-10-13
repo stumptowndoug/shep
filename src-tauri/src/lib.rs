@@ -163,6 +163,7 @@ pub fn run() {
             commands::git_create_worktree,
             commands::git_status,
             commands::git_changed_files,
+            commands::list_project_files,
             commands::git_file_diff,
             commands::git_stage_file,
             commands::git_stage_all,
