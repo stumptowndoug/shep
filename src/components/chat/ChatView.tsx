@@ -16,7 +16,7 @@ import { answerPermission, cancelChatStartup, cancelTurn } from "../../lib/acp/c
 import { isStopShortcut } from "../../lib/acp/chatKeys";
 import { openUrl } from "../../lib/tauri";
 import { pendingRequest, RECENT_TURN_LIMIT } from "../../lib/acp/chatModel";
-import { splitTurn } from "../../lib/acp/chatPresentation";
+import { turnSegments } from "../../lib/acp/chatPresentation";
 import { waitingWorkerIds, type ChatWorker } from "../../lib/acp/chatWorkers";
 import { chatAppearanceStyle } from "../../lib/chatAppearance";
 import { buildCSSFontFamily } from "../../lib/terminalConfig";
@@ -135,9 +135,10 @@ export default function ChatView({ chatId, assistantId, repoPath, fullAccess, on
   const projectName = repoPath.split("/").filter(Boolean).pop() ?? repoPath;
   const orphans = workers.filter(worker => worker.turnId === undefined || !chat.turns.some(turn => turn.id === worker.turnId));
   const openWorker = workers.find(worker => worker.sessionId === openWorkerId);
-  // A running turn's folded work already says it's working.
+  // A running turn's newest row, when it's folded work, already says it's working.
   const lastTurn = chat.turns[chat.turns.length - 1];
-  const workShown = lastTurn?.endedAt === null && splitTurn(lastTurn).work.length > 0;
+  const lastSegments = lastTurn?.endedAt === null ? turnSegments(lastTurn) : [];
+  const workShown = lastSegments[lastSegments.length - 1]?.kind === "work";
 
   return (
     <ChatProjectPath value={repoPath}>

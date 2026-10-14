@@ -203,7 +203,7 @@
   color: var(--muted);
 }
 
-/* A turn's folded work: thoughts, tools, and narration */
+/* A turn's folded work: each run of thoughts and tools between its messages */
 .chat-worked {
   color: var(--muted);
   font-size: var(--text-sm);

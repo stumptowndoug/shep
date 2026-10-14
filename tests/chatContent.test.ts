@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { agentMedia, MAX_IMAGE_DATA, MAX_TOOL_TEXT, rawText } from "../src/lib/acp/chatContent.ts";
 import { addNotice, applySessionUpdate, emptyChat, endTurn, startTurn } from "../src/lib/acp/chatModel.ts";
-import { errorTone, projectRelativePath, splitTurn, turnChanges, turnStopMessage } from "../src/lib/acp/chatPresentation.ts";
+import { errorTone, lastWorkIndex, projectRelativePath, turnChanges, turnSegments, turnStopMessage } from "../src/lib/acp/chatPresentation.ts";
 
 const turn = () => startTurn(emptyChat(), "Review this change");
 const message = (text: string, messageId?: string) => ({ sessionUpdate: "agent_message_chunk", content: { type: "text", text }, messageId });
@@ -78,18 +78,22 @@ test("agent media accepts only bounded image data and http(s) resource links", (
   assert.deepEqual(chat.turns[0].items.map(item => item.kind), ["media", "media"]);
 });
 
-test("all answer blocks remain visible after the last tool, even with a trailing notice, live or finished", () => {
+test("messages, media and notices stay in place while each run of work between them folds", () => {
   let chat = applySessionUpdate(turn(), message("I'll inspect the code.", "narration"));
+  chat = applySessionUpdate(chat, { sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "Where?" } });
   chat = applySessionUpdate(chat, { sessionUpdate: "tool_call", toolCallId: "1", title: "Read file" });
   chat = applySessionUpdate(chat, message("First finding.", "a"));
+  chat = applySessionUpdate(chat, { sessionUpdate: "tool_call", toolCallId: "2", title: "Edit file", kind: "edit" });
   chat = applySessionUpdate(chat, message("Second finding.", "b"));
   chat = applySessionUpdate(chat, { sessionUpdate: "agent_message_chunk", content: { type: "resource_link", uri: "https://example.com" } });
   chat = addNotice(chat, "A helpful notice");
   for (const current of [chat.turns[0], endTurn(chat, "end_turn").turns[0]]) {
-    const { work, answer } = splitTurn(current);
-    assert.deepEqual(work.map(item => item.kind), ["message", "tool"]);
-    assert.deepEqual(answer.map(item => item.kind), ["message", "message", "media", "notice"]);
+    const segments = turnSegments(current);
+    assert.deepEqual(segments.map(segment => segment.kind === "work" ? segment.items.map(item => item.kind).join("+") : segment.item.kind),
+      ["message", "thought+tool", "message", "tool", "message", "media", "notice"]);
+    assert.equal(lastWorkIndex(segments), 3);
   }
+  assert.equal(lastWorkIndex(turnSegments(applySessionUpdate(turn(), message("Just an answer.")).turns[0])), -1);
 });
 
 test("stops explain cancellation, response limits, turn limits and errors", () => {
