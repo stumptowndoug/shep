@@ -1,17 +1,31 @@
 import type { ChatItem, ChatTurn, ToolDiff } from "./chatModel.ts";
 
-/** Keep every answer block after the last tool, including images and links.
- *  The rest is work, grouped under one row while the turn runs and after. */
-export function splitTurn(turn: ChatTurn): { work: ChatItem[]; answer: ChatItem[] } {
-  let lastTool = -1;
-  turn.items.forEach((item, index) => { if (item.kind === "tool") lastTool = index; });
-  const work: ChatItem[] = [];
-  const answer: ChatItem[] = [];
-  turn.items.forEach((item, index) => {
-    const visible = item.kind === "notice" || (index > lastTool && (item.kind === "message" || item.kind === "media"));
-    (visible ? answer : work).push(item);
-  });
-  return { work, answer };
+export type TurnSegment =
+  | { kind: "work"; id: string; items: ChatItem[] }
+  | { kind: "item"; item: ChatItem };
+
+/** The agent's text, images, links, and notices stay in the conversation where
+ *  they came; each run of thoughts, tools, and plans between them folds into one
+ *  row. Pending requests show above the composer, so they don't start a row. */
+export function turnSegments(turn: ChatTurn): TurnSegment[] {
+  const segments: TurnSegment[] = [];
+  for (const item of turn.items) {
+    if (item.kind === "message" || item.kind === "media" || item.kind === "notice") {
+      segments.push({ kind: "item", item });
+      continue;
+    }
+    if ((item.kind === "permission" && item.chosen === null) || (item.kind === "cursor_request" && item.outcome === null)) continue;
+    const last = segments[segments.length - 1];
+    if (last?.kind === "work") last.items.push(item);
+    else segments.push({ kind: "work", id: item.id, items: [item] });
+  }
+  return segments;
+}
+
+/** Index of a turn's last folded row, or -1 when it has none. */
+export function lastWorkIndex(segments: TurnSegment[]): number {
+  for (let index = segments.length - 1; index >= 0; index -= 1) if (segments[index].kind === "work") return index;
+  return -1;
 }
 
 export function turnStopMessage(turn: ChatTurn): string | null {

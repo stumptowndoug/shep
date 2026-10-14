@@ -17,26 +17,32 @@ async function startTurn(page: Page) {
   await input(page).press("Enter");
 }
 
-test("a running turn folds its thinking, tools, and narration into one live row", async ({ page }, testInfo) => {
+test("a running turn shows its narration and folds each run of thinking and tools into a row", async ({ page }, testInfo) => {
   await startTurn(page);
   await harness(page, "update", { sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "Where are the tests?" } });
   await expect(work(page).locator("summary")).toHaveText("WorkingThinking");
   await expect(page.locator(".chat-working")).toHaveCount(0);
 
-  await harness(page, "stream", "I'll look at the test folder first.");
+  // Narration stays in the conversation; the thinking before it is done.
+  await harness(page, "stream", "Looking at the test folder first.");
+  await expect(page.locator(".chat-turn > .chat-markdown")).toHaveText("Looking at the test folder first.");
+  await expect(work(page).locator("summary")).toHaveText("Thought");
+  await expect(page.locator(".chat-working")).toBeVisible();
+
   await harness(page, "update", { sessionUpdate: "tool_call", toolCallId: "read", title: "Read tests/chat.test.ts", kind: "read", status: "in_progress" });
-  await expect(work(page).locator("summary")).toHaveText("Workingchat.test.ts1 step");
+  await expect(work(page)).toHaveCount(2);
+  await expect(work(page).last().locator("summary")).toHaveText("Workingchat.test.ts1 step");
+  await expect(page.locator(".chat-working")).toHaveCount(0);
   await expect(page.locator(".chat-tool")).toHaveCount(0);
-  await expect(page.getByText("I'll look at the test folder first.")).toHaveCount(0);
   await page.screenshot({ path: testInfo.outputPath("live-folded.png") });
 
-  // Opening it shows every row, and it stays open as the turn goes on.
-  await work(page).locator("summary").click();
-  await expect(page.locator(".chat-tool")).toHaveCount(2);
+  // Opening a row shows its steps, and it stays open as the turn goes on.
+  await work(page).last().locator("summary").click();
+  await expect(page.locator(".chat-tool")).toHaveCount(1);
   await harness(page, "update", { sessionUpdate: "tool_call_update", toolCallId: "read", status: "completed", content: [{ type: "content", content: { type: "text", text: "test('works')" } }] });
   await harness(page, "update", { sessionUpdate: "tool_call", toolCallId: "run", title: "`pnpm test`", kind: "execute", status: "in_progress" });
-  await expect(page.locator(".chat-tool")).toHaveCount(3);
-  await expect(work(page).locator(".chat-worked__status")).toHaveText("pnpm test");
+  await expect(page.locator(".chat-tool")).toHaveCount(2);
+  await expect(work(page).last().locator(".chat-worked__status")).toHaveText("pnpm test");
   await page.screenshot({ path: testInfo.outputPath("live-open.png") });
 });
 
