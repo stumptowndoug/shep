@@ -1,3 +1,4 @@
+import { getVersion } from "@tauri-apps/api/app";
 import { AcpConnection, AcpError } from "./connection";
 import {
   addNotice,
@@ -360,6 +361,12 @@ interface InitializeResult {
   protocolVersion?: number;
   agentCapabilities?: { loadSession?: boolean; promptCapabilities?: { image?: boolean } };
   authMethods?: { id: string; name: string; description?: string }[];
+  agentInfo?: { name?: string; title?: string; version?: string };
+}
+
+function describeAgent(info: InitializeResult["agentInfo"]) {
+  const label = [info?.title || info?.name, info?.version].filter(Boolean).join(" ");
+  return label || undefined;
 }
 
 async function openSession(chatId: number, options: StartChatOptions, resetStartupTimer: (signingIn?: boolean) => void) {
@@ -371,11 +378,12 @@ async function openSession(chatId: number, options: StartChatOptions, resetStart
     protocolVersion: 1,
     // Agents read, write and run commands themselves, exactly as their CLI does.
     clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false, session: { notices: {} }, ...workerCapabilities(session.assistant.id) },
-    clientInfo: { name: "shep", version: "1" },
+    clientInfo: { name: "shep", title: "Shep", version: await getVersion() },
   });
   if (init.protocolVersion !== undefined && init.protocolVersion !== 1) throw new Error(`Unsupported ACP protocol version: ${init.protocolVersion}`);
   const acceptsImages = init.agentCapabilities?.promptCapabilities?.image === true;
-  useChatStore.getState().update(chatId, (chat) => ({ ...chat, acceptsImages }));
+  const agentVersion = describeAgent(init.agentInfo);
+  useChatStore.getState().update(chatId, (chat) => ({ ...chat, acceptsImages, agentVersion }));
 
   const authMethodId = session.assistant.acp?.authMethodId;
   if (authMethodId) {

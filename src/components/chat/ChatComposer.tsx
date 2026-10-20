@@ -399,6 +399,7 @@ export default function ChatComposer({ chatId, chat, repoPath, assistantId, agen
             askFirst={askFirst}
             busy={changingOption !== null && changingOption !== model?.id}
             disabled={settingsDisabled}
+            agentVersion={chat.agentVersion}
             onChange={changeOption}
           />
           {chat.acceptsImages && !closed && <>
