@@ -36,7 +36,8 @@ rusqlite = { version = "0.40", features = ["bundled"] }
 notify = { version = "8", features = ["macos_fsevent"] }
 core-text = "22"
 core-foundation = "0.10"
-tauri-plugin-updater = "2"
+# Only the macOS (tar.gz) updater: the default `zip` feature extracts Windows and Linux updates.
+tauri-plugin-updater = { version = "2", default-features = false, features = ["rustls-tls"] }
 tauri-plugin-process = "2"
 url = "2"
 unicode-segmentation = "1.13.3"
