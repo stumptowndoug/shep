@@ -1,4 +1,5 @@
 import { applySessionUpdate, emptyChat, endTurn, lastOf, startTurn, type ChatState, type SessionUpdate } from "./chatModel.ts";
+import { applyTaskUpdate } from "./chatTasks.ts";
 
 export type WorkerState = "running" | "completed" | "failed" | "cancelled" | "disconnected";
 
@@ -21,12 +22,19 @@ export interface ChatWorker {
 /** Opt in to the subagent spawn/terminal events these adapters send.
  * Claude, Codex and Muse read the JetBrains AIR nativeSubagentSessions flag;
  * Cursor only reads `subagents`, which it also accepts under `_meta`.
+ * Claude and Codex also report commands left running in the background
+ * (`asyncTasks`), and stream command output when asked for chunks
+ * (`terminal_output_delta`): an AIR client that doesn't ask gets Codex's output
+ * only once the command ends, and a backgrounded command's never.
  * Do not advertise the top-level draft `subagents` capability: its
  * reusable-session and directed-message contract differs from these events.
  * Keep the client identity Shep; only opt in to the extension we implement.
  */
 export function workerCapabilities(assistantId: string) {
-  if (assistantId === "claude" || assistantId === "codex" || assistantId === "muse") {
+  if (assistantId === "claude" || assistantId === "codex") {
+    return { _meta: { jetbrains: { air: { version: 1, capabilities: ["nativeSubagentSessions", "asyncTasks"] } }, terminal_output_delta: true } };
+  }
+  if (assistantId === "muse") {
     return { _meta: { jetbrains: { air: { version: 1, capabilities: ["nativeSubagentSessions"] } } } };
   }
   return assistantId === "cursor" ? { _meta: { subagents: true } } : {};
@@ -130,6 +138,7 @@ export function applyWorkerNotification(chat: ChatState, sessionId: string | und
   const ownerId = sessionId ?? rootId;
   const owner = (base.workers ?? []).find(worker => worker.sessionId === ownerId);
   if (ownerId !== rootId && !owner) return base;
+  if (update.sessionUpdate.startsWith("async_task_")) return applyTaskUpdate(base, owner?.sessionId, update, now);
 
   if (update.sessionUpdate === "subagent_spawned") {
     const id = typeof update.subagentSessionId === "string" ? update.subagentSessionId : "";

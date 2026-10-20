@@ -24,6 +24,8 @@ import { useGitWatcher } from "../../hooks/useGitWatcher";
 import { computeTerminalSize } from "../../lib/terminalMeasure";
 import { listen } from "@tauri-apps/api/event";
 import { ask, open } from "@tauri-apps/plugin-dialog";
+import { useChatStore } from "../../stores/useChatStore";
+import { backgroundWork, backgroundWorkLabel } from "../../lib/acp/chatTasks";
 import { checkCommandExists, getUsername, getComputerName, getStorageWarning, openInEditor, revealInFinder, saveWorkspace, refreshUsageData } from "../../lib/tauri";
 import type { ProjectOpenActions } from "../shared/ProjectOpenMenu";
 import { requestAppShutdown } from "../../lib/appLifecycle";
@@ -462,13 +464,18 @@ export default function AppShell() {
     }
   }, [activeRepoPath, handleSelectRepo]);
 
-  const handleCloseTab = useCallback((tabId: string) => {
+  const handleCloseTab = useCallback(async (tabId: string) => {
     const store = useTerminalStore.getState();
     const path = store.activeProjectPath;
     if (!path) return;
     const tab = store.projectState[path]?.tabs.find((t) => t.id === tabId);
     if (!tab) return;
     if (isSessionTab(tab)) {
+      // Closing a chat stops what its agent left running too; say so first.
+      const running = tab.agentInterface === "chat" ? backgroundWorkLabel(backgroundWork(useChatStore.getState().chats[tab.ptyId])) : null;
+      if (running && !await ask(`Close this chat and stop ${running}?`, {
+        title: "Close chat", kind: "warning", okLabel: "Close and stop", cancelLabel: "Cancel",
+      })) return;
       closeTab(tabId);
     } else {
       store.removeTab(tabId);

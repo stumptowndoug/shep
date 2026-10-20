@@ -116,6 +116,8 @@ function ToolRow({ item }: { item: ItemOf<"tool"> }) {
   const earlier = Math.max(0, lines.length - TOOL_OUTPUT_LINES);
   const output = (showEarlier ? lines : lines.slice(-TOOL_OUTPUT_LINES)).join("\n");
   const isCommand = item.toolKind === "execute";
+  // A command that went on in the background has its own row; its call just started it.
+  const background = item.backgrounded === true;
   const hasBody = Boolean(output) || item.diffs.length > 0 || item.outputTrimmed;
   // Agents that report an edit as a text diff still get colored lines and counts.
   const textDiff = isCommand ? null : textDiffLines(output);
@@ -130,11 +132,14 @@ function ToolRow({ item }: { item: ItemOf<"tool"> }) {
       <Icon size={14} />
       {verb && <span className={`chat-tool__verb ${live ? "chat-shimmer" : ""}`}>{verb}</span>}
       <span className={`chat-tool__target ${isCommand ? "chat-tool__target--mono" : ""}`}>{target}</span>
-      {(stats || failed) && (
+      {(stats || failed || background) && (
         <span className="chat-tool__deco">
           {stats && <><span className="chat-tool__added">+{stats.added}</span> <span className="chat-tool__removed">−{stats.removed}</span></>}
-          {stats && failed && " · "}
-          {failed && <span className="chat-tool__failed">failed</span>}
+          {[
+            background ? <span key="bg">in background</span> : null,
+            // A stopped background command fails its call; its own row says how it ended.
+            failed && !background ? <span key="failed" className="chat-tool__failed">failed</span> : null,
+          ].filter(Boolean).flatMap((part, index) => index > 0 || stats ? [" · ", part] : [part])}
         </span>
       )}
     </>

@@ -85,7 +85,8 @@ test("child output retention is bounded independently of parent history", () => 
 
 test("only supported adapters opt into the implemented legacy child contract", () => {
   assert.deepEqual(workerCapabilities("pi"), {});
-  assert.deepEqual(workerCapabilities("claude")._meta?.jetbrains?.air.capabilities, ["nativeSubagentSessions"]);
+  assert.deepEqual(workerCapabilities("claude")._meta?.jetbrains?.air.capabilities, ["nativeSubagentSessions", "asyncTasks"]);
+  assert.equal(workerCapabilities("codex")._meta?.terminal_output_delta, true);
   assert.equal("subagents" in workerCapabilities("codex"), false);
   assert.deepEqual(workerCapabilities("muse")._meta?.jetbrains?.air.capabilities, ["nativeSubagentSessions"]);
   // Cursor reads only `subagents`; keep it under _meta, never the top-level draft field.

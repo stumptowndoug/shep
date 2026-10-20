@@ -47,7 +47,7 @@ test("child approvals survive parent completion and remain answerable between tu
   await page.getByRole("button", { name: "Inspect replies", exact: true }).click();
   const writes = JSON.parse(await page.getByTestId("replies").textContent() || "[]");
   expect(writes.filter((entry: {result?: {outcome?: {optionId?: string}}}) => entry.result?.outcome?.optionId === "allow")).toHaveLength(2);
-  expect(writes[0].params.clientCapabilities._meta.jetbrains.air.capabilities).toEqual(["nativeSubagentSessions"]);
+  expect(writes[0].params.clientCapabilities._meta.jetbrains.air.capabilities).toEqual(["nativeSubagentSessions", "asyncTasks"]);
 });
 
 test("resumed child history does not appear as active work", async ({ page }) => {

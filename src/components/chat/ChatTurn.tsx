@@ -2,8 +2,11 @@ import { memo, useState, type ReactNode } from "react";
 import { ChevronRight } from "lucide-react";
 import { ChatErrorNotice, ChatItemView, CopyButton, TurnChanges, workStatus } from "./ChatItems";
 import { ChatAgentGroup } from "./ChatWorkers";
+import { ChatTaskRows } from "./ChatTasks";
+import type { RowRef } from "./backgroundRows";
 import type { ChatItem, ChatTurn, PromptImage } from "../../lib/acp/chatModel";
 import type { ChatWorker } from "../../lib/acp/chatWorkers";
+import type { ChatTask } from "../../lib/acp/chatTasks";
 import { lastWorkIndex, turnChanges, turnSegments, turnStopMessage } from "../../lib/acp/chatPresentation";
 
 export function formatDuration(ms: number): string {
@@ -37,6 +40,13 @@ interface TurnProps {
   waiting?: ReadonlySet<string>;
   openWorkerId?: string | null;
   onOpenWorker?: (sessionId: string | null) => void;
+  /** Commands started in this turn that went on in the background. */
+  tasks?: ChatTask[];
+  chatId?: number;
+  openTaskKey?: string | null;
+  onOpenTask?: (key: string | null) => void;
+  /** Registers rows of running background work for the jump shortcut. */
+  track?: (key: string) => RowRef;
   /** Start with the work shown, where it's what the reader came for. */
   workOpen?: boolean;
 }
@@ -81,7 +91,7 @@ function WorkFold({ items, live, duration, defaultOpen }: WorkFoldProps) {
   );
 }
 
-export const Turn = memo(function Turn({ turn, workers, waiting, openWorkerId = null, onOpenWorker, workOpen = false }: TurnProps) {
+export const Turn = memo(function Turn({ turn, workers, waiting, openWorkerId = null, onOpenWorker, tasks, chatId, openTaskKey = null, onOpenTask, track, workOpen = false }: TurnProps) {
   const segments = turnSegments(turn);
   const lastWork = lastWorkIndex(segments);
   const live = turn.endedAt === null;
@@ -94,10 +104,13 @@ export const Turn = memo(function Turn({ turn, workers, waiting, openWorkerId = 
   // A running turn's clock would only tick on new output, so it shows once the turn ends.
   const duration = live ? null : formatDuration(turn.endedAt! - turn.startedAt);
   const agents = workers && workers.length > 0 && onOpenWorker
-    ? <ChatAgentGroup key="agents" workers={workers} waiting={waiting} openId={openWorkerId} onOpen={onOpenWorker} />
+    ? <ChatAgentGroup key="agents" workers={workers} waiting={waiting} openId={openWorkerId} onOpen={onOpenWorker} trackRef={track?.(`agents:${turn.id}`)} />
     : null;
-  // Agents started in the turn sit after its last row of work, before the answer.
-  const rows: ReactNode[] = lastWork === -1 ? [agents] : [];
+  const background = tasks && tasks.length > 0 && onOpenTask && chatId !== undefined
+    ? <ChatTaskRows key="tasks" chatId={chatId} tasks={tasks} openId={openTaskKey} onOpen={onOpenTask} track={track} />
+    : null;
+  // Agents and background commands started in the turn sit after its last row of work, before the answer.
+  const rows: ReactNode[] = lastWork === -1 ? [agents, background] : [];
   segments.forEach((segment, index) => {
     rows.push(segment.kind === "work"
       ? <WorkFold key={segment.id} items={segment.items} live={live && index === segments.length - 1}
@@ -105,7 +118,7 @@ export const Turn = memo(function Turn({ turn, workers, waiting, openWorkerId = 
         // Agents recover from failed tools on their own; only a failed turn opens its last work.
         defaultOpen={workOpen || (turn.stopReason === "error" && index === lastWork)} />
       : <ChatItemView key={segment.item.id} item={segment.item} streaming={live} />);
-    if (index === lastWork) rows.push(agents);
+    if (index === lastWork) rows.push(agents, background);
   });
   return (
     <div className="chat-turn">
