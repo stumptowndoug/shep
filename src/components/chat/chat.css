@@ -897,6 +897,7 @@ html[data-theme-tone="dark"] .chat-composer {
 .chat-settings__group-name { padding: 6px 8px 4px; color: var(--faint); font-size: var(--text-2xs); font-weight: 600; }
 .chat-settings__fixed { display: flex; align-items: center; gap: 8px; padding: 6px 8px; color: var(--fg); font-size: var(--text-xs); }
 .chat-settings__note { padding: 0 8px 6px; color: var(--faint); font-size: var(--text-2xs); }
+.chat-settings__agent { margin-top: 4px; padding-top: 6px; border-top: 1px solid var(--line); }
 .chat-settings .popover__item:hover, .chat-settings .popover__item:focus-visible { background: var(--surface-hover); }
 .chat-settings__toggle { justify-content: space-between; min-height: 36px; }
 .chat-settings__toggle:disabled { opacity: 0.5; cursor: default; }

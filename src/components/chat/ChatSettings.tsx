@@ -11,6 +11,8 @@ interface ChatSettingsProps {
   askFirst: boolean;
   busy: boolean;
   disabled: boolean;
+  /** The adapter's name and version, from its initialize reply. */
+  agentVersion?: string;
   onChange: (id: string, value: string) => Promise<void>;
 }
 
@@ -20,7 +22,7 @@ const isToggle = (option: ChatOption) => option.choices.length === 2
 
 /** The gear beside the model: one menu of every other setting, each a group of
  *  names with the current choice ticked. */
-export default function ChatSettings({ options, fixedAccess, askFirst, busy, disabled, onChange }: ChatSettingsProps) {
+export default function ChatSettings({ options, fixedAccess, askFirst, busy, disabled, agentVersion, onChange }: ChatSettingsProps) {
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
@@ -98,6 +100,7 @@ export default function ChatSettings({ options, fixedAccess, askFirst, busy, dis
             <p className="chat-settings__note">Start a new chat to change this.</p>
           </div>
         )}
+        {agentVersion && <p className="chat-settings__note chat-settings__agent">{agentVersion}</p>}
       </div>}
     </div>
   );

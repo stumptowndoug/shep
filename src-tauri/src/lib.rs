@@ -73,6 +73,9 @@ pub fn run() {
                 let _ = handle.emit("usage-ingest-complete", ());
             });
 
+            // Starts before any chat, so old adapter copies can be removed safely.
+            std::thread::spawn(acp_runtime::update_on_launch);
+
             menu::setup(app.handle())?;
 
             if cfg!(debug_assertions) {

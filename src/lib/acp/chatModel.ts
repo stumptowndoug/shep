@@ -116,6 +116,8 @@ export interface ChatState {
   queuedImages?: PromptImage[];
   /** The agent accepts image content in prompts (its promptCapabilities.image). */
   acceptsImages?: boolean;
+  /** What the adapter reported about itself in initialize, e.g. "claude-agent-acp 0.89.1". */
+  agentVersion?: string;
   /** Keep stopped follow-ups in their original place in the conversation. */
   unsentPrompts: { text: string; afterTurnId: number | null }[];
   error: string | null;
