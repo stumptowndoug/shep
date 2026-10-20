@@ -5,6 +5,7 @@ import {
   addPermission,
   applySessionUpdate,
   endTurn,
+  isOutputDelta,
   markQueuedPromptsUnsent,
   optionsFromSession,
   pendingRequest,
@@ -33,6 +34,7 @@ import { createStreamBatch } from "./streamBatch";
 import { promptBlocks } from "./fileMentions";
 import { knownProjectFiles } from "./projectFiles";
 import { applyWorkerNotification, disconnectWorkers, runningWorkers, workerCapabilities, workerSummary } from "./chatWorkers";
+import { disconnectTasks, type ChatTask } from "./chatTasks";
 
 const TITLE_MAX_CHARS = 60;
 const STARTUP_TIMEOUT_MS = 60_000;
@@ -108,6 +110,12 @@ export async function startChat(options: StartChatOptions): Promise<number> {
           }
           if ((update.sessionUpdate === "agent_message_chunk" || update.sessionUpdate === "agent_thought_chunk") && update.content?.type === "text") {
             stream.enqueue({ routeSessionId, sessionUpdate: update.sessionUpdate, messageId: update.messageId, content: { type: "text", text: update.content.text ?? "" } });
+            return;
+          }
+          // A running command's output comes a chunk at a time; publish it like text.
+          if (isOutputDelta(update) && update.toolCallId) {
+            stream.enqueueOutput({ routeSessionId, sessionUpdate: "tool_call_update", toolCallId: update.toolCallId,
+              _meta: { terminal_output_delta: { data: update._meta!.terminal_output_delta!.data as string } } });
             return;
           }
           stream.flush();
@@ -331,6 +339,16 @@ function syncAccessPolicy(chatId: number, value: string) {
   const mode = isFullAccessMode(value) ? "yolo" : "standard";
   session.mode = mode;
   useTerminalStore.getState().setTabSessionMode(chatId, mode);
+}
+
+/** Stop a command the agent left running. The agent's adapter stops it and
+ * tells the agent; the task's state update follows. */
+export async function stopBackgroundTask(chatId: number, task: ChatTask): Promise<boolean> {
+  const session = live.get(chatId);
+  const sessionId = task.ownerSessionId ?? session?.sessionId;
+  if (!session || !sessionId) return false;
+  const result = await session.connection.request<{ stopped?: boolean } | null>("_session/async_task/stop", { sessionId, asyncTaskId: task.id });
+  return result?.stopped !== false;
 }
 
 /** Stop the agent process and drop the conversation state. */
@@ -645,7 +663,7 @@ function handleExit(chatId: number, code: number, stderr: string) {
 function failChat(chatId: number, error: string | null, exitCode = 1) {
   live.get(chatId)?.stream?.flush();
   useChatStore.getState().update(chatId, (chat) => ({
-    ...disconnectWorkers(markQueuedPromptsUnsent(endTurn(chat, "error"))),
+    ...disconnectTasks(disconnectWorkers(markQueuedPromptsUnsent(endTurn(chat, "error")))),
     status: "exited",
     startup: undefined,
     error: error ?? chat.error,

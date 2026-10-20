@@ -554,3 +554,10 @@ export function savePiApiKey(provider: string, apiKey: string): Promise<void> {
 export function deletePiApiKey(provider: string): Promise<void> {
   return invoke("delete_pi_api_key", { provider });
 }
+
+export interface TaskOutput { text: string; truncated: boolean }
+
+/** The end of a background task's output file (Claude reports where it writes). */
+export function readTaskOutput(path: string): Promise<TaskOutput> {
+  return invoke("read_task_output", { path });
+}

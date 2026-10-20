@@ -3,6 +3,7 @@
 import { agentMedia, clipText, MAX_DIFF_TEXT, MAX_TOOL_DIFFS, MAX_TOOL_TEXT, rawToolOutput, type AgentMedia } from "./chatContent.ts";
 import type { CursorOutcome, CursorRequest } from "./cursorProtocol.ts";
 import type { ChatWorker } from "./chatWorkers.ts";
+import type { ChatTask } from "./chatTasks.ts";
 
 export type ToolStatus = "pending" | "in_progress" | "completed" | "failed";
 
@@ -41,6 +42,10 @@ export type ChatItem =
       diffs: ToolDiff[];
       omittedDiffs?: number;
       outputTrimmed?: boolean;
+      /** A command's exit code, when the agent reports it. */
+      exitCode?: number | null;
+      /** The call returned, but its command went on running as a background task. */
+      backgrounded?: boolean;
     }
   | { kind: "plan"; id: string; entries: PlanEntry[] }
   | { kind: "cursor_request"; id: string; request: CursorRequest; outcome: CursorOutcome | null }
@@ -125,6 +130,8 @@ export interface ChatState {
   usage: { used: number; size: number } | null;
   /** ACP child conversations share a connection, but never the parent's transcript. */
   workers?: ChatWorker[];
+  /** Commands the agent left running in the background (ACP async tasks). */
+  tasks?: ChatTask[];
   acpSessionId?: string;
   draftKey?: string;
   /** Ephemeral sign-in progress; never persisted with drafts or conversation history. */
@@ -310,8 +317,22 @@ export interface SessionUpdate {
   locations?: { path: string }[];
   rawInput?: Record<string, unknown>;
   rawOutput?: unknown;
-  _meta?: { claudeCode?: { toolName?: string } };
+  _meta?: {
+    claudeCode?: { toolName?: string };
+    /** Command output, a chunk at a time (asked for with `_meta.terminal_output_delta`). */
+    terminal_output_delta?: { data?: unknown };
+    terminal_exit?: { exit_code?: unknown };
+    jetbrains?: { air?: { asyncTasks?: { backgrounded?: unknown } } };
+    [key: string]: unknown;
+  };
   [key: string]: unknown;
+}
+
+/** A tool call update that only carries more of a command's output. */
+export function isOutputDelta(update: SessionUpdate): boolean {
+  return update.sessionUpdate === "tool_call_update" && typeof update._meta?.terminal_output_delta?.data === "string" &&
+    Object.keys(update).every(key => key === "sessionUpdate" || key === "toolCallId" || key === "_meta" || key === "routeSessionId") &&
+    Object.keys(update._meta).length === 1;
 }
 
 function appendText(
@@ -416,9 +437,16 @@ function upsertTool(state: ChatState, update: SessionUpdate): ChatState {
     const index = items.findIndex((item) => item.id === id);
     const existing = index === -1 ? null : items[index];
     const previous = existing?.kind === "tool" ? existing : null;
-    const output = turn.detailsTrimmed ? "" : toolOutput(content) || rawToolOutput(update.rawOutput);
+    const meta = update._meta;
+    const delta = typeof meta?.terminal_output_delta?.data === "string" ? meta.terminal_output_delta.data : "";
+    // Streamed output adds to what came before; content replaces it.
+    const output = turn.detailsTrimmed ? ""
+      : delta ? clipText((previous?.output ?? "") + delta, MAX_TOOL_TEXT, true)
+        : toolOutput(content) || rawToolOutput(update.rawOutput);
     const diffs = turn.detailsTrimmed ? [] : toolDiffs(content);
     const kind = toolKind(update, previous?.toolKind);
+    const exitCode = typeof meta?.terminal_exit?.exit_code === "number" ? meta.terminal_exit.exit_code : previous?.exitCode;
+    const backgrounded = meta?.jetbrains?.air?.asyncTasks?.backgrounded === true || previous?.backgrounded;
     const next: ChatItem = {
       kind: "tool",
       id,
@@ -428,7 +456,9 @@ function upsertTool(state: ChatState, update: SessionUpdate): ChatState {
       output: turn.detailsTrimmed ? "" : output || (previous?.output ?? ""),
       diffs: turn.detailsTrimmed ? [] : diffs.length ? diffs : previous?.diffs ?? [],
       omittedDiffs: turn.detailsTrimmed ? undefined : diffs.length ? Math.max(0, (content?.filter((entry) => entry.type === "diff" && entry.path).length ?? 0) - MAX_TOOL_DIFFS) : previous?.omittedDiffs,
-      outputTrimmed: previous?.outputTrimmed || (turn.detailsTrimmed && Boolean(content?.length || update.rawOutput != null)),
+      outputTrimmed: previous?.outputTrimmed || (turn.detailsTrimmed && Boolean(content?.length || update.rawOutput != null || delta)),
+      ...(exitCode !== undefined ? { exitCode } : {}),
+      ...(backgrounded ? { backgrounded } : {}),
     };
     if (index === -1) return [...items, next];
     const copy = [...items];

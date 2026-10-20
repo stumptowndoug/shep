@@ -1,6 +1,7 @@
 import { useEffect, useState, type CSSProperties } from "react";
 import { Check, ChevronRight, CircleAlert, CircleHelp, ShieldAlert, Square } from "lucide-react";
 import { workerTree, type ChatWorker } from "../../lib/acp/chatWorkers";
+import type { RowRef } from "./backgroundRows";
 
 const NO_WAITING: ReadonlySet<string> = new Set();
 
@@ -45,10 +46,12 @@ interface ChatAgentGroupProps {
   waiting?: ReadonlySet<string>;
   openId: string | null;
   onOpen: (sessionId: string | null) => void;
+  /** Registers the group for the jump shortcut while it has running agents. */
+  trackRef?: RowRef;
 }
 
 /** Agents a turn delegated to, folded like its work: one quiet row each. */
-export function ChatAgentGroup({ workers, waiting = NO_WAITING, openId, onOpen }: ChatAgentGroupProps) {
+export function ChatAgentGroup({ workers, waiting = NO_WAITING, openId, onOpen, trackRef }: ChatAgentGroupProps) {
   const [expanded, setExpanded] = useState<boolean | null>(null);
   const running = workers.filter(worker => worker.state === "running").length;
   const needsYou = workers.filter(worker => waiting.has(worker.sessionId)).length;
@@ -62,7 +65,7 @@ export function ChatAgentGroup({ workers, waiting = NO_WAITING, openId, onOpen }
   ].filter(Boolean).join(" · ");
   const title = `${workers.length} ${workers.length === 1 ? "agent" : "agents"}`;
 
-  return <details className="chat-agents" open={open} onToggle={(event) => setExpanded(event.currentTarget.open)}>
+  return <details ref={running > 0 ? trackRef : undefined} className="chat-agents" open={open} onToggle={(event) => setExpanded(event.currentTarget.open)}>
     <summary>
       <ChevronRight size={14} className="chat-worked__chevron" aria-hidden="true" />
       <span>{title}</span>

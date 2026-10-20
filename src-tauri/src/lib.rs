@@ -13,6 +13,7 @@ mod session_history;
 mod session_titles;
 mod shell_path;
 mod skills;
+mod task_output;
 mod todos;
 mod usage;
 mod watcher;
@@ -139,6 +140,7 @@ pub fn run() {
             commands::kill_pty,
             commands::spawn_acp_agent,
             commands::get_managed_acp_adapter,
+            commands::read_task_output,
             commands::install_managed_acp_adapter,
             commands::write_acp_agent,
             commands::kill_acp_agent,

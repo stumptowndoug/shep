@@ -461,6 +461,13 @@ pub async fn get_managed_acp_adapter(
 }
 
 #[tauri::command]
+pub async fn read_task_output(path: String) -> Result<crate::task_output::TaskOutput, String> {
+    tauri::async_runtime::spawn_blocking(move || crate::task_output::read(&path))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
 pub async fn install_managed_acp_adapter(
     adapter: String,
 ) -> Result<crate::acp_runtime::RuntimeCommand, String> {

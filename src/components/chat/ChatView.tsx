@@ -1,11 +1,13 @@
 import { Fragment, useCallback, useMemo, useState, type CSSProperties } from "react";
-import { ArrowDown, ChevronRight, CircleAlert, ShieldAlert, X } from "lucide-react";
+import { ArrowDown, ArrowUp, ChevronRight, CircleAlert, ShieldAlert, X } from "lucide-react";
 import ChatComposer, { composerDraftKey } from "./ChatComposer";
 import { useFollowOutput } from "./useFollowOutput";
 import { ChatErrorNotice } from "./ChatItems";
 import { PromptImages, Turn } from "./ChatTurn";
 import { ChatAgentGroup } from "./ChatWorkers";
 import ChatWorkerPeek from "./ChatWorkerPeek";
+import { ChatTaskPeek, ChatTaskRows, taskRowKey } from "./ChatTasks";
+import { createRowTracker } from "./backgroundRows";
 import { ChatProjectPath } from "./chatProjectPath";
 import CursorRequestCard from "./CursorRequestCard";
 import { useChatStore } from "../../stores/useChatStore";
@@ -18,6 +20,7 @@ import { openUrl } from "../../lib/tauri";
 import { pendingRequest, RECENT_TURN_LIMIT } from "../../lib/acp/chatModel";
 import { turnSegments } from "../../lib/acp/chatPresentation";
 import { waitingWorkerIds, type ChatWorker } from "../../lib/acp/chatWorkers";
+import type { ChatTask } from "../../lib/acp/chatTasks";
 import { chatAppearanceStyle } from "../../lib/chatAppearance";
 import { buildCSSFontFamily } from "../../lib/terminalConfig";
 import { assistantLogoSrc, getAssistantLogoClass } from "../../lib/assistantLogos";
@@ -29,6 +32,8 @@ const APPROVAL_ORDER = ["reject_always", "reject_once", "allow_always", "allow_o
 
 const TURN_PAGE_SIZE = RECENT_TURN_LIMIT;
 const NO_WORKERS: ChatWorker[] = [];
+const NO_TASKS: ChatTask[] = [];
+const NO_ROWS: ReadonlySet<string> = new Set();
 const NO_WAITING: ReadonlySet<string> = new Set();
 
 function ChatSignIn({ chatId, url }: { chatId: number; url?: string }) {
@@ -94,7 +99,19 @@ export default function ChatView({ chatId, assistantId, repoPath, fullAccess, on
   const { scrollerRef, following, followNow, stopFollowing } = useFollowOutput();
   const [visibleTurnCount, setVisibleTurnCount] = useState(TURN_PAGE_SIZE);
   const [openWorkerId, setOpenWorkerId] = useState<string | null>(null);
+  const [openTaskKey, setOpenTaskKey] = useState<string | null>(null);
+  // One pane beside the chat at a time: an agent's transcript or a command's output.
+  const openWorker = useCallback((sessionId: string | null) => { setOpenWorkerId(sessionId); setOpenTaskKey(null); }, []);
+  const openTask = useCallback((key: string | null) => { setOpenTaskKey(key); setOpenWorkerId(null); }, []);
+  const [visibleRows, setVisibleRows] = useState(NO_ROWS);
+  const [rows] = useState(() => createRowTracker(setVisibleRows));
   const workers = chat?.workers ?? NO_WORKERS;
+  const tasks = chat?.tasks ?? NO_TASKS;
+  const tasksByTurn = useMemo(() => {
+    const groups = new Map<number | undefined, ChatTask[]>();
+    for (const task of tasks) groups.set(task.turnId, [...(groups.get(task.turnId) ?? []), task]);
+    return groups;
+  }, [tasks]);
   // Group by the turn that started them. Workers from before any turn (a
   // resumed session's replay) have nowhere to sit, so they follow the turns.
   const workersByTurn = useMemo(() => {
@@ -134,7 +151,35 @@ export default function ChatView({ chatId, assistantId, repoPath, fullAccess, on
   const logo = assistantId ? assistantLogoSrc[assistantId] : undefined;
   const projectName = repoPath.split("/").filter(Boolean).pop() ?? repoPath;
   const orphans = workers.filter(worker => worker.turnId === undefined || !chat.turns.some(turn => turn.id === worker.turnId));
-  const openWorker = workers.find(worker => worker.sessionId === openWorkerId);
+  const orphanTasks = tasks.filter(task => task.turnId === undefined || !chat.turns.some(turn => turn.id === task.turnId));
+  const peekWorker = workers.find(worker => worker.sessionId === openWorkerId);
+  const peekTask = tasks.find(task => taskRowKey(task) === openTaskKey);
+  // The tool call that started the command: its command line, and (without an output file) its streamed output.
+  const peekToolId = peekTask?.toolCallId ? `tool-${peekTask.toolCallId}` : null;
+  const peekTurns = peekTask?.ownerSessionId ? workers.find(worker => worker.sessionId === peekTask.ownerSessionId)?.chat.turns ?? [] : chat.turns;
+  const peekTool = peekToolId ? peekTurns.flatMap(turn => turn.items).find(item => item.id === peekToolId) : undefined;
+  // Running background work whose row is out of view, for the jump shortcut. Agents
+  // are tracked by their turn's group, which stays visible when folded.
+  const agentKey = (worker: ChatWorker) => orphans.includes(worker) ? "agents:orphans" : `agents:${worker.turnId}`;
+  const hiddenTasks = tasks.filter(task => task.state === "running" && !visibleRows.has(taskRowKey(task)));
+  const hiddenAgents = workers.filter(worker => worker.state === "running" && !visibleRows.has(agentKey(worker)));
+  const jumpLabel = [
+    hiddenTasks.length ? `${hiddenTasks.length} running ${hiddenTasks.length === 1 ? "command" : "commands"}` : null,
+    hiddenAgents.length ? `${hiddenAgents.length} ${hiddenAgents.length === 1 ? "agent" : "agents"}` : null,
+  ].filter(Boolean).join(" · ");
+  const jumpToBackground = () => {
+    const turnOf = (turnId: number | undefined) => chat.turns.findIndex(turn => turn.id === turnId);
+    const targets = [
+      ...hiddenTasks.map(task => ({ key: taskRowKey(task), index: turnOf(task.turnId) })),
+      ...hiddenAgents.map(worker => ({ key: agentKey(worker), index: turnOf(worker.turnId) })),
+    ].sort((a, b) => (a.index === -1 ? Infinity : a.index) - (b.index === -1 ? Infinity : b.index));
+    const target = targets[0];
+    if (!target) return;
+    stopFollowing();
+    // Show enough earlier turns to include the row's.
+    if (target.index !== -1) setVisibleTurnCount(count => Math.max(count, chat.turns.length - target.index));
+    rows.jump(target.key);
+  };
   // A running turn's newest row, when it's folded work, already says it's working.
   const lastTurn = chat.turns[chat.turns.length - 1];
   const lastSegments = lastTurn?.endedAt === null ? turnSegments(lastTurn) : [];
@@ -172,10 +217,13 @@ export default function ChatView({ chatId, assistantId, repoPath, fullAccess, on
             }}>Show recent turns</button>}
             {unsentPrompts.filter(prompt => prompt.afterTurnId === null).map((prompt, index) => <PendingMessage key={index} text={prompt.text} unsent />)}
             {chat.turns.slice(-visibleTurnCount).map((turn) => <Fragment key={turn.id}>
-              <Turn turn={turn} {...(workersByTurn.has(turn.id) ? { workers: workersByTurn.get(turn.id), waiting, openWorkerId, onOpenWorker: setOpenWorkerId } : {})} />
+              <Turn turn={turn} track={rows.track}
+                {...(workersByTurn.has(turn.id) ? { workers: workersByTurn.get(turn.id), waiting, openWorkerId, onOpenWorker: openWorker } : {})}
+                {...(tasksByTurn.has(turn.id) ? { tasks: tasksByTurn.get(turn.id), chatId, openTaskKey, onOpenTask: openTask } : {})} />
               {unsentPrompts.filter(prompt => prompt.afterTurnId === turn.id).map((prompt, index) => <PendingMessage key={index} text={prompt.text} unsent />)}
             </Fragment>)}
-            {orphans.length > 0 && <ChatAgentGroup workers={orphans} waiting={waiting} openId={openWorkerId} onOpen={setOpenWorkerId} />}
+            {orphans.length > 0 && <ChatAgentGroup workers={orphans} waiting={waiting} openId={openWorkerId} onOpen={openWorker} trackRef={rows.track("agents:orphans")} />}
+            {orphanTasks.length > 0 && <ChatTaskRows chatId={chatId} tasks={orphanTasks} openId={openTaskKey} onOpen={openTask} track={rows.track} />}
             {chat.status === "working" && !request && !workShown && <div className="chat-working chat-shimmer">Working</div>}
             {chat.error && <ChatErrorNotice text={chat.error} />}
             {(chat.queuedImages?.length ?? 0) > 0 && <div className="chat-pending" role="group" aria-label="Queued images">
@@ -210,6 +258,11 @@ export default function ChatView({ chatId, assistantId, repoPath, fullAccess, on
         </div>
 
         <div className="chat-view__dock">
+          {jumpLabel && chat.status !== "exited" && <button type="button" className="chat-background-jump" onClick={jumpToBackground}>
+            <span className="chat-agent__dot" aria-hidden="true" />
+            <span>{jumpLabel}</span>
+            <span className="chat-background-jump__action">Jump to <ArrowUp size={12} aria-hidden="true" /></span>
+          </button>}
           {notices.length > 0 && <div className="chat-session-notices" role="status">
             {notices.map((notice) => (
               <div key={notice.id} className={`chat-session-notice ${notice.severity === "error" ? "chat-session-notice--error" : ""}`}>
@@ -248,12 +301,19 @@ export default function ChatView({ chatId, assistantId, repoPath, fullAccess, on
           <ChatComposer chatId={chatId} chat={chat} repoPath={repoPath} assistantId={assistantId} agentName={agentName} fullAccess={fullAccess} onOpenTerminal={onOpenTerminal} onSent={followNow} />
         </div>
       </div>
-      {openWorker && <ChatWorkerPeek
-        key={openWorker.sessionId}
-        worker={openWorker}
-        startedBy={workers.find(worker => worker.sessionId === openWorker.parentSessionId)?.name ?? agentName}
-        waiting={waiting.has(openWorker.sessionId)}
+      {peekWorker && <ChatWorkerPeek
+        key={peekWorker.sessionId}
+        worker={peekWorker}
+        startedBy={workers.find(worker => worker.sessionId === peekWorker.parentSessionId)?.name ?? agentName}
+        waiting={waiting.has(peekWorker.sessionId)}
         onClose={() => setOpenWorkerId(null)}
+      />}
+      {peekTask && <ChatTaskPeek
+        key={openTaskKey}
+        chatId={chatId}
+        task={peekTask}
+        tool={peekTool?.kind === "tool" ? peekTool : null}
+        onClose={() => setOpenTaskKey(null)}
       />}
     </div>
     </ChatProjectPath>

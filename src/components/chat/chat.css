@@ -1082,6 +1082,83 @@ html[data-theme-tone="dark"] .chat-composer {
   .chat-agent__dot { animation: none; }
 }
 
+/* ── Background commands: one row each in the turn that started them ── */
+
+.chat-tasks {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+.chat-task {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.chat-task__open { flex: 1; }
+.chat-task--completed .chat-task__open:not([aria-pressed="true"]):not(:hover),
+.chat-task--stopped .chat-task__open:not([aria-pressed="true"]):not(:hover) { opacity: 0.55; }
+.chat-task__command {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-task--running .chat-agent__status { color: var(--run); }
+.chat-task--disconnected .chat-agent__status { color: var(--warn); }
+.chat-task__stop {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 9px;
+  font-size: var(--text-xs);
+}
+.chat-task__cmd { font-family: var(--font-mono); font-size: var(--text-xs); }
+.chat-task__output {
+  max-height: none;
+  padding: 10px 12px;
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+/* Running background work scrolled out of view: a way back to it. */
+.chat-background-jump {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  margin-bottom: 8px;
+  padding: 7px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--text-xs);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--fast), color var(--fast);
+}
+.chat-background-jump:hover { background: var(--state-hover); color: var(--fg); }
+.chat-background-jump:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.chat-background-jump__action {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  color: var(--fg);
+  font-weight: 500;
+}
+
 /* ── Agent peek: one agent's transcript beside the chat ── */
 
 .chat-peek {
